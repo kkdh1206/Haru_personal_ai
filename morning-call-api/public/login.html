@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>BullMQ Admin</title>
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+    <script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-auth-compat.js"></script>
+
+    <script>
+      const firebaseConfig = {
+        apiKey: 'AIzaSyDp951C6DapDEJTUEJCTvSa7_ZkjjQYanE',
+        authDomain: 'ai-morning-call.firebaseapp.com',
+        projectId: 'ai-morning-call',
+        storageBucket: 'ai-morning-call.firebasestorage.app',
+        messagingSenderId: '118080996247',
+        appId: '1:118080996247:web:8aea96320431ee91fe3ad2',
+        measurementId: 'G-8CCB6PM1LE',
+      };
+      firebase.initializeApp(firebaseConfig);
+
+      async function signIn() {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        try {
+          const { user } = await firebase.auth().signInWithPopup(provider);
+          const idToken = await user.getIdToken();
+          await fetch('/auth/cookie', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idToken }),
+          });
+          window.location.href = '/admin/queues';
+        } catch (e) {
+          alert('Login failed');
+        }
+      }
+    </script>
+  </head>
+  <body class="flex flex-col items-center justify-center h-screen gap-4 p-4">
+    <h1 class="text-2xl font-bold text-center">BullMQ Admin</h1>
+    <button
+      onclick="signIn()"
+      class="cursor-pointer py-2 px-4 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
+    >
+      Sign in with Google
+    </button>
+  </body>
+</html>

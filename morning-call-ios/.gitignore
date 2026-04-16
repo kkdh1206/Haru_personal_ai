@@ -1,0 +1,65 @@
+# Xcode project files
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+*.xcworkspace
+!default.xcworkspace
+xcuserdata/
+DerivedData/
+*.xcuserstate
+
+# Build products
+build/
+*.o
+*.LinkFileList
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# SwiftPM
+.build/
+.swiftpm/
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Carthage (if used)
+Carthage/
+
+# Fastlane
+fastlane/report.xml
+fastlane/screenshots/
+fastlane/test_output/
+fastlane/Preview.html
+
+# IDE
+.idea/
+*.xcscmblueprint
+*.xccheckout
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# User-specific files
+*.swp
+*.lock
+*.orig
+*.log
+*.env
+
+# Archives
+*.xcarchive
+
+# Playground stuff
+timeline.xctimeline
+playground.xcworkspace
+
