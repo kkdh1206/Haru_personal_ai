@@ -39,14 +39,23 @@ export class AlarmProcessor extends WorkerHost implements OnModuleInit {
   }
 
   async process(
-    job: Job<{ alarmId: string; oneTime?: boolean; day?: number }>,
+    job: Job<{
+      alarmId: string;
+      oneTime?: boolean;
+      day?: number;
+      retry?: boolean;
+      retryMinutes?: number;
+    }>,
   ): Promise<void> {
-    const { alarmId, oneTime, day } = job.data;
+    const { alarmId, oneTime, day, retry } = job.data;
     const alarm = await this.alarmModel.findById(alarmId);
-    if (!alarm || !alarm.isOn) return;
+    if (!alarm) return;
+    if (!retry && !alarm.isOn) return;
 
     /* 실제 알람 액션 (푸시·전화·SMS 등) */
-    console.log(`🔔 Alarm fired → ${alarmId} (${alarm.time})`);
+    console.log(
+      `🔔 Alarm fired${retry ? ' [retry]' : ''} → ${alarmId} (${alarm.time})`,
+    );
 
     try {
       await this.alarmService.call(alarm);
@@ -61,7 +70,7 @@ export class AlarmProcessor extends WorkerHost implements OnModuleInit {
     await alarm.save();
 
     // 반복 알람이면 다음 주기 재등록
-    if (!oneTime && typeof day === 'number') {
+    if (!retry && !oneTime && typeof day === 'number') {
       const [h, m] = alarm.time.split(':').map(Number);
       const now = DateTime.local().setZone(alarm.timeZone);
       const daysDiff = (day - (now.weekday % 7) + 7) % 7 || 7;

@@ -191,6 +191,7 @@ export class AlarmService {
   private async clearJobs(alarmId: string) {
     const jobIds = [
       `${alarmId}-once`,
+      `${alarmId}-retry`,
       ...Array.from({ length: 7 }, (_, day) => `${alarmId}-${day}`),
     ];
 
@@ -257,6 +258,8 @@ export class AlarmService {
         prompt,
         normalizedAlarm.voice,
         userId,
+        normalizedAlarm.timeZone || 'Asia/Seoul',
+        alarmId,
       );
     } catch (error) {
       console.error(`[Alarm] LiveKit agent failed → ${alarmId}`, error);
@@ -297,6 +300,7 @@ export class AlarmService {
       prompt,
       normalizedTest.voice,
       user._id,
+      user.timeZone || 'Asia/Seoul',
     );
 
     // 3. 유저 용 Livekit 토큰 생성
@@ -306,6 +310,47 @@ export class AlarmService {
     return {
       lkToken: tokenClient,
       lkUrl: this.livekitUrl,
+    };
+  }
+
+  async scheduleRetryCall(alarmId: string, retryMinutes = 3) {
+    const normalizedRetryMinutes = Math.min(Math.max(retryMinutes, 1), 30);
+    const alarm = await this.alarmModel.findById(alarmId).lean();
+    if (!alarm) {
+      throw new Error(`Alarm not found: ${alarmId}`);
+    }
+
+    const existingRetryJob = await this.alarmQueue.getJob(`${alarmId}-retry`);
+    if (existingRetryJob) {
+      await existingRetryJob.remove();
+    }
+
+    const delay = normalizedRetryMinutes * 60 * 1000;
+    const scheduledAt = new Date(Date.now() + delay);
+
+    const job = await this.alarmQueue.add(
+      'trigger',
+      {
+        alarmId,
+        retry: true,
+        retryMinutes: normalizedRetryMinutes,
+      },
+      {
+        jobId: `${alarmId}-retry`,
+        delay,
+        removeOnComplete: true,
+      },
+    );
+    const state = await job.getState();
+    console.log(
+      `[Alarm] retry scheduled → ${job.id} at ${scheduledAt.toISOString()} delay=${delay} state=${state}`,
+    );
+
+    return {
+      success: true,
+      alarmId,
+      retryMinutes: normalizedRetryMinutes,
+      scheduledAt: scheduledAt.toISOString(),
     };
   }
 }

@@ -34,6 +34,8 @@ export class LivekitService {
     prompt: string,
     voice: string,
     userId: string,
+    timeZone: string,
+    alarmId?: string,
   ) {
     // 1. 방 먼저 생성 후
     await this.roomService.createRoom({
@@ -50,7 +52,13 @@ export class LivekitService {
 
     // 3. 없다면 새로운 에이전트 디스패치
     await this.agentDispatch.createDispatch(roomName, 'Haru', {
-      metadata: JSON.stringify({ prompt, voice, user_id: userId }),
+      metadata: JSON.stringify({
+        prompt,
+        voice,
+        user_id: userId,
+        time_zone: timeZone,
+        alarm_id: alarmId || null,
+      }),
     });
 
     await this.waitForAgentParticipant(roomName);

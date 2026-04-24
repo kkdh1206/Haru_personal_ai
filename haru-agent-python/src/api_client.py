@@ -4,7 +4,7 @@ NestJS 백엔드 API 클라이언트
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -22,7 +22,7 @@ class BackendApiClient:
     async def close(self):
         await self.client.aclose()
 
-    async def get_memory_context(self, user_id: str) -> Dict[str, Any]:
+    async def get_memory_context(self, user_id: str) -> dict[str, Any]:
         """
         통화 시작 시 최소 부트스트랩 컨텍스트를 가져옵니다.
         """
@@ -65,7 +65,7 @@ class BackendApiClient:
             )
             return {"contextText": "", "raw": {}}
         except Exception as e:
-            logger.error(f"❌ Error getting context: {type(e).__name__}: {str(e)}")
+            logger.error(f"❌ Error getting context: {type(e).__name__}: {e!s}")
             return {"contextText": "", "raw": {}}
 
     async def save_call_record(
@@ -73,14 +73,14 @@ class BackendApiClient:
         user_id: str,
         conversation_id: str,
         transcript: str,
-        summary: Optional[str] = None,
-        started_at: Optional[str] = None,
-        ended_at: Optional[str] = None,
+        summary: str | None = None,
+        started_at: str | None = None,
+        ended_at: str | None = None,
         message_count: int = 0,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         try:
-            payload: Dict[str, Any] = {
+            payload: dict[str, Any] = {
                 "userId": user_id,
                 "conversationId": conversation_id,
                 "transcript": transcript,
@@ -108,14 +108,14 @@ class BackendApiClient:
             )
             return False
         except Exception as e:
-            logger.error(f"❌ Error saving call record: {type(e).__name__}: {str(e)}")
+            logger.error(f"❌ Error saving call record: {type(e).__name__}: {e!s}")
             return False
 
     async def save_long_term_memories(
         self,
         user_id: str,
         conversation_id: str,
-        memories: List[Dict[str, Any]],
+        memories: list[dict[str, Any]],
     ) -> bool:
         if not memories:
             return True
@@ -141,11 +141,13 @@ class BackendApiClient:
             return False
         except Exception as e:
             logger.error(
-                f"❌ Error saving long-term memories: {type(e).__name__}: {str(e)}"
+                f"❌ Error saving long-term memories: {type(e).__name__}: {e!s}"
             )
             return False
 
-    async def save_user_info(self, user_id: str, key: str, value: str) -> Dict[str, Any]:
+    async def save_user_info(
+        self, user_id: str, key: str, value: str
+    ) -> dict[str, Any]:
         try:
             response = await self.client.post(
                 f"{self.base_url}/memory/user-info",
@@ -165,11 +167,11 @@ class BackendApiClient:
             return {"status": "error", "message": f"저장 실패: {e.response.status_code}"}
         except Exception as e:
             logger.error(f"❌ Error saving user info: {e}")
-            return {"status": "error", "message": f"저장 실패: {str(e)}"}
+            return {"status": "error", "message": f"저장 실패: {e!s}"}
 
     async def search_memory(
         self, user_id: str, query: str, limit: int = 5
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             response = await self.client.get(
                 f"{self.base_url}/memory/search",
@@ -196,14 +198,14 @@ class BackendApiClient:
         user_id: str,
         title: str,
         start_time: str,
-        end_time: Optional[str] = None,
-        description: Optional[str] = None,
-        location: Optional[str] = None,
+        end_time: str | None = None,
+        description: str | None = None,
+        location: str | None = None,
         all_day: bool = False,
-        time_zone: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        time_zone: str | None = None,
+    ) -> dict[str, Any]:
         try:
-            payload: Dict[str, Any] = {
+            payload: dict[str, Any] = {
                 "userId": user_id,
                 "title": title,
                 "startTime": start_time,
@@ -235,9 +237,37 @@ class BackendApiClient:
             }
         except Exception as e:
             logger.error(f"❌ Error creating calendar event: {e}")
-            return {"success": False, "message": f"일정 저장 실패: {str(e)}"}
+            return {"success": False, "message": f"일정 저장 실패: {e!s}"}
 
-    async def get_user_info(self, user_id: str) -> Dict[str, Any]:
+    async def request_retry_call(
+        self, alarm_id: str, retry_minutes: int = 3
+    ) -> dict[str, Any]:
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/alarm/retry",
+                json={
+                    "alarmId": alarm_id,
+                    "retryMinutes": retry_minutes,
+                },
+            )
+            response.raise_for_status()
+            logger.info(
+                f"📞 Retry call requested: alarm={alarm_id} retry_minutes={retry_minutes}"
+            )
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"❌ HTTP error scheduling retry call: {e.response.status_code} - {e.response.text}"
+            )
+            return {
+                "success": False,
+                "message": f"재통화 예약 실패: {e.response.status_code}",
+            }
+        except Exception as e:
+            logger.error(f"❌ Error scheduling retry call: {e}")
+            return {"success": False, "message": f"재통화 예약 실패: {e!s}"}
+
+    async def get_user_info(self, user_id: str) -> dict[str, Any]:
         try:
             response = await self.client.get(
                 f"{self.base_url}/memory/user-info/{user_id}"
@@ -257,7 +287,7 @@ class BackendApiClient:
 
     async def delete_memory_item(
         self, user_id: str, item_type: str, item_id_or_key: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             if item_type == "all":
                 response = await self.client.delete(
@@ -283,4 +313,4 @@ class BackendApiClient:
             return {"status": "error", "message": f"삭제 실패: {e.response.status_code}"}
         except Exception as e:
             logger.error(f"❌ Error deleting memory: {e}")
-            return {"status": "error", "message": f"삭제 실패: {str(e)}"}
+            return {"status": "error", "message": f"삭제 실패: {e!s}"}

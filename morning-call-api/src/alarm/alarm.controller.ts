@@ -14,6 +14,7 @@ import { AlarmDto } from './dto/alarm.dto';
 import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from 'src/auth/auth.guard';
 import { TestCallDto } from './dto/test-call.dto';
+import { RetryAlarmDto } from './dto/retry-alarm.dto';
 
 @Controller('alarm')
 export class AlarmController {
@@ -72,5 +73,17 @@ export class AlarmController {
   })
   async testCall(@Req() req, @Body() dto: TestCallDto) {
     return this.alarmService.testCall(req.user, dto);
+  }
+
+  @Post('retry')
+  @ApiOperation({
+    summary: '알람 재통화 예약',
+    description: '현재 알람 통화가 끝난 뒤 몇 분 후 다시 전화하도록 예약합니다.',
+  })
+  async retry(@Body() dto: RetryAlarmDto) {
+    return this.alarmService.scheduleRetryCall(
+      dto.alarmId,
+      dto.retryMinutes ?? 3,
+    );
   }
 }

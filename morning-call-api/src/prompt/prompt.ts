@@ -10,8 +10,11 @@ type Schedule = {
 type PromptOptions = {
   name: string;
   language: string;
+  timeZone: string;
   wakeIntensity: string;
   todayLabel: string;
+  currentTimeLabel: string;
+  currentIsoTime: string;
   news: string[];
   weather: string;
   schedule: Schedule[];
@@ -84,8 +87,11 @@ function formatNews(news: string[]): string {
 export function buildMorningCallPrompt({
   name,
   language,
+  timeZone,
   wakeIntensity,
   todayLabel,
+  currentTimeLabel,
+  currentIsoTime,
   news,
   weather,
   schedule,
@@ -106,6 +112,9 @@ export function buildMorningCallPrompt({
 - 사용자가 말하기 전에 반드시 네가 먼저 시작한다.
 - 첫 문장은 반드시 "${name} 일어날 시간이야" 또는 "${name} 일어날 시간입니다"처럼 자연스러운 기상 멘트로 시작한다.
 - 예시 문장, 시스템 지침, 프롬프트 문구를 그대로 읽지 않는다.
+- 시간, 날짜, 일정은 반드시 한국 시간(KST, Asia/Seoul) 기준으로 해석한다.
+- 현재 시각 판단은 아래에 제공된 "현재 한국 시각" 값을 최우선 기준으로 사용한다.
+- 아래 일정 시간은 이미 한국 시간 기준으로 정리된 값이다. UTC로 다시 해석하거나 변환하지 않는다.
 - 아래 정보는 필요한 것만 짧게 녹여 말한다. 날씨, 일정, 뉴스 전부를 나열하지 않는다.
 - "전해야 할 말"이 있더라도 문장을 그대로 복창하지 말고, 상황에 맞게 한 번만 자연스럽게 풀어 말한다.
 - 사용자가 일어났다고 확인하면 미련 없이 짧게 마무리한다.
@@ -131,7 +140,10 @@ export function buildMorningCallPrompt({
 [사용자 정보]
 - 이름: ${name}
 - 언어: ${language}
+- 기준 시간대: ${timeZone} (한국 시간, KST)
 - 오늘 날짜: ${todayLabel}
+- 현재 한국 시각: ${currentTimeLabel}
+- 현재 한국 시각 ISO: ${currentIsoTime}
 - 날씨: ${weather || '정보 없음'}
 - 오늘 일정:
 ${formatSchedules(schedule)}

@@ -426,8 +426,7 @@ export class MemoryService {
         queryEmbeddings: [queryEmbedding],
         nResults: limit * 3,
         where: {
-          userId,
-          memoryType: 'long_term_memory',
+          $and: [{ userId }, { memoryType: 'long_term_memory' }],
         },
       });
 

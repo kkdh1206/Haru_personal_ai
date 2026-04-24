@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 from google.genai import types as genai_types
@@ -69,6 +70,23 @@ def now_iso() -> str:
     return datetime.now().astimezone().isoformat()
 
 
+def format_current_time(time_zone: str) -> dict[str, str]:
+    try:
+        zone = ZoneInfo(time_zone)
+    except ZoneInfoNotFoundError:
+        zone = ZoneInfo("Asia/Seoul")
+        time_zone = "Asia/Seoul"
+
+    now = datetime.now(zone)
+    return {
+        "time_zone": time_zone,
+        "iso": now.isoformat(),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M:%S"),
+        "display": now.strftime("%Y년 %m월 %d일 %H시 %M분 %S초"),
+    }
+
+
 def build_transcript(messages: list[dict]) -> str:
     lines = []
     for message in messages:
@@ -100,12 +118,16 @@ class Assistant(Agent):
         api_client: BackendApiClient | None = None,
         user_id: str | None = None,
         conversation_id: str,
+        alarm_id: str | None = None,
+        time_zone: str = "Asia/Seoul",
     ):
         super().__init__(instructions=instructions)
         self._on_hangup = on_hangup
         self._api_client = api_client
         self._user_id = user_id
         self._conversation_id = conversation_id
+        self._alarm_id = alarm_id
+        self._time_zone = time_zone or "Asia/Seoul"
 
     @function_tool
     async def request_hangup(
@@ -119,7 +141,10 @@ class Assistant(Agent):
     async def save_user_info(self, context: RunContext, key: str, value: str):
         """
         사용자의 정적 프로필 정보를 저장합니다.
-        예: 이름, 생일, 취미, 선호도
+        반드시 사용자가 이번 통화에서 직접 말한 사실만 저장하세요.
+        추측, 계산, 유추, 해석한 정보는 저장하면 안 됩니다.
+        키는 가능한 한 고정된 짧은 표준 키를 사용하세요.
+        예: name, birthday, hobby, preference, job
         """
         if self._api_client and self._user_id:
             result = await self._api_client.save_user_info(self._user_id, key, value)
@@ -191,6 +216,47 @@ class Assistant(Agent):
         return {"success": False, "message": "API 클라이언트가 초기화되지 않았습니다."}
 
     @function_tool
+    async def get_current_time(self, context: RunContext):
+        """
+        현재 정확한 시각이 필요할 때 호출합니다.
+        기본 기준 시간대는 사용자의 시간대이며, 보통 Asia/Seoul(KST)입니다.
+        """
+        current_time = format_current_time(self._time_zone)
+        logger.info(
+            "🕒 Current time retrieved: "
+            f"{current_time['display']} ({current_time['time_zone']})"
+        )
+        return current_time
+
+    @function_tool
+    async def request_retry_call(
+        self, context: RunContext, retry_minutes: int = 3
+    ):
+        """
+        사용자가 아직 못 일어났고 몇 분 뒤 다시 전화해 달라고 요청할 때 사용합니다.
+        retry_minutes는 1분 이상 30분 이하로 사용하세요.
+        """
+        if not self._alarm_id:
+            return {
+                "success": False,
+                "message": "현재 통화는 재통화 예약을 지원하지 않습니다.",
+            }
+
+        normalized_retry_minutes = min(max(int(retry_minutes), 1), 30)
+
+        if self._api_client:
+            result = await self._api_client.request_retry_call(
+                self._alarm_id, normalized_retry_minutes
+            )
+            logger.info(
+                "📞 Retry call requested: "
+                f"alarm={self._alarm_id} retry_minutes={normalized_retry_minutes}"
+            )
+            return result
+
+        return {"success": False, "message": "API 클라이언트가 초기화되지 않았습니다."}
+
+    @function_tool
     async def delete_memory_item(
         self, context: RunContext, item_type: str, item_id_or_key: str
     ):
@@ -240,9 +306,14 @@ async def entrypoint(ctx: JobContext):
     initial_instructions = job_meta.get("prompt", "")
     agent_voice = job_meta.get("voice", "Leda")
     user_id = job_meta.get("user_id", ctx.room.name)
+    time_zone = job_meta.get("time_zone", "Asia/Seoul")
+    alarm_id = job_meta.get("alarm_id")
     conversation_id = ctx.room.name
 
-    logger.info(f"🧠 User ID: {user_id}, Conversation ID: {conversation_id}")
+    logger.info(
+        f"🧠 User ID: {user_id}, Conversation ID: {conversation_id}, "
+        f"Time zone: {time_zone}, Alarm ID: {alarm_id}"
+    )
 
     backend_url = os.getenv("HARU_API_URL")
     api_client = None
@@ -350,6 +421,9 @@ async def entrypoint(ctx: JobContext):
 
 ## 사용자 정보 저장
 대화 중 사용자가 이름, 생일, 취미, 선호도, 직업처럼 오래 유지될 정보를 직접 말하면 save_user_info를 사용해 저장하세요.
+단, 사용자가 이번 통화에서 명시적으로 말한 사실만 저장하세요.
+추론, 계산, 해석, 짐작으로 정보를 만들어 저장하면 안 됩니다.
+사용자 정보 키는 가능한 한 표준 키를 사용하세요. 예: name, birthday, hobby, preference, job
 
 ## 장기 메모리 검색
 search_memory는 저장된 장기 메모리만 검색합니다.
@@ -365,6 +439,13 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
 ## 일정 저장
 사용자가 새 일정 추가를 원하거나 통화 중 약속을 확정하면 create_calendar_event를 사용하세요.
 시간이 애매하면 한 번만 짧게 다시 확인하고, 날짜와 시간이 충분히 명확하면 바로 저장하세요.
+
+## 현재 시간 확인
+현재 시각이나 오늘/지금/몇 시인지가 중요하면 get_current_time을 사용해 정확한 현재 시간을 확인하세요.
+
+## 재통화 예약
+사용자가 아직 못 일어났고 "몇 분 뒤에 다시 전화해줘"처럼 다시 연락을 원하면 request_retry_call을 사용하세요.
+기본값은 3분이며, 사용자가 분 수를 명확히 말하면 그 값을 사용하세요.
 
 ## 잘못 저장된 정보 수정
 잘못 저장된 사용자 정보는 delete_memory_item("user_info", "키")로 삭제한 뒤 다시 저장하세요.
@@ -382,6 +463,8 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
 
     merged_instructions = (
         f"{initial_instructions.strip()}\n\n"
+        "추가 규칙: 시간 관련 답변은 반드시 사용자 시간대 기준으로 말하고, "
+        "정확한 현재 시각이 필요하면 get_current_time을 먼저 호출하세요.\n\n"
         f"{memory_instruction.strip()}\n\n"
         f"{memory_context_instruction.strip()}\n\n"
         f"{CONTROL_INSTRUCTIONS.strip()}"
@@ -548,6 +631,8 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
         api_client=api_client,
         user_id=user_id,
         conversation_id=conversation_id,
+        alarm_id=alarm_id,
+        time_zone=time_zone,
     )
 
     try:

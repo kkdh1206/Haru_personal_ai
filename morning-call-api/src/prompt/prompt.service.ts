@@ -14,6 +14,31 @@ export class PromptService {
     private readonly informationService: InformationService,
   ) {}
 
+  private formatScheduleTime(value: string, timeZone: string) {
+    if (!value) {
+      return value;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return `${value} 종일`;
+    }
+
+    const parsed = DateTime.fromISO(value, { setZone: true });
+    if (!parsed.isValid) {
+      return value;
+    }
+
+    return parsed.setZone(timeZone).toFormat('MM월 dd일 HH:mm');
+  }
+
+  private normalizeSchedules(schedules: any[], timeZone: string) {
+    return (schedules || []).map((item: any) => ({
+      ...item,
+      start: this.formatScheduleTime(item.start, timeZone),
+      end: this.formatScheduleTime(item.end, timeZone),
+    }));
+  }
+
   async getPrompt(alarmId: string) {
     const alarm: any = await this.alarmService.getAlarmWithUser(alarmId);
     if (!alarm?.user) {
@@ -21,12 +46,17 @@ export class PromptService {
     }
 
     const user: any = alarm.user;
-    const todayLabel = DateTime.now()
-      .setZone(user.timeZone || 'Asia/Seoul')
-      .toFormat('yyyy년 MM월 dd일 cccc');
+    const timeZone = user.timeZone || 'Asia/Seoul';
+    const now = DateTime.now().setZone(timeZone);
+    const todayLabel = now.toFormat('yyyy년 MM월 dd일 cccc');
+    const currentTimeLabel = now.toFormat('yyyy년 MM월 dd일 cccc HH:mm:ss');
+    const currentIsoTime = now.toISO() || now.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
 
     // 1. 구글 캘린더 일정 조회
-    const schedules = await this.calendarService.getTodayEvents(user._id);
+    const schedules = this.normalizeSchedules(
+      await this.calendarService.getTodayEvents(user._id),
+      timeZone,
+    );
 
     // 2. 뉴스, 날씨 가져오기
     const news = await this.informationService.getCurrentNews(
@@ -46,9 +76,12 @@ export class PromptService {
     const prompt = buildMorningCallPrompt({
       name: user.name,
       language: user.language,
+      timeZone,
       wakeIntensity: alarm.wakeIntensity,
       customMessage: user.customMessage,
       todayLabel,
+      currentTimeLabel,
+      currentIsoTime,
       schedule: schedules,
       news: newsInfo,
       weather: weatherInfo,
@@ -58,12 +91,17 @@ export class PromptService {
   }
 
   async getTestCallPrompt(user, wakeIntensity = 'gentle') {
-    const todayLabel = DateTime.now()
-      .setZone(user.timeZone || 'Asia/Seoul')
-      .toFormat('yyyy년 MM월 dd일 cccc');
+    const timeZone = user.timeZone || 'Asia/Seoul';
+    const now = DateTime.now().setZone(timeZone);
+    const todayLabel = now.toFormat('yyyy년 MM월 dd일 cccc');
+    const currentTimeLabel = now.toFormat('yyyy년 MM월 dd일 cccc HH:mm:ss');
+    const currentIsoTime = now.toISO() || now.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
 
     // 1. 구글 캘린더 일정 조회
-    const schedules = await this.calendarService.getTodayEvents(user._id);
+    const schedules = this.normalizeSchedules(
+      await this.calendarService.getTodayEvents(user._id),
+      timeZone,
+    );
 
     // 2. 뉴스, 날씨 가져오기
     const news = await this.informationService.getCurrentNews(
@@ -83,9 +121,12 @@ export class PromptService {
     const prompt = buildMorningCallPrompt({
       name: user.name,
       language: user.language,
+      timeZone,
       wakeIntensity,
       customMessage: user.customMessage,
       todayLabel,
+      currentTimeLabel,
+      currentIsoTime,
       schedule: schedules,
       news: newsInfo,
       weather: weatherInfo,
