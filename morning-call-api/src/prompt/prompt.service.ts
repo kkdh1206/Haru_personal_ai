@@ -39,7 +39,11 @@ export class PromptService {
     }));
   }
 
-  async getPrompt(alarmId: string) {
+  async getPrompt(
+    alarmId: string,
+    callType: 'initial' | 'retry' = 'initial',
+    retryCount = 0,
+  ) {
     const alarm: any = await this.alarmService.getAlarmWithUser(alarmId);
     if (!alarm?.user) {
       throw new Error(`Alarm user not found for alarm ${alarmId}`);
@@ -78,6 +82,8 @@ export class PromptService {
       language: user.language,
       timeZone,
       wakeIntensity: alarm.wakeIntensity,
+      callType,
+      retryCount,
       customMessage: user.customMessage,
       todayLabel,
       currentTimeLabel,
@@ -123,6 +129,8 @@ export class PromptService {
       language: user.language,
       timeZone,
       wakeIntensity,
+      callType: 'initial',
+      retryCount: 0,
       customMessage: user.customMessage,
       todayLabel,
       currentTimeLabel,

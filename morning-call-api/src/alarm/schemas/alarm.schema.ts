@@ -39,6 +39,24 @@ export class Alarm {
 
   @Prop({ default: null })
   lastTriggeredAt: Date | null;
+
+  @Prop({ default: 0 })
+  dailyRetryCount: number;
+
+  @Prop({ default: null })
+  retryTrackingDate: string | null;
+
+  @Prop({ default: 'initial', enum: ['initial', 'retry'] })
+  lastCallType: 'initial' | 'retry';
+
+  @Prop({ default: null })
+  lastWakeStatus: 'awake' | 'not_awake' | 'retry_requested' | 'no_response' | null;
+
+  @Prop({ default: null })
+  lastRetryScheduledAt: Date | null;
+
+  @Prop({ default: null })
+  retryLimitNoticeDate: string | null;
 }
 
 export const AlarmSchema = SchemaFactory.createForClass(Alarm);

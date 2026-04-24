@@ -12,10 +12,15 @@ import { LivekitService } from 'src/livekit/livekit.service';
 import { PromptService } from 'src/prompt/prompt.service';
 import { TestCallDto } from './dto/test-call.dto';
 import { ConfigService } from '@nestjs/config';
+import { ReportCallOutcomeDto } from './dto/report-call-outcome.dto';
 
 const HARU_NAME = '하루';
 const HARU_VOICE = 'Leda';
 const DEFAULT_WAKE_INTENSITY = 'gentle';
+const DEFAULT_RETRY_MINUTES = 3;
+const MAX_DAILY_RETRY_CALLS = 3;
+const DEFAULT_RETRY_LIMIT_MESSAGE =
+  "전화를 여러 번 드렸는데 연결이 잘 안 돼서 메시지를 남겨요. 오늘 하루도 무사히 잘 보내길 바랄게요.";
 
 @Injectable()
 export class AlarmService {
@@ -44,6 +49,23 @@ export class AlarmService {
       voice: HARU_VOICE,
       wakeIntensity,
     };
+  }
+
+  private getLocalDateKey(timeZone: string) {
+    return DateTime.now().setZone(timeZone || 'Asia/Seoul').toFormat('yyyy-MM-dd');
+  }
+
+  private async resetDailyRetryStateIfNeeded(alarm: AlarmDocument) {
+    const todayKey = this.getLocalDateKey(alarm.timeZone || 'Asia/Seoul');
+    if (alarm.retryTrackingDate === todayKey) {
+      return todayKey;
+    }
+
+    alarm.retryTrackingDate = todayKey;
+    alarm.dailyRetryCount = 0;
+    alarm.retryLimitNoticeDate = null;
+    await alarm.save();
+    return todayKey;
   }
 
   private serializeAlarm<T extends Record<string, any>>(
@@ -128,7 +150,7 @@ export class AlarmService {
           const delay = next.getTime() - Date.now();
           const job = await this.alarmQueue.add(
             'trigger',
-            { alarmId: alarm._id, day },
+            { alarmId: alarm._id, day, callType: 'initial', retryCount: 0 },
             {
               jobId: `${alarm._id}-${day}`,
               delay,
@@ -147,7 +169,7 @@ export class AlarmService {
       const delay = next.getTime() - Date.now();
       const job = await this.alarmQueue.add(
         'trigger',
-        { alarmId: alarm._id, oneTime: true },
+        { alarmId: alarm._id, oneTime: true, callType: 'initial', retryCount: 0 },
         {
           jobId: `${alarm._id}-once`,
           delay,
@@ -225,12 +247,56 @@ export class AlarmService {
     return this.serializeAlarm(alarm);
   }
 
+  private async sendRetryLimitPush(alarm: AlarmDocument) {
+    const todayKey = this.getLocalDateKey(alarm.timeZone || 'Asia/Seoul');
+    if (alarm.retryLimitNoticeDate === todayKey) {
+      return {
+        success: true,
+        skipped: true,
+        message: 'Retry limit push already sent today.',
+      };
+    }
+
+    const deviceToken = await this.userService.getUserDeviceToken(
+      alarm.userId.toString(),
+    );
+    if (!deviceToken?.deviceToken) {
+      return {
+        success: false,
+        skipped: true,
+        message: 'Device token not found.',
+      };
+    }
+
+    const pushResult = await this.apnsService.sendWakeFollowupPush(
+      deviceToken.deviceToken,
+      DEFAULT_RETRY_LIMIT_MESSAGE,
+    );
+
+    if (pushResult.sent.length) {
+      alarm.retryLimitNoticeDate = todayKey;
+      await alarm.save();
+    }
+
+    return {
+      success: pushResult.sent.length > 0,
+      sent: pushResult.sent.length,
+      failed: pushResult.failed.length,
+    };
+  }
+
   // user에게 전화걸기 -> 알람 설정한 시간이 되었을때 호출
-  async call(alarm) {
+  async call(
+    alarm,
+    options: { callType?: 'initial' | 'retry'; retryCount?: number } = {},
+  ) {
     const normalizedAlarm = this.serializeAlarm(alarm);
     if (!normalizedAlarm?._id || !normalizedAlarm?.userId) {
       throw new Error('Invalid alarm payload');
     }
+
+    const callType = options.callType || 'initial';
+    const retryCount = options.retryCount ?? 0;
 
     // 0. 유저 ID 가져오기
     const alarmId = normalizedAlarm._id.toString();
@@ -245,7 +311,7 @@ export class AlarmService {
     // 2. 프롬프트 생성
     let prompt: string;
     try {
-      prompt = await this.promptService.getPrompt(alarmId);
+      prompt = await this.promptService.getPrompt(alarmId, callType, retryCount);
     } catch (error) {
       console.error(`[Alarm] prompt failed → ${alarmId}`, error);
       prompt = `${HARU_NAME}다. 사용자를 짧고 자연스럽게 깨워라. 첫 문장은 일어날 시간이라는 말로 시작한다.`;
@@ -260,6 +326,8 @@ export class AlarmService {
         userId,
         normalizedAlarm.timeZone || 'Asia/Seoul',
         alarmId,
+        callType,
+        retryCount,
       );
     } catch (error) {
       console.error(`[Alarm] LiveKit agent failed → ${alarmId}`, error);
@@ -314,12 +382,33 @@ export class AlarmService {
   }
 
   async scheduleRetryCall(alarmId: string, retryMinutes = 3) {
-    const normalizedRetryMinutes = Math.min(Math.max(retryMinutes, 1), 30);
-    const alarm = await this.alarmModel.findById(alarmId).lean();
+    const alarm = await this.alarmModel.findById(alarmId);
     if (!alarm) {
       throw new Error(`Alarm not found: ${alarmId}`);
     }
 
+    return this.scheduleRetryCallForAlarm(alarm, retryMinutes);
+  }
+
+  private async scheduleRetryCallForAlarm(
+    alarm: AlarmDocument,
+    retryMinutes = DEFAULT_RETRY_MINUTES,
+  ) {
+    const normalizedRetryMinutes = Math.min(Math.max(retryMinutes, 1), 30);
+    await this.resetDailyRetryStateIfNeeded(alarm);
+
+    if (alarm.dailyRetryCount >= MAX_DAILY_RETRY_CALLS) {
+      return {
+        success: false,
+        limitReached: true,
+        alarmId: alarm._id.toString(),
+        retryMinutes: normalizedRetryMinutes,
+        message: "You've reached today's retry call limit.",
+      };
+    }
+
+    const alarmId = alarm._id.toString();
+    const retryCount = alarm.dailyRetryCount + 1;
     const existingRetryJob = await this.alarmQueue.getJob(`${alarmId}-retry`);
     if (existingRetryJob) {
       await existingRetryJob.remove();
@@ -333,6 +422,8 @@ export class AlarmService {
       {
         alarmId,
         retry: true,
+        callType: 'retry',
+        retryCount,
         retryMinutes: normalizedRetryMinutes,
       },
       {
@@ -346,11 +437,66 @@ export class AlarmService {
       `[Alarm] retry scheduled → ${job.id} at ${scheduledAt.toISOString()} delay=${delay} state=${state}`,
     );
 
+    alarm.dailyRetryCount = retryCount;
+    alarm.lastRetryScheduledAt = scheduledAt;
+    alarm.lastCallType = 'retry';
+    await alarm.save();
+
     return {
       success: true,
       alarmId,
+      retryCount,
       retryMinutes: normalizedRetryMinutes,
       scheduledAt: scheduledAt.toISOString(),
+    };
+  }
+
+  async handleCallOutcome(dto: ReportCallOutcomeDto) {
+    const alarm = await this.alarmModel.findById(dto.alarmId);
+    if (!alarm) {
+      throw new Error(`Alarm not found: ${dto.alarmId}`);
+    }
+
+    await this.resetDailyRetryStateIfNeeded(alarm);
+
+    alarm.lastCallType = dto.callType;
+    alarm.lastWakeStatus = dto.wakeStatus;
+    alarm.lastTriggeredAt = new Date();
+    await alarm.save();
+
+    if (dto.wakeStatus === 'awake') {
+      const existingRetryJob = await this.alarmQueue.getJob(`${dto.alarmId}-retry`);
+      if (existingRetryJob) {
+        await existingRetryJob.remove();
+      }
+      return {
+        success: true,
+        action: 'none',
+        wakeStatus: dto.wakeStatus,
+        message: 'User is awake. Retry flow stopped.',
+      };
+    }
+
+    const retryMinutes = dto.retryMinutes ?? DEFAULT_RETRY_MINUTES;
+    const retryResult = await this.scheduleRetryCallForAlarm(alarm, retryMinutes);
+
+    if (retryResult.success) {
+      return {
+        success: true,
+        action: 'retry_scheduled',
+        wakeStatus: dto.wakeStatus,
+        ...retryResult,
+      };
+    }
+
+    const pushResult = await this.sendRetryLimitPush(alarm);
+    return {
+      success: true,
+      action: 'retry_limit_reached',
+      wakeStatus: dto.wakeStatus,
+      retryLimit: MAX_DAILY_RETRY_CALLS,
+      message: retryResult.message,
+      push: pushResult,
     };
   }
 }

@@ -45,9 +45,11 @@ export class AlarmProcessor extends WorkerHost implements OnModuleInit {
       day?: number;
       retry?: boolean;
       retryMinutes?: number;
+      callType?: 'initial' | 'retry';
+      retryCount?: number;
     }>,
   ): Promise<void> {
-    const { alarmId, oneTime, day, retry } = job.data;
+    const { alarmId, oneTime, day, retry, callType, retryCount } = job.data;
     const alarm = await this.alarmModel.findById(alarmId);
     if (!alarm) return;
     if (!retry && !alarm.isOn) return;
@@ -58,7 +60,10 @@ export class AlarmProcessor extends WorkerHost implements OnModuleInit {
     );
 
     try {
-      await this.alarmService.call(alarm);
+      await this.alarmService.call(alarm, {
+        callType: callType || (retry ? 'retry' : 'initial'),
+        retryCount: retryCount ?? 0,
+      });
     } catch (error) {
       console.error(`[Alarm] call failed → ${alarmId}`, error);
     }

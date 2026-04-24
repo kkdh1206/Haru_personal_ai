@@ -15,6 +15,7 @@ import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from 'src/auth/auth.guard';
 import { TestCallDto } from './dto/test-call.dto';
 import { RetryAlarmDto } from './dto/retry-alarm.dto';
+import { ReportCallOutcomeDto } from './dto/report-call-outcome.dto';
 
 @Controller('alarm')
 export class AlarmController {
@@ -85,5 +86,14 @@ export class AlarmController {
       dto.alarmId,
       dto.retryMinutes ?? 3,
     );
+  }
+
+  @Post('call-outcome')
+  @ApiOperation({
+    summary: '알람 통화 결과 보고',
+    description: '에이전트가 통화 종료 후 wake 상태를 보고하고 후속 재통화 여부를 결정합니다.',
+  })
+  async reportCallOutcome(@Body() dto: ReportCallOutcomeDto) {
+    return this.alarmService.handleCallOutcome(dto);
   }
 }

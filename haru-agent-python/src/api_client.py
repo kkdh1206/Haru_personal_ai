@@ -267,6 +267,48 @@ class BackendApiClient:
             logger.error(f"❌ Error scheduling retry call: {e}")
             return {"success": False, "message": f"재통화 예약 실패: {e!s}"}
 
+    async def report_call_outcome(
+        self,
+        alarm_id: str,
+        call_type: str,
+        retry_count: int,
+        wake_status: str,
+        had_user_response: bool,
+        retry_minutes: int | None = None,
+    ) -> dict[str, Any]:
+        try:
+            payload: dict[str, Any] = {
+                "alarmId": alarm_id,
+                "callType": call_type,
+                "retryCount": retry_count,
+                "wakeStatus": wake_status,
+                "hadUserResponse": had_user_response,
+            }
+            if retry_minutes is not None:
+                payload["retryMinutes"] = retry_minutes
+
+            response = await self.client.post(
+                f"{self.base_url}/alarm/call-outcome",
+                json=payload,
+            )
+            response.raise_for_status()
+            logger.info(
+                "📟 Call outcome reported: "
+                f"alarm={alarm_id} call_type={call_type} wake_status={wake_status}"
+            )
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"❌ HTTP error reporting call outcome: {e.response.status_code} - {e.response.text}"
+            )
+            return {
+                "success": False,
+                "message": f"통화 결과 보고 실패: {e.response.status_code}",
+            }
+        except Exception as e:
+            logger.error(f"❌ Error reporting call outcome: {e}")
+            return {"success": False, "message": f"통화 결과 보고 실패: {e!s}"}
+
     async def get_user_info(self, user_id: str) -> dict[str, Any]:
         try:
             response = await self.client.get(

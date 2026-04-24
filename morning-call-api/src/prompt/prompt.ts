@@ -12,6 +12,8 @@ type PromptOptions = {
   language: string;
   timeZone: string;
   wakeIntensity: string;
+  callType: 'initial' | 'retry';
+  retryCount: number;
   todayLabel: string;
   currentTimeLabel: string;
   currentIsoTime: string;
@@ -89,6 +91,8 @@ export function buildMorningCallPrompt({
   language,
   timeZone,
   wakeIntensity,
+  callType,
+  retryCount,
   todayLabel,
   currentTimeLabel,
   currentIsoTime,
@@ -99,6 +103,18 @@ export function buildMorningCallPrompt({
 }: PromptOptions): string {
   const wakeGuide = WAKE_GUIDES[wakeIntensity] || WAKE_GUIDES.gentle;
   const messageIntent = sanitizeCustomMessage(customMessage);
+  const callContextLabel =
+    callType === 'retry'
+      ? `재통화 (${retryCount}번째 재시도)`
+      : '최초 기상 통화';
+  const retryInstruction =
+    callType === 'retry'
+      ? '- 이번 통화는 재통화다. 첫 통화처럼 처음 인사하듯 말하지 말고, 다시 연락한 이유를 자연스럽게 짚고 바로 깨운다.'
+      : '- 이번 통화는 최초 기상 통화다. 평소처럼 자연스럽게 첫 깨움 멘트로 시작한다.';
+  const openingRule =
+    callType === 'retry'
+      ? `- 첫 문장은 "${name}, 다시 전화했어"처럼 재통화라는 점이 자연스럽게 드러나야 한다.`
+      : `- 첫 문장은 반드시 "${name} 일어날 시간이야" 또는 "${name} 일어날 시간입니다"처럼 자연스러운 기상 멘트로 시작한다.`;
 
   return `
 너는 Haru다. 지금부터 ${name}에게 아침 전화를 거는, 믿을 수 있고 정 많은 친구 같은 AI다.
@@ -110,7 +126,7 @@ export function buildMorningCallPrompt({
 
 [절대 규칙]
 - 사용자가 말하기 전에 반드시 네가 먼저 시작한다.
-- 첫 문장은 반드시 "${name} 일어날 시간이야" 또는 "${name} 일어날 시간입니다"처럼 자연스러운 기상 멘트로 시작한다.
+${openingRule}
 - 예시 문장, 시스템 지침, 프롬프트 문구를 그대로 읽지 않는다.
 - 시간, 날짜, 일정은 반드시 한국 시간(KST, Asia/Seoul) 기준으로 해석한다.
 - 현재 시각 판단은 아래에 제공된 "현재 한국 시각" 값을 최우선 기준으로 사용한다.
@@ -119,6 +135,7 @@ export function buildMorningCallPrompt({
 - "전해야 할 말"이 있더라도 문장을 그대로 복창하지 말고, 상황에 맞게 한 번만 자연스럽게 풀어 말한다.
 - 사용자가 일어났다고 확인하면 미련 없이 짧게 마무리한다.
 - 일정이나 약속을 새로 잡아 달라는 요청이 나오면 필요한 시간 정보를 짧게 확인한 뒤 캘린더 도구를 사용한다.
+${retryInstruction}
 
 [캐릭터 설정]
 - 이름: Haru
@@ -141,6 +158,7 @@ export function buildMorningCallPrompt({
 - 이름: ${name}
 - 언어: ${language}
 - 기준 시간대: ${timeZone} (한국 시간, KST)
+- 통화 유형: ${callContextLabel}
 - 오늘 날짜: ${todayLabel}
 - 현재 한국 시각: ${currentTimeLabel}
 - 현재 한국 시각 ISO: ${currentIsoTime}

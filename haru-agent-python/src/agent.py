@@ -97,6 +97,83 @@ def build_transcript(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def infer_wake_status(
+    messages: list[dict],
+    *,
+    retry_requested: bool = False,
+) -> tuple[str, bool]:
+    if retry_requested:
+        return "retry_requested", True
+
+    user_texts = [
+        (message.get("content") or "").strip().lower()
+        for message in messages
+        if message.get("role") == "user" and (message.get("content") or "").strip()
+    ]
+
+    if not user_texts:
+        return "no_response", False
+
+    awake_patterns = (
+        "일어났",
+        "깼",
+        "깨었",
+        "알겠어",
+        "알겠습니다",
+        "일어날게",
+        "일어날게요",
+        "준비할게",
+        "awake",
+        "i'm up",
+        "im up",
+    )
+    retry_patterns = (
+        "5분만",
+        "10분만",
+        "조금만 더",
+        "좀만 더",
+        "다시 전화",
+        "다시 걸어",
+        "이따가",
+        "좀 있다",
+        "call me again",
+        "later",
+        "few more minutes",
+    )
+    sleepy_patterns = (
+        "졸려",
+        "피곤",
+        "잠깐만",
+        "못 일어나",
+        "안 일어났",
+        "더 잘래",
+        "sleepy",
+        "tired",
+        "mmm",
+        "uh",
+        "um",
+    )
+    filler_words = {"응", "어", "음", "으응", "네", "웅", "어어", "음음"}
+
+    joined = " ".join(user_texts)
+    if any(pattern in joined for pattern in retry_patterns):
+        return "retry_requested", True
+
+    if any(pattern in joined for pattern in awake_patterns):
+        return "awake", True
+
+    if any(pattern in joined for pattern in sleepy_patterns):
+        return "not_awake", True
+
+    if all(text in {word.lower() for word in filler_words} for text in user_texts):
+        return "not_awake", True
+
+    if sum(len(text.replace(" ", "")) for text in user_texts) <= 8:
+        return "not_awake", True
+
+    return "awake", True
+
+
 def get_vad():
     global _vad_instance
     if _vad_instance is None:
@@ -120,6 +197,9 @@ class Assistant(Agent):
         conversation_id: str,
         alarm_id: str | None = None,
         time_zone: str = "Asia/Seoul",
+        call_type: str = "initial",
+        retry_count: int = 0,
+        on_call_outcome_reported=None,
     ):
         super().__init__(instructions=instructions)
         self._on_hangup = on_hangup
@@ -128,6 +208,9 @@ class Assistant(Agent):
         self._conversation_id = conversation_id
         self._alarm_id = alarm_id
         self._time_zone = time_zone or "Asia/Seoul"
+        self._call_type = call_type
+        self._retry_count = retry_count
+        self._on_call_outcome_reported = on_call_outcome_reported
 
     @function_tool
     async def request_hangup(
@@ -245,13 +328,16 @@ class Assistant(Agent):
         normalized_retry_minutes = min(max(int(retry_minutes), 1), 30)
 
         if self._api_client:
-            result = await self._api_client.request_retry_call(
-                self._alarm_id, normalized_retry_minutes
+            result = await self._api_client.report_call_outcome(
+                alarm_id=self._alarm_id,
+                call_type=self._call_type,
+                retry_count=self._retry_count,
+                wake_status="retry_requested",
+                had_user_response=True,
+                retry_minutes=normalized_retry_minutes,
             )
-            logger.info(
-                "📞 Retry call requested: "
-                f"alarm={self._alarm_id} retry_minutes={normalized_retry_minutes}"
-            )
+            if callable(self._on_call_outcome_reported):
+                self._on_call_outcome_reported(result)
             return result
 
         return {"success": False, "message": "API 클라이언트가 초기화되지 않았습니다."}
@@ -308,11 +394,14 @@ async def entrypoint(ctx: JobContext):
     user_id = job_meta.get("user_id", ctx.room.name)
     time_zone = job_meta.get("time_zone", "Asia/Seoul")
     alarm_id = job_meta.get("alarm_id")
+    call_type = job_meta.get("call_type", "initial")
+    retry_count = int(job_meta.get("retry_count", 0) or 0)
     conversation_id = ctx.room.name
 
     logger.info(
         f"🧠 User ID: {user_id}, Conversation ID: {conversation_id}, "
-        f"Time zone: {time_zone}, Alarm ID: {alarm_id}"
+        f"Time zone: {time_zone}, Alarm ID: {alarm_id}, "
+        f"Call type: {call_type}, Retry count: {retry_count}"
     )
 
     backend_url = os.getenv("HARU_API_URL")
@@ -344,6 +433,7 @@ async def entrypoint(ctx: JobContext):
 
     hangup_requested = False
     greeted_user = False
+    call_outcome_reported = False
     session: AgentSession
     session_started = asyncio.Event()
     greeting_lock = asyncio.Lock()
@@ -362,6 +452,15 @@ async def entrypoint(ctx: JobContext):
         hangup_requested = True
         logger.info(message)
         start_background_task(safe_hangup(ctx, session), name="safe_hangup")
+
+    def _mark_call_outcome_reported(result: dict | None = None):
+        nonlocal call_outcome_reported
+        if result is not None and not result.get("success", False):
+            logger.warning(f"⚠️ Call outcome report failed in-session: {result}")
+            return
+        call_outcome_reported = True
+        if result is not None:
+            logger.info(f"📟 Call outcome handled in-session: {result}")
 
     realtime_model_kwargs = {
         "model": get_gemini_model(),
@@ -446,6 +545,7 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
 ## 재통화 예약
 사용자가 아직 못 일어났고 "몇 분 뒤에 다시 전화해줘"처럼 다시 연락을 원하면 request_retry_call을 사용하세요.
 기본값은 3분이며, 사용자가 분 수를 명확히 말하면 그 값을 사용하세요.
+하루 재통화 제한은 최대 3회입니다. 제한에 걸리면 tool 결과 메시지를 그대로 짧게 안내하세요.
 
 ## 잘못 저장된 정보 수정
 잘못 저장된 사용자 정보는 delete_memory_item("user_info", "키")로 삭제한 뒤 다시 저장하세요.
@@ -464,7 +564,8 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
     merged_instructions = (
         f"{initial_instructions.strip()}\n\n"
         "추가 규칙: 시간 관련 답변은 반드시 사용자 시간대 기준으로 말하고, "
-        "정확한 현재 시각이 필요하면 get_current_time을 먼저 호출하세요.\n\n"
+        "정확한 현재 시각이 필요하면 get_current_time을 먼저 호출하세요. "
+        "사용자가 아직 덜 깼거나 다시 걸어 달라고 하면 재통화 흐름을 고려하세요.\n\n"
         f"{memory_instruction.strip()}\n\n"
         f"{memory_context_instruction.strip()}\n\n"
         f"{CONTROL_INSTRUCTIONS.strip()}"
@@ -506,14 +607,26 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
                 return
 
             await asyncio.sleep(0.35)
-            initial_greeting_instructions = (
-                "사용자가 방금 전화를 받았어. 네가 먼저 아주 자연스럽게 한두 문장으로 "
-                "짧은 인사와 기상 멘트를 시작해."
-            )
-            initial_greeting_trigger_text = (
-                "시스템 트리거: 사용자가 방금 전화를 받았다. 이 문장을 언급하지 말고, "
-                "지금 바로 한국어로 짧고 자연스럽게 아침 인사와 기상 멘트를 시작해."
-            )
+            if call_type == "retry":
+                initial_greeting_instructions = (
+                    "이번 통화는 재통화다. 사용자가 아직 못 일어났거나 다시 전화해 달라고 "
+                    "요청했던 상황이다. 첫 통화처럼 새로 인사하지 말고, 다시 연락한 이유를 "
+                    "짧게 짚은 뒤 지금은 진짜 일어나야 한다는 톤으로 한두 문장만 자연스럽게 시작해."
+                )
+                initial_greeting_trigger_text = (
+                    "시스템 트리거: 이번은 재통화다. 이 문장을 언급하지 말고, "
+                    "한국어로 '다시 전화했어', '이제는 진짜 일어나야 해' 같은 느낌의 "
+                    "짧고 자연스러운 기상 멘트로 바로 시작해."
+                )
+            else:
+                initial_greeting_instructions = (
+                    "사용자가 방금 전화를 받았어. 네가 먼저 아주 자연스럽게 한두 문장으로 "
+                    "짧은 인사와 기상 멘트를 시작해."
+                )
+                initial_greeting_trigger_text = (
+                    "시스템 트리거: 사용자가 방금 전화를 받았다. 이 문장을 언급하지 말고, "
+                    "지금 바로 한국어로 짧고 자연스럽게 아침 인사와 기상 멘트를 시작해."
+                )
             supports_generate_reply = (
                 realtime_model.capabilities.mutable_chat_context
                 and realtime_model.capabilities.mutable_instructions
@@ -549,9 +662,25 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
     shutdown_saved = False
 
     async def finalize_shutdown():
-        nonlocal shutdown_saved
+        nonlocal shutdown_saved, call_outcome_reported
 
         try:
+            if api_client and alarm_id and not call_outcome_reported:
+                wake_status, had_user_response = infer_wake_status(conversation_messages)
+                outcome_result = await api_client.report_call_outcome(
+                    alarm_id=alarm_id,
+                    call_type=call_type,
+                    retry_count=retry_count,
+                    wake_status=wake_status,
+                    had_user_response=had_user_response,
+                )
+                call_outcome_reported = outcome_result.get("success", False)
+                logger.info(
+                    "📟 Final wake outcome: "
+                    f"wake_status={wake_status} had_user_response={had_user_response} "
+                    f"result={outcome_result}"
+                )
+
             if api_client and conversation_messages and not shutdown_saved:
                 transcript = build_transcript(conversation_messages)
                 analysis = await summarizer.analyze_transcript(conversation_messages)
@@ -569,7 +698,11 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
                     started_at=call_started_at,
                     ended_at=ended_at,
                     message_count=len(conversation_messages),
-                    metadata={"source": "livekit_agent"},
+                    metadata={
+                        "source": "livekit_agent",
+                        "callType": call_type,
+                        "retryCount": retry_count,
+                    },
                 )
 
                 memory_payload = [
@@ -633,6 +766,9 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
         conversation_id=conversation_id,
         alarm_id=alarm_id,
         time_zone=time_zone,
+        call_type=call_type,
+        retry_count=retry_count,
+        on_call_outcome_reported=_mark_call_outcome_reported,
     )
 
     try:

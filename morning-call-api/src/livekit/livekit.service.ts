@@ -36,12 +36,22 @@ export class LivekitService {
     userId: string,
     timeZone: string,
     alarmId?: string,
+    callType: 'initial' | 'retry' = 'initial',
+    retryCount = 0,
   ) {
     // 1. 방 먼저 생성 후
-    await this.roomService.createRoom({
-      name: roomName,
-      emptyTimeout: 60 * 5, // 유저가 안 들어와도 5분 후 정리
-    });
+    try {
+      await this.roomService.createRoom({
+        name: roomName,
+        emptyTimeout: 60 * 5, // 유저가 안 들어와도 5분 후 정리
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.toLowerCase().includes('already exists')) {
+        throw error;
+      }
+      console.log('[Livekit] room already exists', roomName);
+    }
 
     // 2. 에이전트가 이미 방에 들어가 있는지 확인
     const participant = await this.roomService.listParticipants(roomName);
@@ -58,6 +68,8 @@ export class LivekitService {
         user_id: userId,
         time_zone: timeZone,
         alarm_id: alarmId || null,
+        call_type: callType,
+        retry_count: retryCount,
       }),
     });
 

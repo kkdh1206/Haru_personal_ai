@@ -43,6 +43,23 @@ export class ApnsService implements OnModuleDestroy {
     return res;
   }
 
+  async sendWakeFollowupPush(token: string, body: string) {
+    const note = new apn.Notification();
+    note.topic = this.cs.get<string>('apns.bundleId');
+    note.alert = {
+      title: 'Haru',
+      body,
+    };
+    note.sound = 'default';
+    note.payload = {
+      type: 'wake_followup',
+    };
+
+    const res = await this.provider.send(note, token);
+    console.log(res.sent.length ? '✅ followup sent' : '❌ followup failed', res);
+    return res;
+  }
+
   onModuleDestroy() {
     this.provider.shutdown();
   }
