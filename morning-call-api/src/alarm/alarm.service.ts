@@ -46,16 +46,21 @@ export class AlarmService {
     };
   }
 
-  private serializeAlarm<T extends Record<string, any>>(alarm: T | null) {
+  private serializeAlarm<T extends Record<string, any>>(
+    alarm: (T & { toObject?: () => Record<string, any> }) | null | undefined,
+  ) {
     if (!alarm) {
       return alarm;
     }
 
+    const alarmObject =
+      typeof alarm.toObject === 'function' ? alarm.toObject() : alarm;
+
     const wakeIntensity =
-      alarm.wakeIntensity === 'firm' ? 'firm' : DEFAULT_WAKE_INTENSITY;
+      alarmObject.wakeIntensity === 'firm' ? 'firm' : DEFAULT_WAKE_INTENSITY;
 
     return {
-      ...alarm,
+      ...alarmObject,
       role: HARU_NAME,
       voice: HARU_VOICE,
       personality: wakeIntensity,
@@ -120,28 +125,38 @@ export class AlarmService {
       await Promise.all(
         alarm.repeatDays.map(async (day) => {
           const next = this.nextDayOfWeek(day, hour, minute, tz);
-          await this.alarmQueue.add(
+          const delay = next.getTime() - Date.now();
+          const job = await this.alarmQueue.add(
             'trigger',
             { alarmId: alarm._id, day },
             {
               jobId: `${alarm._id}-${day}`,
-              delay: next.getTime() - Date.now(),
+              delay,
               removeOnComplete: true,
             },
+          );
+          const state = await job.getState();
+          console.log(
+            `[Alarm] scheduled → ${job.id} at ${next.toISOString()} delay=${delay} state=${state}`,
           );
         }),
       );
     } else {
       // 1회성 알람
       const next = this.nextOnce(hour, minute, tz);
-      await this.alarmQueue.add(
+      const delay = next.getTime() - Date.now();
+      const job = await this.alarmQueue.add(
         'trigger',
         { alarmId: alarm._id, oneTime: true },
         {
           jobId: `${alarm._id}-once`,
-          delay: next.getTime() - Date.now(),
+          delay,
           removeOnComplete: true,
         },
+      );
+      const state = await job.getState();
+      console.log(
+        `[Alarm] scheduled → ${job.id} at ${next.toISOString()} delay=${delay} state=${state}`,
       );
     }
   }
@@ -151,10 +166,15 @@ export class AlarmService {
   // day: 0(Sun)‒6(Sat)
   private nextDayOfWeek(day: number, h: number, m: number, tz: string): Date {
     const now = DateTime.local().setZone(tz);
-    const daysDiff = (day - (now.weekday % 7) + 7) % 7 || 7; // Luxon Sun=7
-    const target = now
+    const daysDiff = (day - (now.weekday % 7) + 7) % 7; // Luxon Sun=7
+    let target = now
       .plus({ days: daysDiff })
       .set({ hour: h, minute: m, second: 0, millisecond: 0 });
+
+    if (target <= now) {
+      target = target.plus({ days: 7 });
+    }
+
     return target.toJSDate(); // JS Date (UTC 기반)
   }
 
@@ -169,12 +189,22 @@ export class AlarmService {
 
   /** 등록돼 있던 지연·반복 job 전부 제거 */
   private async clearJobs(alarmId: string) {
-    // delayed
-    const delayed = await this.alarmQueue.getJobs(['delayed']);
+    const jobIds = [
+      `${alarmId}-once`,
+      ...Array.from({ length: 7 }, (_, day) => `${alarmId}-${day}`),
+    ];
+
     await Promise.all(
-      delayed
-        .filter((job) => String(job.id).startsWith(alarmId))
-        .map((job) => job.remove()),
+      jobIds.map(async (jobId) => {
+        const job = await this.alarmQueue.getJob(jobId);
+        if (!job) {
+          return;
+        }
+
+        const state = await job.getState();
+        await job.remove();
+        console.log(`[Alarm] removed job → ${jobId} state=${state}`);
+      }),
     );
   }
 
@@ -197,37 +227,58 @@ export class AlarmService {
   // user에게 전화걸기 -> 알람 설정한 시간이 되었을때 호출
   async call(alarm) {
     const normalizedAlarm = this.serializeAlarm(alarm);
+    if (!normalizedAlarm?._id || !normalizedAlarm?.userId) {
+      throw new Error('Invalid alarm payload');
+    }
 
     // 0. 유저 ID 가져오기
+    const alarmId = normalizedAlarm._id.toString();
     const userId = normalizedAlarm.userId.toString();
 
     // 1. 디바이스 토큰 가져오기
     const deviceToken = await this.userService.getUserDeviceToken(userId);
+    if (!deviceToken?.deviceToken) {
+      throw new Error(`Device token not found for user ${userId}`);
+    }
 
     // 2. 프롬프트 생성
-    const prompt = await this.promptService.getPrompt(
-      normalizedAlarm._id.toString(),
-    );
+    let prompt: string;
+    try {
+      prompt = await this.promptService.getPrompt(alarmId);
+    } catch (error) {
+      console.error(`[Alarm] prompt failed → ${alarmId}`, error);
+      prompt = `${HARU_NAME}다. 사용자를 짧고 자연스럽게 깨워라. 첫 문장은 일어날 시간이라는 말로 시작한다.`;
+    }
 
     // 3. 에이전트 준비
-    await this.livekit.readyAgent(
-      normalizedAlarm._id.toString(),
-      prompt,
-      normalizedAlarm.voice,
-      userId,
-    );
+    try {
+      await this.livekit.readyAgent(
+        alarmId,
+        prompt,
+        normalizedAlarm.voice,
+        userId,
+      );
+    } catch (error) {
+      console.error(`[Alarm] LiveKit agent failed → ${alarmId}`, error);
+    }
 
     // 4. 유저 용 Livekit 토큰 생성
-    const room = normalizedAlarm._id.toString();
+    const room = alarmId;
     const tokenClient = await this.livekit.generateLivkitToken(room, userId);
 
     // 5. APNs 푸시 보내기
     // TODO: android 경우 다른 푸시로 처리
-    this.apnsService.sendVoipPush(deviceToken.deviceToken, {
-      caller: HARU_NAME,
-      livekitToken: tokenClient,
-      alarmId: normalizedAlarm._id.toString(),
-    });
+    const pushResult = await this.apnsService.sendVoipPush(
+      deviceToken.deviceToken,
+      {
+        caller: HARU_NAME,
+        livekitToken: tokenClient,
+        alarmId,
+      },
+    );
+    if (!pushResult.sent.length) {
+      throw new Error(`APNs push failed for alarm ${alarmId}`);
+    }
   }
 
   // 테스트 전화

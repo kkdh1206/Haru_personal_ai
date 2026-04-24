@@ -189,9 +189,7 @@ final actor CallManager: NSObject, ObservableObject {
 
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            try audioSession.setCategory(.playAndRecord,
-                                         mode: .voiceChat,
-                                         options: [AVAudioSession.CategoryOptions.allowBluetoothHFP])
+            try audioSession.setCategory(.playAndRecord, options: [.allowBluetooth])
             try audioSession.setPreferredSampleRate(48_000)
             try audioSession.setPreferredIOBufferDuration(0.005)
             try audioSession.setActive(true)

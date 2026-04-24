@@ -16,6 +16,10 @@ export class PromptService {
 
   async getPrompt(alarmId: string) {
     const alarm: any = await this.alarmService.getAlarmWithUser(alarmId);
+    if (!alarm?.user) {
+      throw new Error(`Alarm user not found for alarm ${alarmId}`);
+    }
+
     const user: any = alarm.user;
     const todayLabel = DateTime.now()
       .setZone(user.timeZone || 'Asia/Seoul')
@@ -25,12 +29,18 @@ export class PromptService {
     const schedules = await this.calendarService.getTodayEvents(user._id);
 
     // 2. 뉴스, 날씨 가져오기
-    const news = await this.informationService.getCurrentNews(user.interest);
-    const newsInfo = news.map((item: any) => item.title);
-    const weather = await this.informationService.getCurrentWeather(
-      user.location,
+    const news = await this.informationService.getCurrentNews(
+      user.interest || 'korea-top',
     );
-    const weatherInfo = `${weather.weather}, 기온: ${weather.temperature}, 체감기온: ${weather.feels_like}, 위치: ${weather.city}`;
+    const newsInfo = Array.isArray(news)
+      ? news.map((item: any) => item.title).filter(Boolean)
+      : [];
+    const weather = await this.informationService.getCurrentWeather(
+      user.location || 'Seoul',
+    );
+    const weatherInfo = weather
+      ? `${weather.weather}, 기온: ${weather.temperature}, 체감기온: ${weather.feels_like}, 위치: ${weather.city}`
+      : '정보 없음';
 
     // 3. 일정, 뉴스, 날씨를 바탕으로 프롬프트 구성
     const prompt = buildMorningCallPrompt({
@@ -56,12 +66,18 @@ export class PromptService {
     const schedules = await this.calendarService.getTodayEvents(user._id);
 
     // 2. 뉴스, 날씨 가져오기
-    const news = await this.informationService.getCurrentNews(user.interest);
-    const newsInfo = news.map((item: any) => item.title);
-    const weather = await this.informationService.getCurrentWeather(
-      user.location,
+    const news = await this.informationService.getCurrentNews(
+      user.interest || 'korea-top',
     );
-    const weatherInfo = `${weather.weather}, 기온: ${weather.temperature}, 체감기온: ${weather.feels_like}, 위치: ${weather.city}`;
+    const newsInfo = Array.isArray(news)
+      ? news.map((item: any) => item.title).filter(Boolean)
+      : [];
+    const weather = await this.informationService.getCurrentWeather(
+      user.location || 'Seoul',
+    );
+    const weatherInfo = weather
+      ? `${weather.weather}, 기온: ${weather.temperature}, 체감기온: ${weather.feels_like}, 위치: ${weather.city}`
+      : '정보 없음';
 
     // 3. 일정, 뉴스, 날씨를 바탕으로 프롬프트 구성
     const prompt = buildMorningCallPrompt({

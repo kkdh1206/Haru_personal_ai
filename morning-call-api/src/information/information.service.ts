@@ -52,8 +52,17 @@ export class InformationService {
   // Topic에 따른 뉴스 가져오기
   async getCurrentNews(topic: string) {
     const raw = await this.redisClient.get(`news:${topic}`);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return parsed.data;
+    if (!raw) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed?.data ?? [];
+    } catch (e) {
+      console.error(`Error parsing cached news for ${topic}`, e);
+      return [];
+    }
   }
 
   // 날씨 데이터 가져오기

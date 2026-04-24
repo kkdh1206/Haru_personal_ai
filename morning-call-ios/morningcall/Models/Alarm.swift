@@ -20,13 +20,27 @@ struct Alarm: Identifiable, Codable, Hashable {
         case time, isOn, repeatDays, personality, voice, role, wakeIntensity
     }
 
+    private static func normalizeWakeIntensity(_ value: String) -> String {
+        value == "firm" ? "firm" : "gentle"
+    }
+
+    private static func normalizeWakeIntensity(_ value: Int) -> String {
+        value == 1 ? "firm" : "gentle"
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         time = try container.decode(String.self, forKey: .time)
         isOn = try container.decode(Bool.self, forKey: .isOn)
         repeatDays = try container.decodeIfPresent([Int].self, forKey: .repeatDays) ?? []
-        wakeIntensity = try container.decodeIfPresent(String.self, forKey: .wakeIntensity) ?? "gentle"
+        if let stringValue = try? container.decodeIfPresent(String.self, forKey: .wakeIntensity) {
+            wakeIntensity = Self.normalizeWakeIntensity(stringValue)
+        } else if let intValue = try? container.decodeIfPresent(Int.self, forKey: .wakeIntensity) {
+            wakeIntensity = Self.normalizeWakeIntensity(intValue)
+        } else {
+            wakeIntensity = "gentle"
+        }
         personality = try container.decodeIfPresent(String.self, forKey: .personality) ?? wakeIntensity
         voice = try container.decodeIfPresent(String.self, forKey: .voice) ?? "Leda"
         role = try container.decodeIfPresent(String.self, forKey: .role) ?? "하루"

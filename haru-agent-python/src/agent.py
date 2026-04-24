@@ -45,7 +45,24 @@ If you are NOT confident the user wants to end right now, ask a brief confirmati
 If user confirms, call the tool.
 """
 
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-live-001"
+
 _vad_instance = None
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_gemini_model() -> str:
+    configured = os.getenv("GEMINI_MODEL")
+    if not configured:
+        return DEFAULT_GEMINI_MODEL
+
+    return configured.strip()
 
 
 def now_iso() -> str:
@@ -80,8 +97,8 @@ class Assistant(Agent):
         *,
         on_hangup,
         instructions: str,
-        api_client: BackendApiClient = None,
-        user_id: str = None,
+        api_client: BackendApiClient | None = None,
+        user_id: str | None = None,
         conversation_id: str,
     ):
         super().__init__(instructions=instructions)
@@ -257,6 +274,15 @@ async def entrypoint(ctx: JobContext):
     hangup_requested = False
     greeted_user = False
     session: AgentSession
+    session_started = asyncio.Event()
+    greeting_lock = asyncio.Lock()
+    background_tasks: set[asyncio.Task] = set()
+
+    def start_background_task(coro, *, name: str | None = None) -> asyncio.Task:
+        task = asyncio.create_task(coro, name=name)
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+        return task
 
     def _trigger_hangup(message: str):
         nonlocal hangup_requested, session
@@ -264,37 +290,58 @@ async def entrypoint(ctx: JobContext):
             return
         hangup_requested = True
         logger.info(message)
-        asyncio.create_task(safe_hangup(ctx, session))
+        start_background_task(safe_hangup(ctx, session), name="safe_hangup")
 
-    session = AgentSession(
-        llm=GoogleRealtimeModel(
-            model=os.getenv(
-                "GEMINI_REALTIME_MODEL",
-                "gemini-3.1-flash-native-live-preview",
-            ),
-            api_key=os.getenv("GEMINI_API_KEY") or NOT_GIVEN,
-            voice=agent_voice,
-            language=os.getenv("GEMINI_LANGUAGE", "ko-KR"),
-            proactivity=True,
-            enable_affective_dialog=True,
-            input_audio_transcription={},
+    realtime_model_kwargs = {
+        "model": get_gemini_model(),
+        "api_key": os.getenv("GEMINI_API_KEY") or NOT_GIVEN,
+        "voice": agent_voice,
+        "language": os.getenv("GEMINI_LANGUAGE", "ko-KR"),
+        "proactivity": True if env_bool("GEMINI_PROACTIVITY", False) else NOT_GIVEN,
+        "enable_affective_dialog": (
+            True if env_bool("GEMINI_ENABLE_AFFECTIVE_DIALOG", False) else NOT_GIVEN
+        ),
+        "input_audio_transcription": {},
+    }
+    realtime_model = GoogleRealtimeModel(**realtime_model_kwargs)
+    supports_mid_session_updates = (
+        realtime_model.capabilities.mutable_chat_context
+        and realtime_model.capabilities.mutable_instructions
+    )
+
+    if supports_mid_session_updates:
+        realtime_model = GoogleRealtimeModel(
+            **realtime_model_kwargs,
             realtime_input_config=genai_types.RealtimeInputConfig(
                 automatic_activity_detection=genai_types.AutomaticActivityDetection(
                     disabled=True
                 )
             ),
-        ),
-        turn_detection="vad",
-        vad=get_vad(),
-        allow_interruptions=True,
-        min_interruption_duration=1.0,
-        min_interruption_words=2,
-        min_endpointing_delay=0.85,
-        max_endpointing_delay=2.4,
-        false_interruption_timeout=1.2,
-        resume_false_interruption=True,
-        min_consecutive_speech_delay=0.15,
+        )
+
+    logger.info(
+        f"🤖 Gemini realtime model: {get_gemini_model()} "
+        f"capabilities={realtime_model.capabilities}"
     )
+
+    session_kwargs = {
+        "llm": realtime_model,
+        "allow_interruptions": True,
+        "min_interruption_duration": 1.0,
+        "min_interruption_words": 2,
+        "min_endpointing_delay": 0.85,
+        "max_endpointing_delay": 2.4,
+        "false_interruption_timeout": 1.2,
+        "resume_false_interruption": True,
+        "min_consecutive_speech_delay": 0.15,
+    }
+    if supports_mid_session_updates:
+        session_kwargs["turn_detection"] = "vad"
+        session_kwargs["vad"] = get_vad()
+    else:
+        session_kwargs["turn_detection"] = "realtime_llm"
+
+    session = AgentSession(**session_kwargs)
 
     memory_instruction = ""
     if api_client:
@@ -351,20 +398,70 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
         summary = usage_collector.get_summary()
         logger.info(f"📊 Usage summary: {summary}")
 
+    def send_realtime_text_input(text: str) -> bool:
+        activity = getattr(session, "_activity", None)
+        rt_session = getattr(activity, "_rt_session", None) if activity else None
+        send_client_event = getattr(rt_session, "_send_client_event", None)
+        if not callable(send_client_event):
+            return False
+
+        send_client_event(genai_types.LiveClientRealtimeInput(text=text))
+        return True
+
     async def send_initial_greeting(trigger: str):
         nonlocal greeted_user
-        if greeted_user:
-            return
-        greeted_user = True
-        await asyncio.sleep(0.35)
-        logger.info(f"🗣️ Sending initial greeting after {trigger}")
-        session.generate_reply(
-            instructions=(
+        async with greeting_lock:
+            if greeted_user:
+                return
+
+            try:
+                await asyncio.wait_for(session_started.wait(), timeout=8.0)
+            except TimeoutError:
+                logger.warning(
+                    f"⚠️ Skipping initial greeting after {trigger}: session did not start"
+                )
+                return
+
+            await asyncio.sleep(0.35)
+            initial_greeting_instructions = (
                 "사용자가 방금 전화를 받았어. 네가 먼저 아주 자연스럽게 한두 문장으로 "
                 "짧은 인사와 기상 멘트를 시작해."
-            ),
-            allow_interruptions=True,
-        )
+            )
+            initial_greeting_trigger_text = (
+                "시스템 트리거: 사용자가 방금 전화를 받았다. 이 문장을 언급하지 말고, "
+                "지금 바로 한국어로 짧고 자연스럽게 아침 인사와 기상 멘트를 시작해."
+            )
+            supports_generate_reply = (
+                realtime_model.capabilities.mutable_chat_context
+                and realtime_model.capabilities.mutable_instructions
+            )
+
+            for attempt in range(1, 21):
+                try:
+                    if supports_generate_reply:
+                        session.generate_reply(
+                            instructions=initial_greeting_instructions,
+                            allow_interruptions=True,
+                        )
+                    elif not send_realtime_text_input(initial_greeting_trigger_text):
+                        raise RuntimeError("realtime session is not ready")
+
+                    greeted_user = True
+                    logger.info(
+                        f"🗣️ Sending initial greeting after {trigger} "
+                        f"(attempt {attempt})"
+                    )
+                    return
+                except RuntimeError as e:
+                    if "isn't running" not in str(e):
+                        logger.warning(f"⚠️ Initial greeting skipped: {e}")
+                        return
+
+                    await asyncio.sleep(0.25)
+
+            logger.warning(
+                "⚠️ Initial greeting skipped after retries: session is not running"
+            )
 
     shutdown_saved = False
 
@@ -440,7 +537,10 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
     def _on_participant_connected(p):
         identity = getattr(p, "identity", "(no identity)")
         logger.info(f"👤 Participant joined: {identity}")
-        asyncio.create_task(send_initial_greeting(f"participant_connected:{identity}"))
+        start_background_task(
+            send_initial_greeting(f"participant_connected:{identity}"),
+            name="initial_greeting_participant_connected",
+        )
 
     agent = Assistant(
         on_hangup=_trigger_hangup,
@@ -450,16 +550,26 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
         conversation_id=conversation_id,
     )
 
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-        room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVCTelephony(),
-        ),
-    )
+    try:
+        await session.start(
+            agent=agent,
+            room=ctx.room,
+            room_input_options=RoomInputOptions(
+                noise_cancellation=noise_cancellation.BVCTelephony(),
+            ),
+        )
+    except Exception as e:
+        logger.exception(f"❌ AgentSession failed to start: {e}")
+        raise
+
+    session_started.set()
+    logger.info("✅ AgentSession started")
 
     if ctx.room.remote_participants:
-        asyncio.create_task(send_initial_greeting("existing_remote_participant"))
+        start_background_task(
+            send_initial_greeting("existing_remote_participant"),
+            name="initial_greeting_existing_participant",
+        )
 
 
 if __name__ == "__main__":
