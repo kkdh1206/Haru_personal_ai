@@ -26,6 +26,11 @@ export class AlarmDto {
   @IsString()
   time: string;
 
+  @ApiProperty({ required: false, default: null })
+  @IsString()
+  @IsOptional()
+  targetDate?: string;
+
   @ApiProperty({ required: true, default: 'Asia/Seoul' })
   @IsString()
   timeZone: string;

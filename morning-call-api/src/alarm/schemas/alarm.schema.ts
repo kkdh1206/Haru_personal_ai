@@ -28,6 +28,9 @@ export class Alarm {
   @Prop({ required: true })
   time: string; // 'HH:mm' 형식
 
+  @Prop({ default: null })
+  targetDate?: string | null; // 'YYYY-MM-DD' 형식의 1회성 목표 날짜
+
   @Prop({ required: true, default: 'Asia/Seoul' })
   timeZone: string; // IANA tz, e.g. 'Asia/Seoul'
 
@@ -50,7 +53,13 @@ export class Alarm {
   lastCallType: 'initial' | 'retry';
 
   @Prop({ default: null })
-  lastWakeStatus: 'awake' | 'not_awake' | 'retry_requested' | 'no_response' | null;
+  lastWakeStatus:
+    | 'awake'
+    | 'not_awake'
+    | 'retry_requested'
+    | 'no_response'
+    | 'rejected'
+    | null;
 
   @Prop({ default: null })
   lastRetryScheduledAt: Date | null;

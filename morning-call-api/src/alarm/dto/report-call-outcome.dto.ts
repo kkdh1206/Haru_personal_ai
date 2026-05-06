@@ -17,10 +17,15 @@ export class ReportCallOutcomeDto {
   retryCount?: number = 0;
 
   @ApiProperty({
-    enum: ['awake', 'not_awake', 'retry_requested', 'no_response'],
+    enum: ['awake', 'not_awake', 'retry_requested', 'no_response', 'rejected'],
   })
-  @IsIn(['awake', 'not_awake', 'retry_requested', 'no_response'])
-  wakeStatus: 'awake' | 'not_awake' | 'retry_requested' | 'no_response';
+  @IsIn(['awake', 'not_awake', 'retry_requested', 'no_response', 'rejected'])
+  wakeStatus:
+    | 'awake'
+    | 'not_awake'
+    | 'retry_requested'
+    | 'no_response'
+    | 'rejected';
 
   @ApiProperty({ required: false, default: false })
   @IsOptional()

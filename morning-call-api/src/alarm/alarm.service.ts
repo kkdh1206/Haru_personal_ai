@@ -165,7 +165,7 @@ export class AlarmService {
       );
     } else {
       // 1회성 알람
-      const next = this.nextOnce(hour, minute, tz);
+      const next = this.nextOnce(hour, minute, tz, alarm.targetDate || undefined);
       const delay = next.getTime() - Date.now();
       const job = await this.alarmQueue.add(
         'trigger',
@@ -200,12 +200,21 @@ export class AlarmService {
     return target.toJSDate(); // JS Date (UTC 기반)
   }
 
-  private nextOnce(h: number, m: number, tz: string): Date {
-    let target = DateTime.local()
-      .setZone(tz)
-      .set({ hour: h, minute: m, second: 0, millisecond: 0 });
-    if (target <= DateTime.local().setZone(tz))
+  private nextOnce(h: number, m: number, tz: string, targetDate?: string): Date {
+    const now = DateTime.local().setZone(tz);
+    let target = targetDate
+      ? DateTime.fromISO(targetDate, { zone: tz }).set({
+          hour: h,
+          minute: m,
+          second: 0,
+          millisecond: 0,
+        })
+      : now.set({ hour: h, minute: m, second: 0, millisecond: 0 });
+
+    if (target <= now) {
       target = target.plus({ days: 1 });
+    }
+
     return target.toJSDate();
   }
 

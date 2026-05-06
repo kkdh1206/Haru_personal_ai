@@ -21,6 +21,12 @@ type LongTermMemorySearchResult = {
   id: string;
 };
 
+type BehaviorProfilePatch = {
+  wakeStyle?: 'gentle' | 'aggressive';
+  retryLimit?: number;
+  toneNotes?: string[];
+};
+
 @Injectable()
 export class MemoryService {
   private readonly logger = new Logger(MemoryService.name);
@@ -534,6 +540,34 @@ export class MemoryService {
     }
 
     return Object.fromEntries(userProfile.profile);
+  }
+
+  async updateBehaviorProfile(
+    userId: string,
+    patch: BehaviorProfilePatch,
+  ): Promise<Record<string, any>> {
+    const userObjectId = this.getUserObjectId(userId);
+    const updateFields: Record<string, any> = {
+      updatedAt: new Date(),
+    };
+
+    if (patch.wakeStyle) {
+      updateFields['profile.wakeStyle'] = patch.wakeStyle;
+    }
+    if (typeof patch.retryLimit === 'number') {
+      updateFields['profile.retryLimit'] = String(patch.retryLimit);
+    }
+    if (patch.toneNotes) {
+      updateFields['profile.toneNotes'] = JSON.stringify(patch.toneNotes);
+    }
+
+    await this.userProfileModel.findOneAndUpdate(
+      { userId: userObjectId },
+      { $set: updateFields },
+      { upsert: true, new: true },
+    );
+
+    return this.getUserInfo(userId);
   }
 
   async deleteUserInfo(

@@ -75,6 +75,34 @@ export class CalendarService {
     }
   }
 
+  async getSchedule(userId: string, date: string) {
+    try {
+      const { calendar, timeZone } = await this.getCalendarClient(userId);
+      const target = DateTime.fromISO(date, { zone: timeZone });
+
+      const res = await calendar.events.list({
+        calendarId: 'primary',
+        timeMin: target.startOf('day').toUTC().toISO(),
+        timeMax: target.endOf('day').toUTC().toISO(),
+        singleEvents: true,
+        orderBy: 'startTime',
+      });
+
+      return (
+        res.data.items?.map((event) => ({
+          id: event.id,
+          summary: event.summary,
+          description: event.description,
+          start: event.start?.dateTime || event.start?.date,
+          end: event.end?.dateTime || event.end?.date,
+          location: event.location,
+        })) || []
+      );
+    } catch (e) {
+      return [];
+    }
+  }
+
   async createEvent(userId: string, dto: CreateCalendarEventDto) {
     const { calendar, timeZone: defaultTimeZone } =
       await this.getCalendarClient(userId);
