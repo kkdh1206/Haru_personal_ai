@@ -282,12 +282,9 @@ struct AlarmTabView: View {
             ForEach(weekdaySlots) { slot in
                 WeekdayAlarmCard(
                     slot: slot,
-                    isNextAlarm: slot.day == nextRecurringWeekday,
+                    isToday: slot.day == todayWeekday,
                     onTap: {
-                        handleWeekdayToggle(day: slot.day, value: !(slot.alarm?.isOn ?? false))
-                    },
-                    onLongPress: {
-                        editorContext = makeWeekdayContext(for: slot.day, existingAlarm: slot.alarm)
+                        handleWeekdayTap(slot)
                     }
                 )
             }
@@ -333,20 +330,8 @@ struct AlarmTabView: View {
         }
     }
 
-    private var nextRecurringWeekday: Int? {
-        let calendar = Calendar.current
-        let now = Date()
-
-        let candidates: [(Date, Int)] = recurringAlarms.compactMap { alarm in
-            guard alarm.isOn, let next = nextRecurringDate(for: alarm, after: now, calendar: calendar) else {
-                return nil
-            }
-
-            let weekday = calendar.component(.weekday, from: next) - 1
-            return (next, weekday)
-        }
-
-        return candidates.min(by: { $0.0 < $1.0 })?.1
+    private var todayWeekday: Int {
+        Calendar.current.component(.weekday, from: Date()) - 1
     }
 
     private func makeWeekdayContext(for day: Int, existingAlarm: Alarm?) -> AlarmEditorContext {
@@ -436,6 +421,20 @@ struct AlarmTabView: View {
         ) {
             loadAlarms()
         }
+    }
+
+    private func handleWeekdayTap(_ slot: WeekdaySlot) {
+        guard let alarm = slot.alarm else {
+            editorContext = makeWeekdayContext(for: slot.day, existingAlarm: nil)
+            return
+        }
+
+        if alarm.isOn {
+            handleWeekdayToggle(day: slot.day, value: false)
+            return
+        }
+
+        editorContext = makeWeekdayContext(for: slot.day, existingAlarm: alarm)
     }
 
     private func saveWeekdayAlarm(day: Int, context: AlarmEditorContext, result: AlarmEditorResult) {
@@ -680,20 +679,19 @@ struct AlarmTabView: View {
 
 private struct WeekdayAlarmCard: View {
     let slot: WeekdaySlot
-    let isNextAlarm: Bool
+    let isToday: Bool
     let onTap: () -> Void
-    let onLongPress: () -> Void
 
     var body: some View {
         VStack(spacing: 8) {
             Text(slot.label)
                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                .foregroundStyle(isNextAlarm ? .white : Color.black.opacity(0.72))
+                .foregroundStyle(isToday ? .white : Color.black.opacity(0.72))
 
             Text(slot.alarm?.time ?? "OFF")
                 .font(.system(.caption, design: .rounded).weight(.bold))
                 .foregroundStyle(
-                    isNextAlarm
+                    isToday
                     ? .white
                     : (slot.alarm == nil ? Color.black.opacity(0.35) : Color.black.opacity(0.88))
                 )
@@ -703,11 +701,10 @@ private struct WeekdayAlarmCard: View {
         .padding(.horizontal, 4)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(isNextAlarm ? Color(red: 0.41, green: 0.63, blue: 0.95).opacity(0.92) : Color.clear)
+                .fill(isToday ? Color(red: 0.41, green: 0.63, blue: 0.95).opacity(0.92) : Color.clear)
         )
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .onTapGesture(perform: onTap)
-        .onLongPressGesture(perform: onLongPress)
     }
 }
 
