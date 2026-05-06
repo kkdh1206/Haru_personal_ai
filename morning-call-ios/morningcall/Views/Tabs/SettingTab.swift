@@ -37,6 +37,7 @@ struct SettingView: View {
     @State private var userName: String = ""
     @State private var selectedLanguage: String = "한국어"
     @State private var selectedTopic: String = ""   // 하나만 선택
+    @State private var selectedCharacter: CharacterPreference = CharacterPreferenceStore.current
 
     @State private var isSettingsLoading = false   // 설정용 로딩
 
@@ -73,62 +74,92 @@ struct SettingView: View {
     }
     
     var body: some View {
-        NavigationView {
-            List {
-                // 프로필 / 이름 설정
-                Section(header: Text("프로필")) {
-                    TextField("이름", text: $userName)
-                        .textInputAutocapitalization(.never)
-                        .onSubmit { saveProfile() }
-                }
-                // 언어 설정
-                Section(header: Text("통화 시 언어")) {
-                    Picker("언어", selection: $selectedLanguage) {
-                        ForEach(languageOptions, id: \.code) { lang in
-                            Text(lang.label)
-                                .tag(lang.code)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: selectedLanguage) { _ in
-                        saveProfile()
+        List {
+            // 프로필 / 이름 설정
+            Section(header: Text("프로필")) {
+                TextField("이름", text: $userName)
+                    .textInputAutocapitalization(.never)
+                    .onSubmit { saveProfile() }
+            }
+            // 언어 설정
+            Section(header: Text("통화 시 언어")) {
+                Picker("언어", selection: $selectedLanguage) {
+                    ForEach(languageOptions, id: \.code) { lang in
+                        Text(lang.label)
+                            .tag(lang.code)
                     }
                 }
-                
-                // 뉴스 관심 주제 설정 (단일 선택)
-                Section(header: Text("뉴스 관심 주제")) {
-                    ForEach(newsTopics, id: \.self) { topic in
-                        HStack {
-                            Text(topicLabel(topic))
-                            Spacer()
-                            if selectedTopic == topic {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            toggleTopic(topic)
+                .pickerStyle(.segmented)
+                .onChange(of: selectedLanguage) { _ in
+                    saveProfile()
+                }
+            }
+            
+            // 뉴스 관심 주제 설정 (단일 선택)
+            Section(header: Text("뉴스 관심 주제")) {
+                ForEach(newsTopics, id: \.self) { topic in
+                    HStack {
+                        Text(topicLabel(topic))
+                        Spacer()
+                        if selectedTopic == topic {
+                            Image(systemName: "checkmark")
                         }
                     }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        toggleTopic(topic)
+                    }
                 }
+            }
 
-                Section(header: Text("구글 캘린더")) {
-                    Button("캘린더 연동 다시 하기") {
-                        googleHelper.signInForCalendar()
-                    }
-                    Text("대화 중 약속이 나오면 Haru가 바로 일정에 추가할 수 있어요.")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
+            Section(header: Text("기상 화면 캐릭터")) {
+                ForEach(CharacterPreference.allCases, id: \.rawValue) { character in
+                    HStack(spacing: 14) {
+                        Image(character.assetName)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 44, height: 44)
 
-                Button("로그아웃") {
-                    authVM.signOut()
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(character.displayName)
+                                .font(.headline)
+                            Text(character.description)
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+
+                        Spacer()
+
+                        if selectedCharacter == character {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.blue)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectedCharacter = character
+                        CharacterPreferenceStore.current = character
+                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .foregroundColor(.red)
-                
-                // 캘린더 연동 / 로그아웃
-                // TODO: 일정 가져오는 쪽으로 옮겨야될듯...? 일정 조회시 에러 나면 연동하기 버튼 띄우는 쪽으로 -> API 부터 수정해야됨;;
+            }
+
+            Section(header: Text("구글 캘린더")) {
+                Button("캘린더 연동 다시 하기") {
+                    googleHelper.signInForCalendar()
+                }
+                Text("대화 중 약속이 나오면 Haru가 바로 일정에 추가할 수 있어요.")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+
+            Button("로그아웃") {
+                authVM.signOut()
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+            .foregroundColor(.red)
+            
+            // 캘린더 연동 / 로그아웃
+            // TODO: 일정 가져오는 쪽으로 옮겨야될듯...? 일정 조회시 에러 나면 연동하기 버튼 띄우는 쪽으로 -> API 부터 수정해야됨;;
 //                    Button("캘린더 연동하기") {
 //                        googleHelper.signInForCalendar()
 //                    }
@@ -141,22 +172,21 @@ struct SettingView: View {
 //                            .font(.caption)
 //                            .lineLimit(2)
 //                    }
-            }
-            .listStyle(.insetGrouped)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingTestCallSheet = true }) {
-                        Image(systemName: "phone.fill")
-                    }
+        }
+        .listStyle(.insetGrouped)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showingTestCallSheet = true }) {
+                    Image(systemName: "phone.fill")
                 }
             }
-            .sheet(isPresented: $showingTestCallSheet) {
-                TestCallView()
-            }
-            .navigationTitle("설정")
-            .task {
-                loadInitialSettings()
-            }
+        }
+        .sheet(isPresented: $showingTestCallSheet) {
+            TestCallView()
+        }
+        .navigationTitle("설정")
+        .task {
+            loadInitialSettings()
         }
     }
     
@@ -199,5 +229,6 @@ struct SettingView: View {
         self.userName = env.user?.name ?? ""
         self.selectedLanguage = env.user?.language ?? ""
         self.selectedTopic = env.user?.interest ?? ""
+        self.selectedCharacter = CharacterPreferenceStore.current
     }
 }

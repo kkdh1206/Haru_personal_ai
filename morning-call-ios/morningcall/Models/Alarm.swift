@@ -10,6 +10,7 @@ struct Alarm: Identifiable, Codable, Hashable {
     var time: String
     var isOn: Bool
     var repeatDays: [Int]
+    var targetDate: String?
     var personality: String
     var voice: String
     var role: String
@@ -17,7 +18,7 @@ struct Alarm: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id = "_id"
-        case time, isOn, repeatDays, personality, voice, role, wakeIntensity
+        case time, isOn, repeatDays, targetDate, personality, voice, role, wakeIntensity
     }
 
     private static func normalizeWakeIntensity(_ value: String) -> String {
@@ -34,6 +35,7 @@ struct Alarm: Identifiable, Codable, Hashable {
         time = try container.decode(String.self, forKey: .time)
         isOn = try container.decode(Bool.self, forKey: .isOn)
         repeatDays = try container.decodeIfPresent([Int].self, forKey: .repeatDays) ?? []
+        targetDate = try container.decodeIfPresent(String.self, forKey: .targetDate)
         if let stringValue = try? container.decodeIfPresent(String.self, forKey: .wakeIntensity) {
             wakeIntensity = Self.normalizeWakeIntensity(stringValue)
         } else if let intValue = try? container.decodeIfPresent(Int.self, forKey: .wakeIntensity) {
@@ -51,6 +53,7 @@ struct Alarm: Identifiable, Codable, Hashable {
         time: String,
         isOn: Bool,
         repeatDays: [Int],
+        targetDate: String? = nil,
         personality: String,
         voice: String,
         role: String,
@@ -60,6 +63,7 @@ struct Alarm: Identifiable, Codable, Hashable {
         self.time = time
         self.isOn = isOn
         self.repeatDays = repeatDays
+        self.targetDate = targetDate
         self.personality = personality
         self.voice = voice
         self.role = role

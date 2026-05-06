@@ -1,120 +1,363 @@
 import SwiftUI
 
-struct AlarmEditView: View {
-    @Environment(\.dismiss) var dismiss
-    @State private var time = Date()
-    @State private var repeatDays: Set<Int> = []
-    @State private var wakeIntensity = "gentle"
+struct AlarmEditorContext: Identifiable {
+    enum Mode {
+        case weekday(Int)
+        case exception(Date)
+    }
 
-    let isEditing: Bool
-    var onSave: (Date, [Int], String) -> Void
-    var onDelete: (() -> Void)?
+    let mode: Mode
+    let existingAlarm: Alarm?
+    let title: String
+    let subtitle: String
+    let defaultTime: Date
+    let isException: Bool
+
+    var id: String {
+        switch mode {
+        case .weekday(let day):
+            return "weekday-\(day)-\(existingAlarm?.id ?? "new")"
+        case .exception(let date):
+            return "exception-\(date.timeIntervalSince1970)-\(existingAlarm?.id ?? "new")"
+        }
+    }
+
+    var storageKey: String {
+        switch mode {
+        case .weekday(let day):
+            return existingAlarm?.id ?? "weekday-\(day)"
+        case .exception(let date):
+            return "exception-\(AlarmDateFormatter.storage.string(from: date))"
+        }
+    }
+}
+
+struct AlarmEditorResult {
+    let time: Date
+    let wakeStyle: String
+    let snoozeMinutes: Int
+    let note: String
+    let isSkipped: Bool
+}
+
+fileprivate struct AlarmPresentationSettings: Codable {
+    var wakeStyle: String
+    var snoozeMinutes: Int
+    var note: String
+
+    static let `default` = AlarmPresentationSettings(
+        wakeStyle: "gentle",
+        snoozeMinutes: 5,
+        note: ""
+    )
+}
+
+fileprivate enum AlarmPresentationStore {
+    private static let defaultsKey = "haru.alarm.presentation.settings"
+
+    static func load(for key: String) -> AlarmPresentationSettings {
+        guard
+            let data = UserDefaults.standard.data(forKey: defaultsKey),
+            let all = try? JSONDecoder().decode([String: AlarmPresentationSettings].self, from: data)
+        else {
+            return .default
+        }
+
+        return all[key] ?? .default
+    }
+
+    static func save(_ settings: AlarmPresentationSettings, for key: String) {
+        var all: [String: AlarmPresentationSettings] = [:]
+        if
+            let data = UserDefaults.standard.data(forKey: defaultsKey),
+            let decoded = try? JSONDecoder().decode([String: AlarmPresentationSettings].self, from: data)
+        {
+            all = decoded
+        }
+
+        all[key] = settings
+
+        if let encoded = try? JSONEncoder().encode(all) {
+            UserDefaults.standard.set(encoded, forKey: defaultsKey)
+        }
+    }
+}
+
+struct AlarmEditView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    private let context: AlarmEditorContext
+    private let onSave: (AlarmEditorResult) -> Void
+    private let onDelete: (() -> Void)?
+
+    @State private var time: Date
+    @State private var wakeStyle: String
+    @State private var snoozeMinutes: Int
+    @State private var note: String
+    @State private var isSkipped: Bool
 
     init(
-        alarm: Alarm? = nil,
-        onSave: @escaping (Date, [Int], String) -> Void,
+        context: AlarmEditorContext,
+        onSave: @escaping (AlarmEditorResult) -> Void,
         onDelete: (() -> Void)? = nil
     ) {
-        if let alarm = alarm {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm"
-            self._time = State(initialValue: formatter.date(from: alarm.time) ?? Date())
-            self._repeatDays = State(initialValue: Set(alarm.repeatDays))
-            self._wakeIntensity = State(initialValue: alarm.wakeIntensity)
-            self.isEditing = true
-        } else {
-            self._time = State(initialValue: Date())
-            self._repeatDays = State(initialValue: [])
-            self._wakeIntensity = State(initialValue: "gentle")
-            self.isEditing = false
-        }
+        self.context = context
         self.onSave = onSave
         self.onDelete = onDelete
+
+        let stored = AlarmPresentationStore.load(for: context.storageKey)
+        let initialStyle = context.existingAlarm?.personality ?? stored.wakeStyle
+        self._time = State(initialValue: context.defaultTime)
+        self._wakeStyle = State(initialValue: Self.normalizeWakeStyle(initialStyle))
+        self._snoozeMinutes = State(initialValue: stored.snoozeMinutes)
+        self._note = State(initialValue: stored.note)
+        self._isSkipped = State(initialValue: false)
     }
 
     var body: some View {
-        NavigationView {
-            List {
-                Section {
-                    DatePicker("시간", selection: $time, displayedComponents: .hourAndMinute)
-                        .datePickerStyle(.wheel)
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity)
-                }
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    headerCard
+                    timeSection
+                    wakeStyleSection
+                    optionSection
 
-                Section("하루") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("친구처럼 깨워주는 Haru")
-                            .font(.headline)
-                        Text("일어나야 할 순간엔 다정하게 챙기고, 필요하면 확실하게 밀어줘요.")
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                NavigationLink {
-                    RepeatDaysView(selectedDays: $repeatDays)
-                } label: {
-                    HStack {
-                        Text("반복")
-                        Spacer()
-                        Text(repeatDaysText(repeatDays))
-                            .foregroundColor(.gray)
-                    }
-                }
-
-                NavigationLink {
-                    WakeIntensityView(selectedIntensity: $wakeIntensity)
-                } label: {
-                    HStack {
-                        Text("깨우기 강도")
-                        Spacer()
-                        Text(wakeIntensityText(wakeIntensity))
-                            .foregroundColor(.gray)
-                    }
-                }
-
-                if isEditing, let onDelete = onDelete {
-                    Section {
+                    if let onDelete {
                         Button(role: .destructive) {
                             onDelete()
                             dismiss()
                         } label: {
-                            Text("알람 삭제")
-                                .frame(maxWidth: .infinity, alignment: .center)
+                            Text(context.isException ? "예외 알람 삭제" : "이 요일 알람 삭제")
+                                .font(.system(.body, design: .rounded).weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                        .fill(Color.white.opacity(0.82))
+                                )
                         }
+                        .buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 32)
             }
-            .navigationTitle(isEditing ? "알람 편집" : "알람 추가")
+            .background(Color(red: 0.97, green: 0.96, blue: 0.93))
+            .navigationTitle(context.title)
             .navigationBarTitleDisplayMode(.inline)
+            .tint(.black)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("취소") {
-                        dismiss()
-                    }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("취소") { dismiss() }
+                        .foregroundStyle(.black)
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("저장") {
-                        onSave(time, Array(repeatDays), wakeIntensity)
+                        let settings = AlarmPresentationSettings(
+                            wakeStyle: wakeStyle,
+                            snoozeMinutes: snoozeMinutes,
+                            note: note
+                        )
+                        AlarmPresentationStore.save(settings, for: context.storageKey)
+                        onSave(
+                            AlarmEditorResult(
+                                time: time,
+                                wakeStyle: wakeStyle,
+                                snoozeMinutes: snoozeMinutes,
+                                note: note,
+                                isSkipped: isSkipped
+                            )
+                        )
                         dismiss()
                     }
-                    .bold()
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.black)
                 }
             }
         }
+        .preferredColorScheme(.light)
     }
 
-    private func repeatDaysText(_ days: Set<Int>) -> String {
-        let shortNames = ["일", "월", "화", "수", "목", "금", "토"]
-        let sorted = days.sorted()
-        return sorted.isEmpty ? "안 함" : sorted.map { shortNames[$0] }.joined(separator: ", ")
+    private var headerCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(context.subtitle)
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(Color.black.opacity(0.58))
+
+            Text(displayTime)
+                .font(.system(size: 42, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.black.opacity(0.92))
+
+            if context.isException {
+                Toggle("이 날은 알람 쉬기", isOn: $isSkipped)
+                    .tint(Color(red: 0.47, green: 0.61, blue: 0.92))
+                    .padding(.top, 8)
+                    .foregroundStyle(.black)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(24)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .stroke(Color.white.opacity(0.6), lineWidth: 1)
+                )
+        )
     }
 
-    private func wakeIntensityText(_ value: String) -> String {
-        value == "firm" ? "강하게" : "다정하게"
+    private var timeSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("시간 변경")
+                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .foregroundStyle(.black)
+
+            DatePicker(
+                "",
+                selection: $time,
+                displayedComponents: .hourAndMinute
+            )
+            .datePickerStyle(.wheel)
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            .clipped()
+            .padding(.horizontal, 4)
+            .disabled(isSkipped)
+        }
+        .padding(22)
+        .background(sectionBackground)
+    }
+
+    private var wakeStyleSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("깨우기 방식")
+                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .foregroundStyle(.black)
+
+            VStack(spacing: 12) {
+                wakeStyleRow(
+                    id: "gentle",
+                    title: "부드럽게",
+                    detail: "잔잔한 톤으로 천천히 깨워요."
+                )
+                wakeStyleRow(
+                    id: "normal",
+                    title: "보통",
+                    detail: "차분하지만 분명하게 일어날 시간을 알려줘요."
+                )
+                wakeStyleRow(
+                    id: "aggressive",
+                    title: "강하게",
+                    detail: "지금은 꼭 일어나야 할 때라는 느낌으로 깨워요."
+                )
+            }
+        }
+        .padding(22)
+        .background(sectionBackground)
+    }
+
+    private var optionSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("알람 옵션")
+                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .foregroundStyle(.black)
+
+            VStack(spacing: 14) {
+                HStack {
+                    Text("스누즈")
+                        .foregroundStyle(.black)
+                    Spacer()
+                    Picker("스누즈", selection: $snoozeMinutes) {
+                        Text("끔").tag(0)
+                        Text("5분").tag(5)
+                        Text("10분").tag(10)
+                        Text("15분").tag(15)
+                    }
+                    .pickerStyle(.menu)
+                    .disabled(isSkipped)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("메모")
+                        .font(.system(.subheadline, design: .rounded).weight(.medium))
+                        .foregroundStyle(Color.black.opacity(0.58))
+
+                    TextField("예: 일찍 출근, 병원 예약, 비 오는 날", text: $note, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(Color.white.opacity(0.72))
+                        )
+                        .disabled(isSkipped)
+                }
+            }
+        }
+        .padding(22)
+        .background(sectionBackground)
+    }
+
+    private func wakeStyleRow(id: String, title: String, detail: String) -> some View {
+        Button {
+            wakeStyle = id
+        } label: {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(.body, design: .rounded).weight(.semibold))
+                        .foregroundStyle(.black)
+                    Text(detail)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.black.opacity(0.58))
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Image(systemName: wakeStyle == id ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(
+                        wakeStyle == id
+                        ? Color(red: 0.47, green: 0.61, blue: 0.92)
+                        : Color.secondary.opacity(0.45)
+                    )
+            }
+            .padding(18)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(wakeStyle == id ? Color.white.opacity(0.9) : Color.white.opacity(0.58))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isSkipped)
+    }
+
+    private var sectionBackground: some View {
+        RoundedRectangle(cornerRadius: 28, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(Color.white.opacity(0.55), lineWidth: 1)
+            )
+    }
+
+    private var displayTime: String {
+        AlarmDateFormatter.time.string(from: time)
+    }
+
+    private static func normalizeWakeStyle(_ value: String) -> String {
+        switch value {
+        case "aggressive", "normal", "gentle":
+            return value
+        case "firm":
+            return "aggressive"
+        default:
+            return "gentle"
+        }
     }
 }

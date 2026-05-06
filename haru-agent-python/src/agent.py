@@ -25,7 +25,6 @@ from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.google.realtime import RealtimeModel as GoogleRealtimeModel
 
 from api_client import BackendApiClient
-from summarizer import get_summarizer
 
 logger = logging.getLogger("agent")
 
@@ -34,9 +33,11 @@ load_dotenv(".env.local")
 CONTROL_INSTRUCTIONS = """
 If the user signals they want to END or STOP the call (explicitly or implicitly),
 DO THIS:
-1) Say a SHORT, polite goodbye (match the user's language).
-2) Immediately CALL the tool: request_hangup with a brief reason string.
-3) Do not keep talking after calling the tool.
+1) DO NOT speak the goodbye directly in plain text first.
+2) Immediately CALL the tool: request_hangup with:
+   - a brief reason string
+   - a SHORT polite goodbye sentence in the farewell field
+3) Do not keep talking after calling the tool. The server will speak the farewell and hang up.
 
 Examples that SHOULD trigger the tool:
 - "전화 끊어(줘)", "통화 종료", "그만하자", "여기까지 할게요", "고마워요 이만", "다음에 해요"
@@ -46,7 +47,9 @@ If you are NOT confident the user wants to end right now, ask a brief confirmati
 If user confirms, call the tool.
 """
 
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-live-001"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-live-preview"
+DEFAULT_NO_ANSWER_TIMEOUT_SECONDS = 45
+DEFAULT_HANGUP_GRACE_SECONDS = 0.1
 
 _vad_instance = None
 
@@ -64,6 +67,28 @@ def get_gemini_model() -> str:
         return DEFAULT_GEMINI_MODEL
 
     return configured.strip()
+
+
+def get_no_answer_timeout_seconds() -> int:
+    configured = os.getenv("NO_ANSWER_TIMEOUT_SECONDS")
+    if not configured:
+        return DEFAULT_NO_ANSWER_TIMEOUT_SECONDS
+
+    try:
+        return max(int(configured.strip()), 5)
+    except ValueError:
+        return DEFAULT_NO_ANSWER_TIMEOUT_SECONDS
+
+
+def get_hangup_grace_seconds() -> float:
+    configured = os.getenv("HANGUP_GRACE_SECONDS")
+    if not configured:
+        return DEFAULT_HANGUP_GRACE_SECONDS
+
+    try:
+        return max(float(configured.strip()), 0.0)
+    except ValueError:
+        return DEFAULT_HANGUP_GRACE_SECONDS
 
 
 def now_iso() -> str:
@@ -214,10 +239,16 @@ class Assistant(Agent):
 
     @function_tool
     async def request_hangup(
-        self, context: RunContext, reason: str = "user requested to end"
+        self,
+        context: RunContext,
+        reason: str = "user requested to end",
+        farewell: str = "좋은 하루 보내.",
     ):
         if callable(self._on_hangup):
-            self._on_hangup(f"🛑 LLM requested hangup via tool - reason: {reason}")
+            self._on_hangup(
+                f"🛑 LLM requested hangup via tool - reason: {reason}",
+                farewell,
+            )
         return {"status": "ok"}
 
     @function_tool
@@ -361,9 +392,24 @@ class Assistant(Agent):
         return {"status": "error", "message": "API 클라이언트가 초기화되지 않았습니다."}
 
 
-async def safe_hangup(ctx: JobContext, session: AgentSession):
-    logger.info("⏳ Waiting briefly before closing connection...")
-    await asyncio.sleep(1.0)
+async def safe_hangup(
+    ctx: JobContext,
+    session: AgentSession,
+    delay_seconds: float | None = None,
+    speech_handle=None,
+):
+    if speech_handle is not None:
+        try:
+            logger.info("🔊 Waiting for farewell playback to finish...")
+            await speech_handle.wait_for_playout()
+        except Exception as e:
+            logger.warning(f"Error while waiting for speech playout: {e}")
+
+    grace_seconds = (
+        get_hangup_grace_seconds() if delay_seconds is None else max(delay_seconds, 0.0)
+    )
+    logger.info(f"⏳ Waiting {grace_seconds:.1f}s before closing connection...")
+    await asyncio.sleep(grace_seconds)
 
     try:
         await session.aclose()
@@ -429,11 +475,10 @@ async def entrypoint(ctx: JobContext):
 
     call_started_at = now_iso()
     conversation_messages = []
-    summarizer = get_summarizer()
-
     hangup_requested = False
     greeted_user = False
     call_outcome_reported = False
+    participant_joined = False
     session: AgentSession
     session_started = asyncio.Event()
     greeting_lock = asyncio.Lock()
@@ -445,13 +490,33 @@ async def entrypoint(ctx: JobContext):
         task.add_done_callback(background_tasks.discard)
         return task
 
-    def _trigger_hangup(message: str):
+    def _trigger_hangup(message: str, farewell_text: str | None = None):
         nonlocal hangup_requested, session
         if hangup_requested:
             return
         hangup_requested = True
         logger.info(message)
-        start_background_task(safe_hangup(ctx, session), name="safe_hangup")
+
+        async def _hangup_sequence():
+            speech_handle = None
+            try:
+                await session.interrupt(force=True)
+            except Exception as e:
+                logger.warning(f"Error while interrupting active response: {e}")
+
+            if farewell_text:
+                try:
+                    speech_handle = session.say(
+                        farewell_text.strip(),
+                        allow_interruptions=False,
+                        add_to_chat_ctx=False,
+                    )
+                except Exception as e:
+                    logger.warning(f"Error while starting farewell speech: {e}")
+
+            await safe_hangup(ctx, session, speech_handle=speech_handle)
+
+        start_background_task(_hangup_sequence(), name="safe_hangup")
 
     def _mark_call_outcome_reported(result: dict | None = None):
         nonlocal call_outcome_reported
@@ -461,6 +526,31 @@ async def entrypoint(ctx: JobContext):
         call_outcome_reported = True
         if result is not None:
             logger.info(f"📟 Call outcome handled in-session: {result}")
+
+    async def report_call_outcome_once(
+        wake_status: str,
+        *,
+        had_user_response: bool,
+        retry_minutes: int | None = None,
+    ) -> dict | None:
+        nonlocal call_outcome_reported
+
+        if call_outcome_reported or not api_client or not alarm_id:
+            return None
+
+        outcome_result = await api_client.report_call_outcome(
+            alarm_id=alarm_id,
+            call_type=call_type,
+            retry_count=retry_count,
+            wake_status=wake_status,
+            had_user_response=had_user_response,
+            retry_minutes=retry_minutes,
+        )
+        if outcome_result.get("success", False):
+            call_outcome_reported = True
+        else:
+            logger.warning(f"⚠️ Failed to report call outcome: {outcome_result}")
+        return outcome_result
 
     realtime_model_kwargs = {
         "model": get_gemini_model(),
@@ -667,14 +757,10 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
         try:
             if api_client and alarm_id and not call_outcome_reported:
                 wake_status, had_user_response = infer_wake_status(conversation_messages)
-                outcome_result = await api_client.report_call_outcome(
-                    alarm_id=alarm_id,
-                    call_type=call_type,
-                    retry_count=retry_count,
-                    wake_status=wake_status,
+                outcome_result = await report_call_outcome_once(
+                    wake_status,
                     had_user_response=had_user_response,
                 )
-                call_outcome_reported = outcome_result.get("success", False)
                 logger.info(
                     "📟 Final wake outcome: "
                     f"wake_status={wake_status} had_user_response={had_user_response} "
@@ -683,7 +769,6 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
 
             if api_client and conversation_messages and not shutdown_saved:
                 transcript = build_transcript(conversation_messages)
-                analysis = await summarizer.analyze_transcript(conversation_messages)
                 ended_at = now_iso()
 
                 logger.info(
@@ -694,7 +779,6 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
                     user_id=user_id,
                     conversation_id=conversation_id,
                     transcript=transcript,
-                    summary=analysis.call_summary,
                     started_at=call_started_at,
                     ended_at=ended_at,
                     message_count=len(conversation_messages),
@@ -704,22 +788,6 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
                         "retryCount": retry_count,
                     },
                 )
-
-                memory_payload = [
-                    {
-                        "content": memory.content,
-                        "importance": memory.importance,
-                        "tags": memory.tags,
-                    }
-                    for memory in analysis.long_term_memories
-                ]
-
-                if memory_payload:
-                    await api_client.save_long_term_memories(
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        memories=memory_payload,
-                    )
 
                 shutdown_saved = True
 
@@ -751,11 +819,41 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
 
     @ctx.room.on("participant_connected")
     def _on_participant_connected(p):
+        nonlocal participant_joined
+        participant_joined = True
         identity = getattr(p, "identity", "(no identity)")
         logger.info(f"👤 Participant joined: {identity}")
         start_background_task(
             send_initial_greeting(f"participant_connected:{identity}"),
             name="initial_greeting_participant_connected",
+        )
+
+    @ctx.room.on("participant_disconnected")
+    def _on_participant_disconnected(p):
+        identity = getattr(p, "identity", "(no identity)")
+        logger.info(f"👋 Participant left: {identity}")
+
+        async def handle_disconnect():
+            if hangup_requested or call_outcome_reported:
+                return
+
+            had_user_response = any(
+                message.get("role") == "user" and (message.get("content") or "").strip()
+                for message in conversation_messages
+            )
+            if had_user_response:
+                return
+
+            result = await report_call_outcome_once(
+                "rejected",
+                had_user_response=False,
+            )
+            logger.info(f"📟 Rejected call outcome reported: {result}")
+            _trigger_hangup("📴 Participant disconnected before responding")
+
+        start_background_task(
+            handle_disconnect(),
+            name="participant_disconnected_outcome",
         )
 
     agent = Assistant(
@@ -787,10 +885,27 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
     logger.info("✅ AgentSession started")
 
     if ctx.room.remote_participants:
+        participant_joined = True
         start_background_task(
             send_initial_greeting("existing_remote_participant"),
             name="initial_greeting_existing_participant",
         )
+
+    async def no_answer_watchdog():
+        await asyncio.sleep(get_no_answer_timeout_seconds())
+
+        if participant_joined or hangup_requested or call_outcome_reported:
+            return
+
+        result = await report_call_outcome_once(
+            "no_response",
+            had_user_response=False,
+        )
+        logger.info(f"📟 No-answer outcome reported: {result}")
+        _trigger_hangup("📵 No participant joined before timeout")
+
+    if alarm_id:
+        start_background_task(no_answer_watchdog(), name="no_answer_watchdog")
 
 
 if __name__ == "__main__":
