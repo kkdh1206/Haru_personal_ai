@@ -73,7 +73,7 @@ export class PromptService {
       user.location || 'Seoul',
     );
     const weatherInfo = weather
-      ? `${weather.weather}, 기온: ${weather.temperature}, 체감기온: ${weather.feels_like}, 위치: ${weather.city}`
+      ? `${weather.city} ${weather.weather}, ${weather.temperature}, 체감 ${weather.feels_like}`
       : '정보 없음';
 
     // 3. 일정, 뉴스, 날씨를 바탕으로 프롬프트 구성
@@ -120,7 +120,7 @@ export class PromptService {
       user.location || 'Seoul',
     );
     const weatherInfo = weather
-      ? `${weather.weather}, 기온: ${weather.temperature}, 체감기온: ${weather.feels_like}, 위치: ${weather.city}`
+      ? `${weather.city} ${weather.weather}, ${weather.temperature}, 체감 ${weather.feels_like}`
       : '정보 없음';
 
     // 3. 일정, 뉴스, 날씨를 바탕으로 프롬프트 구성

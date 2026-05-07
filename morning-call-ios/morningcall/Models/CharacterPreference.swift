@@ -1,5 +1,27 @@
 import Foundation
 
+enum HaruDayPeriod: String {
+    case morning
+    case afternoon
+    case night
+
+    static func current(date: Date = Date(), calendar: Calendar = .current) -> HaruDayPeriod {
+        let hour = calendar.component(.hour, from: date)
+        switch hour {
+        case 5..<12:
+            return .morning
+        case 12..<18:
+            return .afternoon
+        default:
+            return .night
+        }
+    }
+
+    var backgroundAssetName: String {
+        "Background_\(rawValue)"
+    }
+}
+
 enum CharacterPreference: String, CaseIterable, Codable {
     case haru
     case hari
@@ -13,12 +35,12 @@ enum CharacterPreference: String, CaseIterable, Codable {
         }
     }
 
-    var assetName: String {
+    func assetName(for period: HaruDayPeriod = .current()) -> String {
         switch self {
         case .haru:
-            return "haru"
+            return "Haru_\(period.rawValue)"
         case .hari:
-            return "Hari"
+            return "Hari_\(period.rawValue)"
         }
     }
 
@@ -50,4 +72,3 @@ enum CharacterPreferenceStore {
         }
     }
 }
-

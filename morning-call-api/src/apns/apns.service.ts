@@ -3,6 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import apn from 'apn';
 import fs from 'fs';
 
+type ApnNotificationWithHeaders = apn.Notification & {
+  headers: () => Record<string, string | number>;
+};
+
 @Injectable()
 export class ApnsService implements OnModuleDestroy {
   private provider: apn.Provider;
@@ -20,6 +24,15 @@ export class ApnsService implements OnModuleDestroy {
     });
   }
 
+  private applyVoipHeaders(note: apn.Notification) {
+    const notification = note as ApnNotificationWithHeaders;
+    const originalHeaders = notification.headers.bind(notification);
+    notification.headers = () => ({
+      ...originalHeaders(),
+      'apns-push-type': 'voip',
+    });
+  }
+
   async sendVoipPush(
     token: string,
     payload: {
@@ -30,6 +43,7 @@ export class ApnsService implements OnModuleDestroy {
   ) {
     const note = new apn.Notification();
     note.topic = `${this.cs.get<string>('apns.bundleId')}.voip`;
+    note.priority = 10;
     note.aps = { 'content-available': 1 };
     note.payload = {
       caller: payload.caller,
@@ -37,6 +51,7 @@ export class ApnsService implements OnModuleDestroy {
       lkToken: payload.livekitToken,
       alarmId: payload.alarmId,
     };
+    this.applyVoipHeaders(note);
 
     const res = await this.provider.send(note, token);
     console.log(res.sent.length ? '✅ sent' : '❌ failed', res);
@@ -45,15 +60,15 @@ export class ApnsService implements OnModuleDestroy {
 
   async sendWakeFollowupPush(token: string, body: string) {
     const note = new apn.Notification();
-    note.topic = this.cs.get<string>('apns.bundleId');
-    note.alert = {
+    note.topic = `${this.cs.get<string>('apns.bundleId')}.voip`;
+    note.priority = 5;
+    note.aps = { 'content-available': 1 };
+    note.payload = {
+      type: 'wake_followup',
       title: 'Haru',
       body,
     };
-    note.sound = 'default';
-    note.payload = {
-      type: 'wake_followup',
-    };
+    this.applyVoipHeaders(note);
 
     const res = await this.provider.send(note, token);
     console.log(res.sent.length ? '✅ followup sent' : '❌ followup failed', res);

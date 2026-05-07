@@ -107,6 +107,10 @@ struct AlarmTabView: View {
         alarms.filter { !($0.targetDate ?? "").isEmpty }
     }
 
+    private var currentDayPeriod: HaruDayPeriod {
+        HaruDayPeriod.current()
+    }
+
     private var nextAlarmSummary: NextAlarmSummary? {
         let calendar = Calendar.current
         let now = Date()
@@ -167,7 +171,7 @@ struct AlarmTabView: View {
 //                    .padding(.bottom, max(geometry.safeAreaInsets.bottom, 16))
                 }
                 .background(
-                    Image("Background")
+                    Image(currentDayPeriod.backgroundAssetName)
                         .resizable()
                         .scaledToFill()
                         .ignoresSafeArea()
@@ -262,7 +266,7 @@ struct AlarmTabView: View {
             HStack {
                 Spacer()
 
-                Image(selectedCharacter.assetName)
+                Image(selectedCharacter.assetName(for: currentDayPeriod))
                     .resizable()
                     .scaledToFit()
                     .frame(width: selectedCharacter == .haru ? 246 : 210)
@@ -302,7 +306,7 @@ struct AlarmTabView: View {
             showingExceptionSheet = true
         } label: {
             HStack(spacing: 10) {
-                Text("예외 캘린더")
+                Text("알람 캘린더")
                     .font(.system(.subheadline, design: .rounded).weight(.semibold))
                     .foregroundStyle(Color.black.opacity(0.76))
 
@@ -424,17 +428,7 @@ struct AlarmTabView: View {
     }
 
     private func handleWeekdayTap(_ slot: WeekdaySlot) {
-        guard let alarm = slot.alarm else {
-            editorContext = makeWeekdayContext(for: slot.day, existingAlarm: nil)
-            return
-        }
-
-        if alarm.isOn {
-            handleWeekdayToggle(day: slot.day, value: false)
-            return
-        }
-
-        editorContext = makeWeekdayContext(for: slot.day, existingAlarm: alarm)
+        editorContext = makeWeekdayContext(for: slot.day, existingAlarm: slot.alarm)
     }
 
     private func saveWeekdayAlarm(day: Int, context: AlarmEditorContext, result: AlarmEditorResult) {
@@ -766,7 +760,7 @@ private struct ExceptionCalendarSheet: View {
             .padding(.horizontal, 18)
             .padding(.top, 14)
             .background(Color.white)
-            .navigationTitle("예외 캘린더")
+            .navigationTitle("알람 캘린더")
             .navigationBarTitleDisplayMode(.inline)
             .tint(.black)
         }

@@ -121,7 +121,6 @@ struct AlarmEditView: View {
                     headerCard
                     timeSection
                     wakeStyleSection
-                    optionSection
 
                     if let onDelete {
                         Button(role: .destructive) {
@@ -244,58 +243,10 @@ struct AlarmEditView: View {
                     detail: "잔잔한 톤으로 천천히 깨워요."
                 )
                 wakeStyleRow(
-                    id: "normal",
-                    title: "보통",
-                    detail: "차분하지만 분명하게 일어날 시간을 알려줘요."
-                )
-                wakeStyleRow(
                     id: "aggressive",
                     title: "강하게",
                     detail: "지금은 꼭 일어나야 할 때라는 느낌으로 깨워요."
                 )
-            }
-        }
-        .padding(22)
-        .background(sectionBackground)
-    }
-
-    private var optionSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("알람 옵션")
-                .font(.system(.headline, design: .rounded).weight(.semibold))
-                .foregroundStyle(.black)
-
-            VStack(spacing: 14) {
-                HStack {
-                    Text("스누즈")
-                        .foregroundStyle(.black)
-                    Spacer()
-                    Picker("스누즈", selection: $snoozeMinutes) {
-                        Text("끔").tag(0)
-                        Text("5분").tag(5)
-                        Text("10분").tag(10)
-                        Text("15분").tag(15)
-                    }
-                    .pickerStyle(.menu)
-                    .disabled(isSkipped)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("메모")
-                        .font(.system(.subheadline, design: .rounded).weight(.medium))
-                        .foregroundStyle(Color.black.opacity(0.58))
-
-                    TextField("예: 일찍 출근, 병원 예약, 비 오는 날", text: $note, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(Color.white.opacity(0.72))
-                        )
-                        .disabled(isSkipped)
-                }
             }
         }
         .padding(22)
@@ -352,8 +303,10 @@ struct AlarmEditView: View {
 
     private static func normalizeWakeStyle(_ value: String) -> String {
         switch value {
-        case "aggressive", "normal", "gentle":
+        case "aggressive", "gentle":
             return value
+        case "normal":
+            return "gentle"
         case "firm":
             return "aggressive"
         default:

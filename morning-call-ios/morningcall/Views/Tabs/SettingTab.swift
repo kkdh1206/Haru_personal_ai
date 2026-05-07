@@ -115,7 +115,7 @@ struct SettingView: View {
             Section(header: Text("기상 화면 캐릭터")) {
                 ForEach(CharacterPreference.allCases, id: \.rawValue) { character in
                     HStack(spacing: 14) {
-                        Image(character.assetName)
+                        Image(character.assetName())
                             .resizable()
                             .scaledToFit()
                             .frame(width: 44, height: 44)

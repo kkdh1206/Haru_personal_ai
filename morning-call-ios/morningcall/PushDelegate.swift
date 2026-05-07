@@ -2,9 +2,10 @@ import UIKit
 import PushKit
 import Firebase
 import GoogleSignIn
+import UserNotifications
 
 /// PushKit + Firebase + Google Sign-In + LiveKit
-final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegate {
+final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegate, UNUserNotificationCenterDelegate {
 
     override init() {
         super.init()
@@ -16,6 +17,15 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         FirebaseApp.configure()
+        let notificationCenter = UNUserNotificationCenter.current()
+        notificationCenter.delegate = self
+        notificationCenter.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if let error {
+                print("❌ Notification authorization failed:", error.localizedDescription)
+                return
+            }
+            print(granted ? "✅ Notification authorization granted" : "⚠️ Notification authorization denied")
+        }
         print("🔥 Firebase configured")
         return true
     }
@@ -59,6 +69,13 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
         // 1) payload.* 우선, 2) 최상위 키 백업
         let data = (dict["payload"] as? [String: Any]) ?? dict
 
+        if let type = data["type"] as? String, type == "wake_followup" {
+            let title = (data["title"] as? String) ?? "Haru"
+            let body = (data["body"] as? String) ?? "전화를 여러 번 드렸는데 연결이 잘 안 돼서 메시지를 남겨요."
+            showLocalWakeFollowup(title: title, body: body)
+            return
+        }
+
         let caller  = (data["caller"] as? String) ?? "Unknown"
         let lkURL   = (data["lkUrl"] as? String)
         let lkToken = (data["lkToken"] as? String)
@@ -73,5 +90,32 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
         CallManager.shared.cancelIfOngoing()
         CallManager.shared.prepareIncoming(url: lkURL, token: lkToken, alarmId: alarmId)
         CallManager.shared.reportIncoming(handle: caller)
+    }
+
+    private func showLocalWakeFollowup(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "haru.wake-followup.\(UUID().uuidString)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+        )
+
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                print("❌ Failed to schedule local wake followup:", error.localizedDescription)
+            } else {
+                print("✅ Local wake followup notification scheduled")
+            }
+        }
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound, .list])
     }
 }

@@ -50,6 +50,8 @@ If user confirms, call the tool.
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-live-preview"
 DEFAULT_NO_ANSWER_TIMEOUT_SECONDS = 45
 DEFAULT_HANGUP_GRACE_SECONDS = 0.1
+DEFAULT_GEMINI_THINKING_MODE = "disabled"
+DEFAULT_MAX_MEMORY_CONTEXT_CHARS = 500
 
 _vad_instance = None
 
@@ -67,6 +69,53 @@ def get_gemini_model() -> str:
         return DEFAULT_GEMINI_MODEL
 
     return configured.strip()
+
+
+def get_gemini_thinking_config():
+    configured = os.getenv("GEMINI_THINKING_MODE", DEFAULT_GEMINI_THINKING_MODE)
+    mode = configured.strip().lower()
+
+    if mode in {"off", "0", "false", "disabled", "none"}:
+        return genai_types.ThinkingConfig(
+            include_thoughts=False,
+            thinking_budget=0,
+        )
+
+    level_map = {
+        "minimal": genai_types.ThinkingLevel.MINIMAL,
+        "low": genai_types.ThinkingLevel.LOW,
+        "medium": genai_types.ThinkingLevel.MEDIUM,
+        "high": genai_types.ThinkingLevel.HIGH,
+    }
+    thinking_level = level_map.get(mode)
+    if thinking_level is None:
+        return genai_types.ThinkingConfig(
+            include_thoughts=False,
+            thinking_budget=0,
+        )
+
+    return genai_types.ThinkingConfig(
+        include_thoughts=False,
+        thinking_level=thinking_level,
+    )
+
+
+def get_max_memory_context_chars() -> int:
+    configured = os.getenv("MAX_MEMORY_CONTEXT_CHARS")
+    if not configured:
+        return DEFAULT_MAX_MEMORY_CONTEXT_CHARS
+
+    try:
+        return max(int(configured.strip()), 0)
+    except ValueError:
+        return DEFAULT_MAX_MEMORY_CONTEXT_CHARS
+
+
+def truncate_text(value: str, max_chars: int) -> str:
+    cleaned = " ".join((value or "").split())
+    if max_chars <= 0 or len(cleaned) <= max_chars:
+        return cleaned
+    return cleaned[: max_chars - 1].rstrip() + "…"
 
 
 def get_no_answer_timeout_seconds() -> int:
@@ -272,7 +321,7 @@ class Assistant(Agent):
         저장된 장기 메모리에서 과거의 중요한 정보를 검색합니다.
         """
         if self._api_client and self._user_id:
-            results = await self._api_client.search_memory(self._user_id, query, limit=5)
+            results = await self._api_client.search_memory(self._user_id, query, limit=3)
             logger.info(f"🔍 Memory searched: {query}")
             return results
         return {
@@ -458,7 +507,10 @@ async def entrypoint(ctx: JobContext):
         try:
             api_client = BackendApiClient(backend_url)
             memory_data = await api_client.get_memory_context(user_id)
-            memory_context = memory_data.get("contextText", "")
+            memory_context = truncate_text(
+                memory_data.get("contextText", ""),
+                get_max_memory_context_chars(),
+            )
 
             if memory_context:
                 logger.info(f"🧠 Bootstrap memory loaded:\n{memory_context}")
@@ -557,6 +609,7 @@ async def entrypoint(ctx: JobContext):
         "api_key": os.getenv("GEMINI_API_KEY") or NOT_GIVEN,
         "voice": agent_voice,
         "language": os.getenv("GEMINI_LANGUAGE", "ko-KR"),
+        "thinking_config": get_gemini_thinking_config(),
         "proactivity": True if env_bool("GEMINI_PROACTIVITY", False) else NOT_GIVEN,
         "enable_affective_dialog": (
             True if env_bool("GEMINI_ENABLE_AFFECTIVE_DIALOG", False) else NOT_GIVEN
@@ -606,39 +659,14 @@ async def entrypoint(ctx: JobContext):
     memory_instruction = ""
     if api_client:
         memory_instruction = """
-# 메모리 관리 규칙
-
-## 사용자 정보 저장
-대화 중 사용자가 이름, 생일, 취미, 선호도, 직업처럼 오래 유지될 정보를 직접 말하면 save_user_info를 사용해 저장하세요.
-단, 사용자가 이번 통화에서 명시적으로 말한 사실만 저장하세요.
-추론, 계산, 해석, 짐작으로 정보를 만들어 저장하면 안 됩니다.
-사용자 정보 키는 가능한 한 표준 키를 사용하세요. 예: name, birthday, hobby, preference, job
-
-## 장기 메모리 검색
-search_memory는 저장된 장기 메모리만 검색합니다.
-사용자가 "지난번에", "전에 말한", "내가 좋아하는", "내 일정 기억나?" 같은 질문을 하면 search_memory를 먼저 사용하세요.
-
-## 검색 결과 해석
-search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말하세요.
-이 도구는 과거 통화 원문 전체가 아니라, 기억할 가치가 있는 핵심 정보만 찾습니다.
-
-## 사용자 정보 조회
-정적 프로필(이름, 생일, 선호도)을 확인할 때는 get_user_info를 사용하세요.
-
-## 일정 저장
-사용자가 새 일정 추가를 원하거나 통화 중 약속을 확정하면 create_calendar_event를 사용하세요.
-시간이 애매하면 한 번만 짧게 다시 확인하고, 날짜와 시간이 충분히 명확하면 바로 저장하세요.
-
-## 현재 시간 확인
-현재 시각이나 오늘/지금/몇 시인지가 중요하면 get_current_time을 사용해 정확한 현재 시간을 확인하세요.
-
-## 재통화 예약
-사용자가 아직 못 일어났고 "몇 분 뒤에 다시 전화해줘"처럼 다시 연락을 원하면 request_retry_call을 사용하세요.
-기본값은 3분이며, 사용자가 분 수를 명확히 말하면 그 값을 사용하세요.
-하루 재통화 제한은 최대 3회입니다. 제한에 걸리면 tool 결과 메시지를 그대로 짧게 안내하세요.
-
-## 잘못 저장된 정보 수정
-잘못 저장된 사용자 정보는 delete_memory_item("user_info", "키")로 삭제한 뒤 다시 저장하세요.
+도구 규칙:
+- save_user_info: 사용자가 이번 통화에서 직접 말한 사실만 저장. 추론 금지. 표준 키 사용(name, birthday, hobby, preference, job).
+- search_memory: 과거 기억 질문일 때만 사용. 없으면 지어내지 말 것.
+- get_user_info: 정적 프로필 확인용.
+- create_calendar_event: 새 일정이 충분히 명확하면 바로 저장, 애매하면 한 번만 짧게 확인.
+- get_current_time: 현재 시각이 중요할 때만 사용.
+- request_retry_call: "몇 분 뒤 다시 전화" 요청일 때만 사용. 분 수는 1~30.
+- delete_memory_item: 잘못 저장된 항목 정정용.
 """
 
     memory_context_instruction = ""
@@ -653,8 +681,7 @@ search_memory 결과에 정보가 없으면 지어내지 말고 모른다고 말
 
     merged_instructions = (
         f"{initial_instructions.strip()}\n\n"
-        "추가 규칙: 시간 관련 답변은 반드시 사용자 시간대 기준으로 말하고, "
-        "정확한 현재 시각이 필요하면 get_current_time을 먼저 호출하세요. "
+        "추가 규칙: 시간 답변은 사용자 시간대 기준으로만 말하고, 필요할 때만 get_current_time을 호출하세요. "
         "사용자가 아직 덜 깼거나 다시 걸어 달라고 하면 재통화 흐름을 고려하세요.\n\n"
         f"{memory_instruction.strip()}\n\n"
         f"{memory_context_instruction.strip()}\n\n"
