@@ -12,6 +12,37 @@ export class CalendarService {
     private readonly cs: ConfigService,
   ) {}
 
+  private getCalendarErrorMessage(error: unknown) {
+    const maybeError = error as {
+      message?: string;
+      response?: { data?: { error?: string; error_description?: string } };
+    };
+    const reason =
+      maybeError.response?.data?.error ||
+      maybeError.response?.data?.error_description ||
+      maybeError.message;
+
+    if (
+      reason === 'unauthorized_client' ||
+      String(reason || '')
+        .toLowerCase()
+        .includes('unauthorized')
+    ) {
+      return 'Google Calendar needs to be reconnected.';
+    }
+
+    if (reason) {
+      return `Google Calendar request failed: ${reason}`;
+    }
+
+    return 'Unknown calendar error';
+  }
+
+  private logCalendarError(action: string, error: unknown) {
+    const message = this.getCalendarErrorMessage(error);
+    console.error(`[Calendar] ${action} failed: ${message}`);
+  }
+
   private async getCalendarClient(userId: string) {
     const token = await this.userService.getUserCalendarToken(userId);
     const user = await this.userService.findOne(userId as any);
@@ -71,6 +102,7 @@ export class CalendarService {
         })) || []
       );
     } catch (e) {
+      this.logCalendarError('getTodayEvents', e);
       return [];
     }
   }
@@ -99,58 +131,71 @@ export class CalendarService {
         })) || []
       );
     } catch (e) {
+      this.logCalendarError('getSchedule', e);
       return [];
     }
   }
 
   async createEvent(userId: string, dto: CreateCalendarEventDto) {
-    const { calendar, timeZone: defaultTimeZone } =
-      await this.getCalendarClient(userId);
-    const timeZone = dto.timeZone || defaultTimeZone;
-    const allDay =
-      dto.allDay ||
-      this.isAllDayValue(dto.startTime) ||
-      (!!dto.endTime && this.isAllDayValue(dto.endTime));
+    try {
+      const { calendar, timeZone: defaultTimeZone } =
+        await this.getCalendarClient(userId);
+      const timeZone = dto.timeZone || defaultTimeZone;
+      const allDay =
+        dto.allDay ||
+        this.isAllDayValue(dto.startTime) ||
+        (!!dto.endTime && this.isAllDayValue(dto.endTime));
 
-    const resolvedEndTime =
-      dto.endTime ||
-      (allDay
-        ? DateTime.fromISO(dto.startTime, { zone: timeZone })
-            .plus({ days: 1 })
-            .toISODate()
-        : DateTime.fromISO(dto.startTime, { zone: timeZone })
-            .plus({ hours: 1 })
-            .toISO());
+      const resolvedEndTime =
+        dto.endTime ||
+        (allDay
+          ? DateTime.fromISO(dto.startTime, { zone: timeZone })
+              .plus({ days: 1 })
+              .toISODate()
+          : DateTime.fromISO(dto.startTime, { zone: timeZone })
+              .plus({ hours: 1 })
+              .toISO());
 
-    const requestBody = allDay
-      ? {
-          summary: dto.title,
-          description: dto.description,
-          location: dto.location,
-          start: { date: dto.startTime },
-          end: { date: resolvedEndTime },
-        }
-      : {
-          summary: dto.title,
-          description: dto.description,
-          location: dto.location,
-          start: { dateTime: dto.startTime, timeZone },
-          end: { dateTime: resolvedEndTime, timeZone },
-        };
+      const requestBody = allDay
+        ? {
+            summary: dto.title,
+            description: dto.description,
+            location: dto.location,
+            start: { date: dto.startTime },
+            end: { date: resolvedEndTime },
+          }
+        : {
+            summary: dto.title,
+            description: dto.description,
+            location: dto.location,
+            start: { dateTime: dto.startTime, timeZone },
+            end: { dateTime: resolvedEndTime, timeZone },
+          };
 
-    const res = await calendar.events.insert({
-      calendarId: 'primary',
-      requestBody,
-    });
+      const res = await calendar.events.insert({
+        calendarId: 'primary',
+        requestBody,
+      });
 
-    return {
-      success: true,
-      eventId: res.data.id,
-      htmlLink: res.data.htmlLink,
-      start: dto.startTime,
-      end: resolvedEndTime,
-      timeZone,
-      allDay,
-    };
+      return {
+        success: true,
+        eventId: res.data.id,
+        htmlLink: res.data.htmlLink,
+        start: dto.startTime,
+        end: resolvedEndTime,
+        timeZone,
+        allDay,
+      };
+    } catch (e) {
+      this.logCalendarError('createEvent', e);
+      const message = this.getCalendarErrorMessage(e);
+      return {
+        success: false,
+        message:
+          message === 'Google Calendar needs to be reconnected.'
+            ? '캘린더를 다시 연동해야 일정을 저장할 수 있습니다.'
+            : '캘린더 일정 저장에 실패했습니다.',
+      };
+    }
   }
 }

@@ -31,20 +31,9 @@ logger = logging.getLogger("agent")
 load_dotenv(".env.local")
 
 CONTROL_INSTRUCTIONS = """
-If the user signals they want to END or STOP the call (explicitly or implicitly),
-DO THIS:
-1) DO NOT speak the goodbye directly in plain text first.
-2) Immediately CALL the tool: request_hangup with:
-   - a brief reason string
-   - a SHORT polite goodbye sentence in the farewell field
-3) Do not keep talking after calling the tool. The server will speak the farewell and hang up.
-
-Examples that SHOULD trigger the tool:
-- "전화 끊어(줘)", "통화 종료", "그만하자", "여기까지 할게요", "고마워요 이만", "다음에 해요"
-- "hang up", "end the call", "that's all for now", "let's stop", "thanks, that's it"
-
-If you are NOT confident the user wants to end right now, ask a brief confirmation.
-If user confirms, call the tool.
+If the user clearly wants to end the call, call request_hangup immediately.
+Do not say goodbye first in plain text.
+If unclear, ask one short confirmation.
 """
 
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-live-preview"
@@ -52,6 +41,8 @@ DEFAULT_NO_ANSWER_TIMEOUT_SECONDS = 45
 DEFAULT_HANGUP_GRACE_SECONDS = 0.1
 DEFAULT_GEMINI_THINKING_MODE = "disabled"
 DEFAULT_MAX_MEMORY_CONTEXT_CHARS = 500
+DEFAULT_MAX_CONVERSATION_MESSAGES = 8
+DEFAULT_MAX_RETRY_CALLS = 3
 
 _vad_instance = None
 
@@ -118,6 +109,17 @@ def truncate_text(value: str, max_chars: int) -> str:
     return cleaned[: max_chars - 1].rstrip() + "…"
 
 
+def get_max_conversation_messages() -> int:
+    configured = os.getenv("MAX_CONVERSATION_MESSAGES")
+    if not configured:
+        return DEFAULT_MAX_CONVERSATION_MESSAGES
+
+    try:
+        return max(int(configured.strip()), 2)
+    except ValueError:
+        return DEFAULT_MAX_CONVERSATION_MESSAGES
+
+
 def get_no_answer_timeout_seconds() -> int:
     configured = os.getenv("NO_ANSWER_TIMEOUT_SECONDS")
     if not configured:
@@ -169,6 +171,60 @@ def build_transcript(messages: list[dict]) -> str:
         if content:
             lines.append(f"{role}: {content}")
     return "\n".join(lines)
+
+
+def append_conversation_message(messages: list[dict], role: str, content: str):
+    messages.append({"role": role, "content": content})
+    max_messages = get_max_conversation_messages()
+    if len(messages) > max_messages:
+        del messages[: len(messages) - max_messages]
+
+
+def build_usage_metadata(summary) -> dict[str, int | float]:
+    llm_prompt_tokens = int(getattr(summary, "llm_prompt_tokens", 0) or 0)
+    llm_prompt_cached_tokens = int(
+        getattr(summary, "llm_prompt_cached_tokens", 0) or 0
+    )
+    llm_input_audio_tokens = int(getattr(summary, "llm_input_audio_tokens", 0) or 0)
+    llm_input_cached_audio_tokens = int(
+        getattr(summary, "llm_input_cached_audio_tokens", 0) or 0
+    )
+    llm_input_text_tokens = int(getattr(summary, "llm_input_text_tokens", 0) or 0)
+    llm_input_cached_text_tokens = int(
+        getattr(summary, "llm_input_cached_text_tokens", 0) or 0
+    )
+    llm_input_image_tokens = int(getattr(summary, "llm_input_image_tokens", 0) or 0)
+    llm_input_cached_image_tokens = int(
+        getattr(summary, "llm_input_cached_image_tokens", 0) or 0
+    )
+    llm_completion_tokens = int(getattr(summary, "llm_completion_tokens", 0) or 0)
+    llm_output_audio_tokens = int(getattr(summary, "llm_output_audio_tokens", 0) or 0)
+    llm_output_text_tokens = int(getattr(summary, "llm_output_text_tokens", 0) or 0)
+    llm_output_image_tokens = int(getattr(summary, "llm_output_image_tokens", 0) or 0)
+    tts_characters_count = int(getattr(summary, "tts_characters_count", 0) or 0)
+    tts_audio_duration = float(getattr(summary, "tts_audio_duration", 0.0) or 0.0)
+    stt_audio_duration = float(getattr(summary, "stt_audio_duration", 0.0) or 0.0)
+
+    total_llm_tokens = llm_prompt_tokens + llm_completion_tokens
+
+    return {
+        "llm_prompt_tokens": llm_prompt_tokens,
+        "llm_prompt_cached_tokens": llm_prompt_cached_tokens,
+        "llm_input_audio_tokens": llm_input_audio_tokens,
+        "llm_input_cached_audio_tokens": llm_input_cached_audio_tokens,
+        "llm_input_text_tokens": llm_input_text_tokens,
+        "llm_input_cached_text_tokens": llm_input_cached_text_tokens,
+        "llm_input_image_tokens": llm_input_image_tokens,
+        "llm_input_cached_image_tokens": llm_input_cached_image_tokens,
+        "llm_completion_tokens": llm_completion_tokens,
+        "llm_output_audio_tokens": llm_output_audio_tokens,
+        "llm_output_text_tokens": llm_output_text_tokens,
+        "llm_output_image_tokens": llm_output_image_tokens,
+        "total_llm_tokens": total_llm_tokens,
+        "tts_characters_count": tts_characters_count,
+        "tts_audio_duration": tts_audio_duration,
+        "stt_audio_duration": stt_audio_duration,
+    }
 
 
 def infer_wake_status(
@@ -246,6 +302,27 @@ def infer_wake_status(
         return "not_awake", True
 
     return "awake", True
+
+
+def is_explicit_hangup_request(text: str) -> bool:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+
+    hangup_patterns = (
+        "전화 끊어",
+        "전화끊어",
+        "통화 종료",
+        "끊어 줘",
+        "끊어줘",
+        "이만",
+        "그만하자",
+        "끝내자",
+        "hang up",
+        "end the call",
+        "stop the call",
+    )
+    return any(pattern in normalized for pattern in hangup_patterns)
 
 
 def get_vad():
@@ -405,6 +482,14 @@ class Assistant(Agent):
                 "message": "현재 통화는 재통화 예약을 지원하지 않습니다.",
             }
 
+        if self._retry_count >= DEFAULT_MAX_RETRY_CALLS:
+            return {
+                "success": False,
+                "action": "retry_limit_reached",
+                "message": "오늘은 더 이상 다시 전화할 수 없어. 지금 일어나야 해.",
+                "retryLimit": DEFAULT_MAX_RETRY_CALLS,
+            }
+
         normalized_retry_minutes = min(max(int(retry_minutes), 1), 30)
 
         if self._api_client:
@@ -418,6 +503,13 @@ class Assistant(Agent):
             )
             if callable(self._on_call_outcome_reported):
                 self._on_call_outcome_reported(result)
+            if result.get("action") == "retry_limit_reached":
+                return {
+                    "success": False,
+                    "action": "retry_limit_reached",
+                    "message": "오늘은 더 이상 다시 전화할 수 없어. 지금 일어나야 해.",
+                    "retryLimit": result.get("retryLimit", DEFAULT_MAX_RETRY_CALLS),
+                }
             return result
 
         return {"success": False, "message": "API 클라이언트가 초기화되지 않았습니다."}
@@ -665,7 +757,7 @@ async def entrypoint(ctx: JobContext):
 - get_user_info: 정적 프로필 확인용.
 - create_calendar_event: 새 일정이 충분히 명확하면 바로 저장, 애매하면 한 번만 짧게 확인.
 - get_current_time: 현재 시각이 중요할 때만 사용.
-- request_retry_call: "몇 분 뒤 다시 전화" 요청일 때만 사용. 분 수는 1~30.
+- request_retry_call: "몇 분 뒤 다시 전화" 요청일 때만 사용. 분 수는 1~30. 결과가 retry_limit_reached면 더 이상 재통화가 안 된다고 짧게 안내.
 - delete_memory_item: 잘못 저장된 항목 정정용.
 """
 
@@ -695,9 +787,22 @@ async def entrypoint(ctx: JobContext):
         metrics.log_metrics(ev.metrics)
         usage_collector.collect(ev.metrics)
 
+    def get_usage_metadata() -> dict[str, int | float]:
+        return build_usage_metadata(usage_collector.get_summary())
+
     async def log_usage():
         summary = usage_collector.get_summary()
+        usage_metadata = build_usage_metadata(summary)
         logger.info(f"📊 Usage summary: {summary}")
+        logger.info(
+            "💰 Call token usage: "
+            f"total_llm_tokens={usage_metadata['total_llm_tokens']} "
+            f"prompt_tokens={usage_metadata['llm_prompt_tokens']} "
+            f"completion_tokens={usage_metadata['llm_completion_tokens']} "
+            f"input_audio_tokens={usage_metadata['llm_input_audio_tokens']} "
+            f"input_text_tokens={usage_metadata['llm_input_text_tokens']} "
+            f"output_audio_tokens={usage_metadata['llm_output_audio_tokens']}"
+        )
 
     def send_realtime_text_input(text: str) -> bool:
         activity = getattr(session, "_activity", None)
@@ -797,6 +902,7 @@ async def entrypoint(ctx: JobContext):
             if api_client and conversation_messages and not shutdown_saved:
                 transcript = build_transcript(conversation_messages)
                 ended_at = now_iso()
+                usage_metadata = get_usage_metadata()
 
                 logger.info(
                     f"💾 Saving call artifacts ({len(conversation_messages)} messages) ..."
@@ -813,6 +919,7 @@ async def entrypoint(ctx: JobContext):
                         "source": "livekit_agent",
                         "callType": call_type,
                         "retryCount": retry_count,
+                        "usage": usage_metadata,
                     },
                 )
 
@@ -837,12 +944,17 @@ async def entrypoint(ctx: JobContext):
             return
 
         role = item.role
-        conversation_messages.append({"role": role, "content": text})
+        append_conversation_message(conversation_messages, role, text)
 
         if role == "assistant":
             logger.info(f"🤖 Gemini says: {text}")
         else:
             logger.info(f"👤 User said: {text}")
+            if not hangup_requested and is_explicit_hangup_request(text):
+                _trigger_hangup(
+                    "🛑 Local hangup requested from user transcript",
+                    "알았어. 오늘 하루도 잘 보내.",
+                )
 
     @ctx.room.on("participant_connected")
     def _on_participant_connected(p):

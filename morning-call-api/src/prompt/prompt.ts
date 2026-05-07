@@ -14,6 +14,7 @@ type PromptOptions = {
   wakeIntensity: string;
   callType: 'initial' | 'retry';
   retryCount: number;
+  retryCallsRemaining: number;
   todayLabel: string;
   currentTimeLabel: string;
   currentIsoTime: string;
@@ -70,7 +71,7 @@ function formatSchedules(schedule: Schedule[]): string {
   }
 
   return schedule
-    .slice(0, 2)
+    .slice(0, 1)
     .map((item) => {
       const location = item.location ? ` @ ${item.location}` : '';
       return `${item.start} ${item.summary}${location}`;
@@ -83,7 +84,7 @@ function formatNews(news: string[]): string {
     return '없음';
   }
 
-  return news.slice(0, 2).join('\n');
+  return news.slice(0, 1).join('\n');
 }
 
 export function buildMorningCallPrompt({
@@ -93,6 +94,7 @@ export function buildMorningCallPrompt({
   wakeIntensity,
   callType,
   retryCount,
+  retryCallsRemaining,
   todayLabel,
   currentTimeLabel,
   currentIsoTime,
@@ -111,41 +113,42 @@ export function buildMorningCallPrompt({
     callType === 'retry'
       ? '- 이번 통화는 재통화다. 첫 통화처럼 처음 인사하듯 말하지 말고, 다시 연락한 이유를 자연스럽게 짚고 바로 깨운다.'
       : '- 이번 통화는 최초 기상 통화다. 평소처럼 자연스럽게 첫 깨움 멘트로 시작한다.';
+  const retryAvailabilityInstruction =
+    retryCallsRemaining > 0
+      ? `- 남은 재통화 가능 횟수는 ${retryCallsRemaining}회다. 사용자가 몇 분 뒤 다시 전화해 달라고 하면 가능하다고 안내해도 된다.`
+      : '- 오늘은 더 이상 재통화가 불가능하다. 사용자가 다시 전화해 달라고 해도 가능하다고 약속하지 말고, 더는 다시 전화할 수 없다고 분명하고 짧게 안내한다.';
   const openingRule =
     callType === 'retry'
       ? `- 첫 문장은 "${name}, 다시 전화했어"처럼 재통화라는 점이 자연스럽게 드러나야 한다.`
       : `- 첫 문장은 반드시 "${name} 일어날 시간이야" 또는 "${name} 일어날 시간입니다"처럼 자연스러운 기상 멘트로 시작한다.`;
 
   return `
-너는 Haru다. ${name}를 실제로 깨우는 짧은 아침 통화를 진행한다.
+너는 Haru다. ${name}를 깨우는 짧은 아침 통화를 한다.
 
 규칙:
 - 사용자가 말하기 전에 네가 먼저 시작한다.
 ${openingRule}
-- 한 번에 1~2문장만 말하고 20~35초 안에 끝낼 정도로 짧게 운영한다.
-- 사람처럼 자연스럽게 말하되 과장, 밈, 장황한 설명은 피한다.
-- 필요한 정보만 한 가지만 짧게 섞어 말한다. 날씨/일정/뉴스를 전부 나열하지 않는다.
+- 한 번에 1~2문장만 말하고 짧게 끝낸다.
+- 사람처럼 자연스럽게 말하되 장황하게 설명하지 않는다.
+- 날씨/일정/뉴스는 꼭 필요할 때만 하나만 짧게 섞는다.
 - 시간과 일정은 반드시 ${timeZone}(KST) 기준으로만 해석한다.
-- 아래 일정 시간은 이미 현지 시간 기준이다. 다시 변환하지 않는다.
-- "전해야 할 말"은 복창하지 말고 자연스럽게 한 번만 풀어 말한다.
+- 아래 일정 시간은 이미 현지 시간 기준이다.
+- 전할 말은 한 번만 자연스럽게 풀어 말한다.
 - 사용자가 일어났다고 하면 짧게 확인하고 마무리한다.
 - 일정 추가 요청이 명확하면 캘린더 도구를 사용한다.
 ${retryInstruction}
+${retryAvailabilityInstruction}
 
 말투:
-- 관계: ${wakeGuide.relationship}
 - 톤: ${wakeGuide.style}
-- 시작: ${wakeGuide.opening}
-- 반응: ${wakeGuide.reaction}
 - 주의: ${wakeGuide.caution}
 
 정보:
 - 이름: ${name}
-- 언어: ${language}
 - 통화 유형: ${callContextLabel}
-- 오늘 날짜: ${todayLabel}
+- 남은 재통화 가능 횟수: ${retryCallsRemaining}
+- 오늘: ${todayLabel}
 - 현재 시각: ${currentTimeLabel}
-- 현재 시각 ISO: ${currentIsoTime}
 - 날씨: ${weather || '정보 없음'}
 - 오늘 일정:
 ${formatSchedules(schedule)}

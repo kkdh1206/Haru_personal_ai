@@ -7,6 +7,8 @@ import { buildMorningCallPrompt } from './prompt';
 
 @Injectable()
 export class PromptService {
+  private readonly maxDailyRetryCalls = 3;
+
   constructor(
     @Inject(forwardRef(() => AlarmService))
     private readonly alarmService: AlarmService,
@@ -51,9 +53,13 @@ export class PromptService {
 
     const user: any = alarm.user;
     const timeZone = user.timeZone || 'Asia/Seoul';
+    const retryCallsRemaining = Math.max(
+      0,
+      this.maxDailyRetryCalls - (alarm.dailyRetryCount || 0),
+    );
     const now = DateTime.now().setZone(timeZone);
     const todayLabel = now.toFormat('yyyy년 MM월 dd일 cccc');
-    const currentTimeLabel = now.toFormat('yyyy년 MM월 dd일 cccc HH:mm:ss');
+    const currentTimeLabel = now.toFormat('yyyy년 MM월 dd일 cccc HH:mm');
     const currentIsoTime = now.toISO() || now.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
 
     // 1. 구글 캘린더 일정 조회
@@ -63,9 +69,12 @@ export class PromptService {
     );
 
     // 2. 뉴스, 날씨 가져오기
-    const news = await this.informationService.getCurrentNews(
-      user.interest || 'korea-top',
-    );
+    const news =
+      callType === 'retry'
+        ? []
+        : await this.informationService.getCurrentNews(
+            user.interest || 'korea-top',
+          );
     const newsInfo = Array.isArray(news)
       ? news.map((item: any) => item.title).filter(Boolean)
       : [];
@@ -73,7 +82,7 @@ export class PromptService {
       user.location || 'Seoul',
     );
     const weatherInfo = weather
-      ? `${weather.city} ${weather.weather}, ${weather.temperature}, 체감 ${weather.feels_like}`
+      ? `${weather.weather} ${weather.temperature}`
       : '정보 없음';
 
     // 3. 일정, 뉴스, 날씨를 바탕으로 프롬프트 구성
@@ -84,6 +93,7 @@ export class PromptService {
       wakeIntensity: alarm.wakeIntensity,
       callType,
       retryCount,
+      retryCallsRemaining,
       customMessage: user.customMessage,
       todayLabel,
       currentTimeLabel,
@@ -100,7 +110,7 @@ export class PromptService {
     const timeZone = user.timeZone || 'Asia/Seoul';
     const now = DateTime.now().setZone(timeZone);
     const todayLabel = now.toFormat('yyyy년 MM월 dd일 cccc');
-    const currentTimeLabel = now.toFormat('yyyy년 MM월 dd일 cccc HH:mm:ss');
+    const currentTimeLabel = now.toFormat('yyyy년 MM월 dd일 cccc HH:mm');
     const currentIsoTime = now.toISO() || now.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
 
     // 1. 구글 캘린더 일정 조회
@@ -120,7 +130,7 @@ export class PromptService {
       user.location || 'Seoul',
     );
     const weatherInfo = weather
-      ? `${weather.city} ${weather.weather}, ${weather.temperature}, 체감 ${weather.feels_like}`
+      ? `${weather.weather} ${weather.temperature}`
       : '정보 없음';
 
     // 3. 일정, 뉴스, 날씨를 바탕으로 프롬프트 구성
@@ -131,6 +141,7 @@ export class PromptService {
       wakeIntensity,
       callType: 'initial',
       retryCount: 0,
+      retryCallsRemaining: this.maxDailyRetryCalls,
       customMessage: user.customMessage,
       todayLabel,
       currentTimeLabel,
