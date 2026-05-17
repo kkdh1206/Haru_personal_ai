@@ -25,8 +25,10 @@ final class LocalCallFallbackScheduler {
     private let defaults = UserDefaults.standard
     private let scheduledFallbackFireDatesKey = "haru.local-fallback.scheduled-fire-dates"
     private let ignoredPushAlarmIdsKey = "haru.local-fallback.ignore-next-push-alarm-ids"
+    private let alarmKitIdMapKey = "haru.local-fallback.alarmkit-id-map"
     private var isOnline = true
     private var cachedAlarms: [Alarm] = []
+    private var alarmKitUpdatesTask: Task<Void, Never>?
 
     private lazy var storageDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -83,6 +85,8 @@ final class LocalCallFallbackScheduler {
         center.setNotificationCategories([category])
 
         if #available(iOS 26.0, *) {
+            observeAlarmKitUpdatesIfNeeded()
+
             Task {
                 do {
                     _ = try await ensureAlarmKitAuthorization()
@@ -254,8 +258,6 @@ final class LocalCallFallbackScheduler {
         let fireDate = alarmDate.addingTimeInterval(fallbackDelay)
         guard fireDate > Date() else { return }
 
-        rememberScheduledFallbackFireDate(for: alarm.id, fireDate: fireDate)
-
         let id = alarmKitId(for: "\(alarm.id).once")
         try? AlarmManager.shared.cancel(id: id)
 
@@ -267,6 +269,8 @@ final class LocalCallFallbackScheduler {
                 sound: .default
             )
         )
+        rememberAlarmKitFallback(id: id, alarmId: alarm.id)
+        rememberScheduledFallbackFireDate(for: alarm.id, fireDate: fireDate)
         print("✅ Scheduled AlarmKit one-time fallback:", id)
     }
 
@@ -289,8 +293,6 @@ final class LocalCallFallbackScheduler {
             return
         }
 
-        rememberScheduledFallbackFireDate(for: alarm.id, fireDate: fireDate)
-
         let id = alarmKitId(for: "\(alarm.id).weekday-\(idWeekday.rawValue)")
         try? AlarmManager.shared.cancel(id: id)
 
@@ -302,6 +304,8 @@ final class LocalCallFallbackScheduler {
                 sound: .default
             )
         )
+        rememberAlarmKitFallback(id: id, alarmId: alarm.id)
+        rememberScheduledFallbackFireDate(for: alarm.id, fireDate: fireDate)
         print("✅ Scheduled AlarmKit weekly fallback:", id, fireWeekday.rawValue)
     }
 
@@ -496,6 +500,41 @@ final class LocalCallFallbackScheduler {
         ))
     }
 
+    @available(iOS 26.0, *)
+    private func observeAlarmKitUpdatesIfNeeded() {
+        guard alarmKitUpdatesTask == nil else { return }
+
+        alarmKitUpdatesTask = Task { [weak self] in
+            for await alarms in AlarmManager.shared.alarmUpdates {
+                guard let self else { return }
+
+                let alertingIds = alarms.compactMap { alarm -> UUID? in
+                    if case .alerting = alarm.state {
+                        return alarm.id
+                    }
+                    return nil
+                }
+
+                guard !alertingIds.isEmpty else { continue }
+
+                self.monitorQueue.async {
+                    alertingIds.forEach { self.markAlarmKitFallbackDidAlert(id: $0) }
+                }
+            }
+        }
+    }
+
+    private func markAlarmKitFallbackDidAlert(id: UUID) {
+        let idMap = alarmKitFallbackIdMap()
+        guard let alarmId = idMap[id.uuidString] else { return }
+
+        var ignoredAlarmIds = pendingIgnoredPushAlarmIds()
+        ignoredAlarmIds.insert(alarmId)
+        savePendingIgnoredPushAlarmIds(ignoredAlarmIds)
+        removeScheduledFallbackFireDate(for: alarmId)
+        print("⏰ AlarmKit fallback alerted. Next VoIP push will be ignored:", alarmId)
+    }
+
     private func cancelAlarmKitFallbacks(for alarms: [Alarm]) {
         guard #available(iOS 26.0, *) else { return }
         alarms.forEach { cancelAlarmKitFallbacks(for: $0.id) }
@@ -513,7 +552,24 @@ final class LocalCallFallbackScheduler {
             let id = alarmKitId(for: key)
             try? AlarmManager.shared.stop(id: id)
             try? AlarmManager.shared.cancel(id: id)
+            removeAlarmKitFallback(id: id)
         }
+    }
+
+    private func rememberAlarmKitFallback(id: UUID, alarmId: String) {
+        var idMap = alarmKitFallbackIdMap()
+        idMap[id.uuidString] = alarmId
+        defaults.set(idMap, forKey: alarmKitIdMapKey)
+    }
+
+    private func removeAlarmKitFallback(id: UUID) {
+        var idMap = alarmKitFallbackIdMap()
+        idMap.removeValue(forKey: id.uuidString)
+        defaults.set(idMap, forKey: alarmKitIdMapKey)
+    }
+
+    private func alarmKitFallbackIdMap() -> [String: String] {
+        defaults.dictionary(forKey: alarmKitIdMapKey) as? [String: String] ?? [:]
     }
 
     private func rememberScheduledFallbackFireDate(for alarmId: String, fireDate: Date) {
