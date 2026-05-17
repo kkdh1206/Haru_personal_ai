@@ -82,6 +82,10 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
         let lkToken = (data["lkToken"] as? String)
         let alarmId = (data["alarmId"] as? String)
 
+        if LocalCallFallbackScheduler.shared.shouldIgnoreIncomingPush(for: alarmId) {
+            return
+        }
+
         // 필수 값 체크
         guard let lkURL, let lkToken else {
             print("🛑 LiveKit push payload missing url/token")

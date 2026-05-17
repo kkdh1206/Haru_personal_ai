@@ -43,6 +43,11 @@ DEFAULT_GEMINI_THINKING_MODE = "disabled"
 DEFAULT_MAX_MEMORY_CONTEXT_CHARS = 500
 DEFAULT_MAX_CONVERSATION_MESSAGES = 8
 DEFAULT_MAX_RETRY_CALLS = 3
+DEFAULT_USER_SILENCE_NUDGE_SECONDS = 5.0
+DEFAULT_MAX_USER_SILENCE_NUDGES = 3
+DEFAULT_USER_SILENCE_NUDGE_TEXT = (
+    "설마 다시 자는 거 아니지? 눈 뜨고 있으면 짧게라도 대답해줘."
+)
 
 _vad_instance = None
 
@@ -129,6 +134,36 @@ def get_no_answer_timeout_seconds() -> int:
         return max(int(configured.strip()), 5)
     except ValueError:
         return DEFAULT_NO_ANSWER_TIMEOUT_SECONDS
+
+
+def get_user_silence_nudge_seconds() -> float:
+    configured = os.getenv("USER_SILENCE_NUDGE_SECONDS")
+    if not configured:
+        return DEFAULT_USER_SILENCE_NUDGE_SECONDS
+
+    try:
+        return max(float(configured.strip()), 1.0)
+    except ValueError:
+        return DEFAULT_USER_SILENCE_NUDGE_SECONDS
+
+
+def get_max_user_silence_nudges() -> int:
+    configured = os.getenv("MAX_USER_SILENCE_NUDGES")
+    if not configured:
+        return DEFAULT_MAX_USER_SILENCE_NUDGES
+
+    try:
+        return max(int(configured.strip()), 0)
+    except ValueError:
+        return DEFAULT_MAX_USER_SILENCE_NUDGES
+
+
+def get_user_silence_nudge_text() -> str:
+    configured = os.getenv("USER_SILENCE_NUDGE_TEXT")
+    if not configured:
+        return DEFAULT_USER_SILENCE_NUDGE_TEXT
+
+    return configured.strip() or DEFAULT_USER_SILENCE_NUDGE_TEXT
 
 
 def get_hangup_grace_seconds() -> float:
@@ -627,12 +662,20 @@ async def entrypoint(ctx: JobContext):
     session_started = asyncio.Event()
     greeting_lock = asyncio.Lock()
     background_tasks: set[asyncio.Task] = set()
+    last_conversation_activity_at: float | None = None
+    silence_nudge_count = 0
 
     def start_background_task(coro, *, name: str | None = None) -> asyncio.Task:
         task = asyncio.create_task(coro, name=name)
         background_tasks.add(task)
         task.add_done_callback(background_tasks.discard)
         return task
+
+    def mark_conversation_activity(*, reset_silence_nudges: bool = False):
+        nonlocal last_conversation_activity_at, silence_nudge_count
+        last_conversation_activity_at = asyncio.get_running_loop().time()
+        if reset_silence_nudges:
+            silence_nudge_count = 0
 
     def _trigger_hangup(message: str, farewell_text: str | None = None):
         nonlocal hangup_requested, session
@@ -869,6 +912,7 @@ async def entrypoint(ctx: JobContext):
                         f"🗣️ Sending initial greeting after {trigger} "
                         f"(attempt {attempt})"
                     )
+                    mark_conversation_activity()
                     return
                 except RuntimeError as e:
                     if "isn't running" not in str(e):
@@ -947,8 +991,10 @@ async def entrypoint(ctx: JobContext):
         append_conversation_message(conversation_messages, role, text)
 
         if role == "assistant":
+            mark_conversation_activity()
             logger.info(f"🤖 Gemini says: {text}")
         else:
+            mark_conversation_activity(reset_silence_nudges=True)
             logger.info(f"👤 User said: {text}")
             if not hangup_requested and is_explicit_hangup_request(text):
                 _trigger_hangup(
@@ -960,6 +1006,7 @@ async def entrypoint(ctx: JobContext):
     def _on_participant_connected(p):
         nonlocal participant_joined
         participant_joined = True
+        mark_conversation_activity(reset_silence_nudges=True)
         identity = getattr(p, "identity", "(no identity)")
         logger.info(f"👤 Participant joined: {identity}")
         start_background_task(
@@ -1025,10 +1072,60 @@ async def entrypoint(ctx: JobContext):
 
     if ctx.room.remote_participants:
         participant_joined = True
+        mark_conversation_activity(reset_silence_nudges=True)
         start_background_task(
             send_initial_greeting("existing_remote_participant"),
             name="initial_greeting_existing_participant",
         )
+
+    async def user_silence_watchdog():
+        nonlocal silence_nudge_count, last_conversation_activity_at
+
+        max_nudges = get_max_user_silence_nudges()
+        if max_nudges <= 0:
+            return
+
+        nudge_seconds = get_user_silence_nudge_seconds()
+        nudge_text = get_user_silence_nudge_text()
+
+        try:
+            await asyncio.wait_for(session_started.wait(), timeout=8.0)
+        except TimeoutError:
+            logger.warning("⚠️ User silence watchdog skipped: session did not start")
+            return
+
+        while not hangup_requested and not call_outcome_reported:
+            if not participant_joined or last_conversation_activity_at is None:
+                await asyncio.sleep(0.5)
+                continue
+
+            if silence_nudge_count >= max_nudges:
+                await asyncio.sleep(1.0)
+                continue
+
+            elapsed = asyncio.get_running_loop().time() - last_conversation_activity_at
+            if elapsed < nudge_seconds:
+                await asyncio.sleep(min(nudge_seconds - elapsed, 0.5))
+                continue
+
+            silence_nudge_count += 1
+            last_conversation_activity_at = asyncio.get_running_loop().time()
+
+            try:
+                session.say(
+                    nudge_text,
+                    allow_interruptions=True,
+                    add_to_chat_ctx=True,
+                )
+                logger.info(
+                    "⏰ User silence nudge sent "
+                    f"({silence_nudge_count}/{max_nudges}) after "
+                    f"{nudge_seconds:.1f}s of inactivity"
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to send user silence nudge: {e}")
+
+            await asyncio.sleep(0.5)
 
     async def no_answer_watchdog():
         await asyncio.sleep(get_no_answer_timeout_seconds())
@@ -1044,6 +1141,7 @@ async def entrypoint(ctx: JobContext):
         _trigger_hangup("📵 No participant joined before timeout")
 
     if alarm_id:
+        start_background_task(user_silence_watchdog(), name="user_silence_watchdog")
         start_background_task(no_answer_watchdog(), name="no_answer_watchdog")
 
 

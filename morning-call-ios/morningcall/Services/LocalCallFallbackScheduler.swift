@@ -22,6 +22,9 @@ final class LocalCallFallbackScheduler {
     private let fallbackDelay: TimeInterval = 60
     private let monitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "haru.local-fallback.network")
+    private let defaults = UserDefaults.standard
+    private let scheduledFallbackFireDatesKey = "haru.local-fallback.scheduled-fire-dates"
+    private let ignoredPushAlarmIdsKey = "haru.local-fallback.ignore-next-push-alarm-ids"
     private var isOnline = true
     private var cachedAlarms: [Alarm] = []
 
@@ -50,6 +53,20 @@ final class LocalCallFallbackScheduler {
             }
         }
         monitor.start(queue: monitorQueue)
+    }
+
+    func shouldIgnoreIncomingPush(for alarmId: String?) -> Bool {
+        guard let alarmId, !alarmId.isEmpty else { return false }
+
+        markDueFallbacksForPushIgnore()
+
+        var ignoredAlarmIds = pendingIgnoredPushAlarmIds()
+        guard ignoredAlarmIds.contains(alarmId) else { return false }
+
+        ignoredAlarmIds.remove(alarmId)
+        savePendingIgnoredPushAlarmIds(ignoredAlarmIds)
+        print("⏭️ Ignoring delayed VoIP push after local fallback alarm:", alarmId)
+        return true
     }
 
     func registerNotificationCategory() {
@@ -125,6 +142,8 @@ final class LocalCallFallbackScheduler {
                 .filter { $0.hasPrefix(prefix) }
 
             self.center.removePendingNotificationRequests(withIdentifiers: pendingIds)
+            self.removeScheduledFallbackFireDate(for: alarmId)
+            self.removePendingIgnoredPushAlarmId(alarmId)
 
             self.center.getDeliveredNotifications { notifications in
                 let deliveredIds = notifications
@@ -138,6 +157,8 @@ final class LocalCallFallbackScheduler {
     }
 
     private func replaceScheduledFallbacks(with alarms: [Alarm]) {
+        clearScheduledFallbackFireDates()
+
         center.getPendingNotificationRequests { [weak self] requests in
             guard let self else { return }
 
@@ -154,6 +175,8 @@ final class LocalCallFallbackScheduler {
     }
 
     private func cancelAllFallbacks() {
+        let dueAlarmIds = markDueFallbacksForPushIgnore()
+
         center.getPendingNotificationRequests { [weak self] requests in
             guard let self else { return }
 
@@ -164,7 +187,8 @@ final class LocalCallFallbackScheduler {
             self.center.removePendingNotificationRequests(withIdentifiers: pendingIds)
             self.removeDeliveredFallbacks()
         }
-        cancelAlarmKitFallbacks(for: cachedAlarms)
+        cancelAlarmKitFallbacks(for: cachedAlarms.filter { !dueAlarmIds.contains($0.id) })
+        clearScheduledFallbackFireDates()
     }
 
     private func scheduleFallback(for alarm: Alarm) {
@@ -236,6 +260,8 @@ final class LocalCallFallbackScheduler {
         let fireDate = alarmDate.addingTimeInterval(fallbackDelay)
         guard fireDate > Date() else { return }
 
+        rememberScheduledFallbackFireDate(for: alarm.id, fireDate: fireDate)
+
         let id = alarmKitId(for: "\(alarm.id).once")
         try? AlarmManager.shared.cancel(id: id)
 
@@ -254,24 +280,35 @@ final class LocalCallFallbackScheduler {
     private func scheduleAlarmKitWeeklyFallback(for alarm: Alarm, weekday: Int) async throws {
         guard
             (0...6).contains(weekday),
-            let weekday = localeWeekday(for: weekday),
-            let time = alarmKitTime(from: alarm.time)
+            let idWeekday = localeWeekday(for: weekday),
+            let alarmDate = nextLocalDate(for: weekday, time: alarm.time)
         else {
             return
         }
 
-        let id = alarmKitId(for: "\(alarm.id).weekday-\(weekday.rawValue)")
+        let fireDate = alarmDate.addingTimeInterval(fallbackDelay)
+        let fireWeekdayIndex = Calendar.current.component(.weekday, from: fireDate) - 1
+        guard
+            let fireWeekday = localeWeekday(for: fireWeekdayIndex),
+            let fireTime = alarmKitTime(from: fireDate)
+        else {
+            return
+        }
+
+        rememberScheduledFallbackFireDate(for: alarm.id, fireDate: fireDate)
+
+        let id = alarmKitId(for: "\(alarm.id).weekday-\(idWeekday.rawValue)")
         try? AlarmManager.shared.cancel(id: id)
 
         _ = try await AlarmManager.shared.schedule(
             id: id,
             configuration: .alarm(
-                schedule: .relative(.init(time: time, repeats: .weekly([weekday]))),
+                schedule: .relative(.init(time: fireTime, repeats: .weekly([fireWeekday]))),
                 attributes: alarmKitAttributes(for: alarm),
                 sound: .default
             )
         )
-        print("✅ Scheduled AlarmKit weekly fallback:", id, weekday.rawValue)
+        print("✅ Scheduled AlarmKit weekly fallback:", id, fireWeekday.rawValue)
     }
 
     @available(iOS 26.0, *)
@@ -304,6 +341,8 @@ final class LocalCallFallbackScheduler {
         let fireDate = alarmDate.addingTimeInterval(fallbackDelay)
         guard fireDate > Date() else { return }
 
+        rememberScheduledFallbackFireDate(for: alarm.id, fireDate: fireDate)
+
         let components = Calendar.current.dateComponents(
             [.year, .month, .day, .hour, .minute, .second],
             from: fireDate
@@ -334,6 +373,8 @@ final class LocalCallFallbackScheduler {
         }
 
         let fireDate = alarmDate.addingTimeInterval(fallbackDelay)
+        rememberScheduledFallbackFireDate(for: alarm.id, fireDate: fireDate)
+
         let components = calendar.dateComponents([.weekday, .hour, .minute, .second], from: fireDate)
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
 
@@ -403,6 +444,13 @@ final class LocalCallFallbackScheduler {
     }
 
     @available(iOS 26.0, *)
+    private func alarmKitTime(from date: Date) -> AlarmKit.Alarm.Schedule.Relative.Time? {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        guard let hour = components.hour, let minute = components.minute else { return nil }
+        return .init(hour: hour, minute: minute)
+    }
+
+    @available(iOS 26.0, *)
     private func localeWeekday(for day: Int) -> Locale.Weekday? {
         switch day {
         case 0: return .sunday
@@ -414,6 +462,29 @@ final class LocalCallFallbackScheduler {
         case 6: return .saturday
         default: return nil
         }
+    }
+
+    private func nextLocalDate(for weekday: Int, time: String) -> Date? {
+        guard (0...6).contains(weekday) else { return nil }
+
+        let calendar = Calendar.current
+        let now = Date()
+        let today = calendar.startOfDay(for: now)
+        for offset in 0..<8 {
+            guard
+                let day = calendar.date(byAdding: .day, value: offset, to: today),
+                calendar.component(.weekday, from: day) - 1 == weekday,
+                let candidate = date(on: day, time: time)
+            else {
+                continue
+            }
+
+            if candidate > now {
+                return candidate
+            }
+        }
+
+        return nil
     }
 
     private func alarmKitId(for key: String) -> UUID {
@@ -449,6 +520,78 @@ final class LocalCallFallbackScheduler {
             try? AlarmManager.shared.stop(id: id)
             try? AlarmManager.shared.cancel(id: id)
         }
+    }
+
+    private func rememberScheduledFallbackFireDate(for alarmId: String, fireDate: Date) {
+        var fireDates = scheduledFallbackFireDates()
+        let timestamp = fireDate.timeIntervalSince1970
+
+        if let existing = fireDates[alarmId], existing <= timestamp {
+            return
+        }
+
+        fireDates[alarmId] = timestamp
+        defaults.set(fireDates, forKey: scheduledFallbackFireDatesKey)
+    }
+
+    @discardableResult
+    private func markDueFallbacksForPushIgnore(now: Date = Date()) -> Set<String> {
+        var fireDates = scheduledFallbackFireDates()
+        guard !fireDates.isEmpty else { return [] }
+
+        var ignoredAlarmIds = pendingIgnoredPushAlarmIds()
+        let nowTimestamp = now.timeIntervalSince1970
+        let dueAlarmIds = Set(fireDates
+            .filter { $0.value <= nowTimestamp }
+            .map(\.key))
+
+        guard !dueAlarmIds.isEmpty else { return [] }
+
+        dueAlarmIds.forEach { alarmId in
+            ignoredAlarmIds.insert(alarmId)
+            fireDates.removeValue(forKey: alarmId)
+        }
+
+        defaults.set(fireDates, forKey: scheduledFallbackFireDatesKey)
+        savePendingIgnoredPushAlarmIds(ignoredAlarmIds)
+        return dueAlarmIds
+    }
+
+    private func scheduledFallbackFireDates() -> [String: TimeInterval] {
+        let raw = defaults.dictionary(forKey: scheduledFallbackFireDatesKey) ?? [:]
+        return raw.compactMapValues { value in
+            if let value = value as? TimeInterval {
+                return value
+            }
+            if let value = value as? NSNumber {
+                return value.doubleValue
+            }
+            return nil
+        }
+    }
+
+    private func clearScheduledFallbackFireDates() {
+        defaults.removeObject(forKey: scheduledFallbackFireDatesKey)
+    }
+
+    private func removeScheduledFallbackFireDate(for alarmId: String) {
+        var fireDates = scheduledFallbackFireDates()
+        fireDates.removeValue(forKey: alarmId)
+        defaults.set(fireDates, forKey: scheduledFallbackFireDatesKey)
+    }
+
+    private func pendingIgnoredPushAlarmIds() -> Set<String> {
+        Set(defaults.stringArray(forKey: ignoredPushAlarmIdsKey) ?? [])
+    }
+
+    private func savePendingIgnoredPushAlarmIds(_ alarmIds: Set<String>) {
+        defaults.set(Array(alarmIds), forKey: ignoredPushAlarmIdsKey)
+    }
+
+    private func removePendingIgnoredPushAlarmId(_ alarmId: String) {
+        var alarmIds = pendingIgnoredPushAlarmIds()
+        alarmIds.remove(alarmId)
+        savePendingIgnoredPushAlarmIds(alarmIds)
     }
 
     private func date(on day: Date, time: String) -> Date? {
