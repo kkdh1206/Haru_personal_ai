@@ -65,6 +65,7 @@ final actor CallManager: NSObject, ObservableObject {
         self.livekitURL = url
         self.livekitToken = token
         self.alarmId = alarmId
+        LocalCallFallbackScheduler.shared.cancelFallback(for: alarmId)
         print("LiveKit info prepared: url=\(url != nil), token=\(token != nil)")
     }
 

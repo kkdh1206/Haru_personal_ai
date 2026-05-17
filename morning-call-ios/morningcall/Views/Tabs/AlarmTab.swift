@@ -542,6 +542,7 @@ struct AlarmTabView: View {
                 switch result {
                 case .success(let data):
                     alarms = data
+                    LocalCallFallbackScheduler.shared.syncFallbacks(with: data)
                 case .failure(let error):
                     print("❌ 알람 가져오기 실패: \(error)")
                 }
@@ -575,6 +576,9 @@ struct AlarmTabView: View {
 
         APIClient.request(path: "/alarm", method: .POST, body: body) { (result: Result<Alarm, Error>) in
             DispatchQueue.main.async {
+                if case .success(let alarm) = result {
+                    LocalCallFallbackScheduler.shared.rescheduleFallback(for: alarm)
+                }
                 completion(result)
             }
         }
@@ -608,16 +612,22 @@ struct AlarmTabView: View {
             path: "/alarm/\(alarm.id)",
             method: .PUT,
             body: body
-        ) { (_: Result<Alarm, Error>) in
+        ) { (result: Result<Alarm, Error>) in
             DispatchQueue.main.async {
+                if case .success(let updatedAlarm) = result {
+                    LocalCallFallbackScheduler.shared.rescheduleFallback(for: updatedAlarm)
+                }
                 completion()
             }
         }
     }
 
     private func deleteAlarm(id: String, completion: @escaping () -> Void) {
-        APIClient.requestVoid(path: "/alarm/\(id)", method: .DELETE) { (_: Result<Void, Error>) in
+        APIClient.requestVoid(path: "/alarm/\(id)", method: .DELETE) { (result: Result<Void, Error>) in
             DispatchQueue.main.async {
+                if case .success = result {
+                    LocalCallFallbackScheduler.shared.cancelFallback(for: id)
+                }
                 completion()
             }
         }

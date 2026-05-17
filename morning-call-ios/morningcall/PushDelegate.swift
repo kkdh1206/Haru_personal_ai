@@ -19,6 +19,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
         FirebaseApp.configure()
         let notificationCenter = UNUserNotificationCenter.current()
         notificationCenter.delegate = self
+        LocalCallFallbackScheduler.shared.registerNotificationCategory()
         notificationCenter.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error {
                 print("❌ Notification authorization failed:", error.localizedDescription)
@@ -117,5 +118,29 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound, .list])
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let userInfo = response.notification.request.content.userInfo
+        let isCallFallback = userInfo["type"] as? String == "callFallback"
+        let alarmId = userInfo["alarmId"] as? String
+
+        guard isCallFallback else {
+            completionHandler()
+            return
+        }
+
+        switch response.actionIdentifier {
+        case LocalCallFallbackScheduler.stopActionIdentifier,
+             UNNotificationDefaultActionIdentifier,
+             UNNotificationDismissActionIdentifier:
+            LocalCallFallbackScheduler.shared.cancelFallback(for: alarmId) {
+                completionHandler()
+            }
+        default:
+            completionHandler()
+        }
     }
 }
