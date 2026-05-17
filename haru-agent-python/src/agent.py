@@ -662,7 +662,9 @@ async def entrypoint(ctx: JobContext):
     session_started = asyncio.Event()
     greeting_lock = asyncio.Lock()
     background_tasks: set[asyncio.Task] = set()
-    last_conversation_activity_at: float | None = None
+    waiting_for_user_response_since: float | None = None
+    agent_is_speaking = False
+    user_is_speaking = False
     silence_nudge_count = 0
 
     def start_background_task(coro, *, name: str | None = None) -> asyncio.Task:
@@ -671,9 +673,15 @@ async def entrypoint(ctx: JobContext):
         task.add_done_callback(background_tasks.discard)
         return task
 
-    def mark_conversation_activity(*, reset_silence_nudges: bool = False):
-        nonlocal last_conversation_activity_at, silence_nudge_count
-        last_conversation_activity_at = asyncio.get_running_loop().time()
+    def mark_waiting_for_user_response(*, reset_silence_nudges: bool = False):
+        nonlocal waiting_for_user_response_since, silence_nudge_count
+        waiting_for_user_response_since = asyncio.get_running_loop().time()
+        if reset_silence_nudges:
+            silence_nudge_count = 0
+
+    def clear_waiting_for_user_response(*, reset_silence_nudges: bool = False):
+        nonlocal waiting_for_user_response_since, silence_nudge_count
+        waiting_for_user_response_since = None
         if reset_silence_nudges:
             silence_nudge_count = 0
 
@@ -921,7 +929,6 @@ async def entrypoint(ctx: JobContext):
                         f"🗣️ Sending initial greeting after {trigger} "
                         f"(attempt {attempt})"
                     )
-                    mark_conversation_activity()
                     return
 
                 await asyncio.sleep(0.25)
@@ -996,10 +1003,9 @@ async def entrypoint(ctx: JobContext):
         append_conversation_message(conversation_messages, role, text)
 
         if role == "assistant":
-            mark_conversation_activity()
             logger.info(f"🤖 Gemini says: {text}")
         else:
-            mark_conversation_activity(reset_silence_nudges=True)
+            clear_waiting_for_user_response(reset_silence_nudges=True)
             logger.info(f"👤 User said: {text}")
             if not hangup_requested and is_explicit_hangup_request(text):
                 _trigger_hangup(
@@ -1007,11 +1013,32 @@ async def entrypoint(ctx: JobContext):
                     "알았어. 오늘 하루도 잘 보내.",
                 )
 
+    @session.on("agent_state_changed")
+    def _on_agent_state_changed(ev):
+        nonlocal agent_is_speaking
+
+        old_state = getattr(ev, "old_state", None)
+        new_state = getattr(ev, "new_state", None)
+        agent_is_speaking = new_state == "speaking"
+
+        if old_state == "speaking" and new_state != "speaking":
+            mark_waiting_for_user_response()
+            logger.info("⏱️ Started user silence timer after assistant finished speaking")
+
+    @session.on("user_state_changed")
+    def _on_user_state_changed(ev):
+        nonlocal user_is_speaking
+
+        new_state = getattr(ev, "new_state", None)
+        user_is_speaking = new_state == "speaking"
+        if user_is_speaking:
+            clear_waiting_for_user_response(reset_silence_nudges=True)
+
     @ctx.room.on("participant_connected")
     def _on_participant_connected(p):
         nonlocal participant_joined
         participant_joined = True
-        mark_conversation_activity(reset_silence_nudges=True)
+        clear_waiting_for_user_response(reset_silence_nudges=True)
         identity = getattr(p, "identity", "(no identity)")
         logger.info(f"👤 Participant joined: {identity}")
         start_background_task(
@@ -1077,14 +1104,14 @@ async def entrypoint(ctx: JobContext):
 
     if ctx.room.remote_participants:
         participant_joined = True
-        mark_conversation_activity(reset_silence_nudges=True)
+        clear_waiting_for_user_response(reset_silence_nudges=True)
         start_background_task(
             send_initial_greeting("existing_remote_participant"),
             name="initial_greeting_existing_participant",
         )
 
     async def user_silence_watchdog():
-        nonlocal silence_nudge_count, last_conversation_activity_at
+        nonlocal silence_nudge_count, waiting_for_user_response_since
 
         max_nudges = get_max_user_silence_nudges()
         if max_nudges <= 0:
@@ -1100,7 +1127,12 @@ async def entrypoint(ctx: JobContext):
             return
 
         while not hangup_requested and not call_outcome_reported:
-            if not participant_joined or last_conversation_activity_at is None:
+            if (
+                not participant_joined
+                or waiting_for_user_response_since is None
+                or agent_is_speaking
+                or user_is_speaking
+            ):
                 await asyncio.sleep(0.5)
                 continue
 
@@ -1108,13 +1140,13 @@ async def entrypoint(ctx: JobContext):
                 await asyncio.sleep(1.0)
                 continue
 
-            elapsed = asyncio.get_running_loop().time() - last_conversation_activity_at
+            elapsed = asyncio.get_running_loop().time() - waiting_for_user_response_since
             if elapsed < nudge_seconds:
                 await asyncio.sleep(min(nudge_seconds - elapsed, 0.5))
                 continue
 
             silence_nudge_count += 1
-            last_conversation_activity_at = asyncio.get_running_loop().time()
+            waiting_for_user_response_since = None
 
             nudge_instructions = (
                 "사용자가 통화 중 몇 초간 대답이 없다. "
