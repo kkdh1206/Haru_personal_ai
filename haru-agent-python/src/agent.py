@@ -45,8 +45,11 @@ DEFAULT_MAX_CONVERSATION_MESSAGES = 8
 DEFAULT_MAX_RETRY_CALLS = 3
 DEFAULT_USER_SILENCE_NUDGE_SECONDS = 5.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
-DEFAULT_USER_SILENCE_NUDGE_TEXT = (
-    "설마 다시 자는 거 아니지? 눈 뜨고 있으면 짧게라도 대답해줘."
+DEFAULT_NO_RESPONSE_RETRY_MINUTES = 3
+DEFAULT_USER_SILENCE_NUDGE_TEXTS = (
+    "설마 다시 자는 거 아니지? 눈 뜨고 있으면 짧게라도 대답해줘.",
+    "지금 대답 없으면 다시 잠든 걸로 볼게. 일어나 있으면 한 마디만 해줘.",
+    "마지막 확인이야. 일어났으면 짧게라도 응답해줘.",
 )
 
 _vad_instance = None
@@ -158,12 +161,33 @@ def get_max_user_silence_nudges() -> int:
         return DEFAULT_MAX_USER_SILENCE_NUDGES
 
 
-def get_user_silence_nudge_text() -> str:
-    configured = os.getenv("USER_SILENCE_NUDGE_TEXT")
-    if not configured:
-        return DEFAULT_USER_SILENCE_NUDGE_TEXT
+def get_user_silence_nudge_texts() -> tuple[str, ...]:
+    configured = os.getenv("USER_SILENCE_NUDGE_TEXTS")
+    if configured:
+        texts = tuple(
+            text.strip()
+            for text in configured.replace("\n", "|").split("|")
+            if text.strip()
+        )
+        if texts:
+            return texts
 
-    return configured.strip() or DEFAULT_USER_SILENCE_NUDGE_TEXT
+    legacy_text = os.getenv("USER_SILENCE_NUDGE_TEXT")
+    if legacy_text and legacy_text.strip():
+        return (legacy_text.strip(),)
+
+    return DEFAULT_USER_SILENCE_NUDGE_TEXTS
+
+
+def get_no_response_retry_minutes() -> int:
+    configured = os.getenv("NO_RESPONSE_RETRY_MINUTES")
+    if not configured:
+        return DEFAULT_NO_RESPONSE_RETRY_MINUTES
+
+    try:
+        return min(max(int(configured.strip()), 1), 30)
+    except ValueError:
+        return DEFAULT_NO_RESPONSE_RETRY_MINUTES
 
 
 def get_hangup_grace_seconds() -> float:
@@ -747,6 +771,24 @@ async def entrypoint(ctx: JobContext):
             logger.warning(f"⚠️ Failed to report call outcome: {outcome_result}")
         return outcome_result
 
+    async def schedule_retry_after_user_silence() -> dict | None:
+        retry_minutes = get_no_response_retry_minutes()
+        had_user_response = any(
+            message.get("role") == "user" and (message.get("content") or "").strip()
+            for message in conversation_messages
+        )
+        result = await report_call_outcome_once(
+            "no_response",
+            had_user_response=had_user_response,
+            retry_minutes=retry_minutes,
+        )
+        logger.info(
+            "📟 User silence retry outcome reported: "
+            f"retry_minutes={retry_minutes} had_user_response={had_user_response} "
+            f"result={result}"
+        )
+        return result
+
     realtime_model_kwargs = {
         "model": get_gemini_model(),
         "api_key": os.getenv("GEMINI_API_KEY") or NOT_GIVEN,
@@ -1118,7 +1160,8 @@ async def entrypoint(ctx: JobContext):
             return
 
         nudge_seconds = get_user_silence_nudge_seconds()
-        nudge_text = get_user_silence_nudge_text()
+        nudge_texts = get_user_silence_nudge_texts()
+        retry_minutes = get_no_response_retry_minutes()
 
         try:
             await asyncio.wait_for(session_started.wait(), timeout=8.0)
@@ -1136,25 +1179,45 @@ async def entrypoint(ctx: JobContext):
                 await asyncio.sleep(0.5)
                 continue
 
-            if silence_nudge_count >= max_nudges:
-                await asyncio.sleep(1.0)
-                continue
-
             elapsed = asyncio.get_running_loop().time() - waiting_for_user_response_since
             if elapsed < nudge_seconds:
                 await asyncio.sleep(min(nudge_seconds - elapsed, 0.5))
                 continue
 
+            if silence_nudge_count >= max_nudges:
+                result = await schedule_retry_after_user_silence()
+                if result and result.get("action") == "retry_limit_reached":
+                    farewell_text = (
+                        "계속 대답이 없네. 오늘은 더 이상 다시 전화할 수 없어서 "
+                        "지금 일어나야 해."
+                    )
+                elif result and result.get("action") == "retry_scheduled":
+                    scheduled_minutes = result.get("retryMinutes", retry_minutes)
+                    farewell_text = (
+                        f"계속 대답이 없어서 일단 끊을게. "
+                        f"{scheduled_minutes}분 뒤에 다시 전화할게."
+                    )
+                else:
+                    farewell_text = "계속 대답이 없어서 일단 끊을게. 지금 일어나야 해."
+
+                _trigger_hangup(
+                    "📵 User remained silent after max nudges; ending call",
+                    farewell_text,
+                )
+                return
+
+            nudge_text = nudge_texts[silence_nudge_count % len(nudge_texts)]
             silence_nudge_count += 1
             waiting_for_user_response_since = None
 
             nudge_instructions = (
                 "사용자가 통화 중 몇 초간 대답이 없다. "
                 "자는지 확인하면서 깨우는 말을 한국어로 한 문장만 말해. "
-                f"가능하면 이 문장을 그대로 사용해: {nudge_text}"
+                "매번 같은 표현을 반복하지 말고 현재 nudge 단계에 맞게 말해. "
+                f"이번에는 가능하면 이 문장을 그대로 사용해: {nudge_text}"
             )
             nudge_trigger_text = (
-                "시스템 트리거: 사용자가 통화 중 5초간 대답이 없다. "
+                f"시스템 트리거: 사용자가 통화 중 {nudge_seconds:.0f}초간 대답이 없다. "
                 "이 문장을 언급하지 말고, 한국어로 짧게 깨워라. "
                 f"말할 내용: {nudge_text}"
             )
