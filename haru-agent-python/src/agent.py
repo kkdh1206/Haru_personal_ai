@@ -857,6 +857,25 @@ async def entrypoint(ctx: JobContext):
         send_client_event(genai_types.LiveClientRealtimeInput(text=text))
         return True
 
+    def request_agent_reply(instructions: str, fallback_trigger_text: str) -> bool:
+        supports_generate_reply = (
+            realtime_model.capabilities.mutable_chat_context
+            and realtime_model.capabilities.mutable_instructions
+        )
+
+        try:
+            if supports_generate_reply:
+                session.generate_reply(
+                    instructions=instructions,
+                    allow_interruptions=True,
+                )
+                return True
+
+            return send_realtime_text_input(fallback_trigger_text)
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to request agent reply: {e}")
+            return False
+
     async def send_initial_greeting(trigger: str):
         nonlocal greeted_user
         async with greeting_lock:
@@ -892,21 +911,11 @@ async def entrypoint(ctx: JobContext):
                     "시스템 트리거: 사용자가 방금 전화를 받았다. 이 문장을 언급하지 말고, "
                     "지금 바로 한국어로 짧고 자연스럽게 아침 인사와 기상 멘트를 시작해."
                 )
-            supports_generate_reply = (
-                realtime_model.capabilities.mutable_chat_context
-                and realtime_model.capabilities.mutable_instructions
-            )
-
             for attempt in range(1, 21):
-                try:
-                    if supports_generate_reply:
-                        session.generate_reply(
-                            instructions=initial_greeting_instructions,
-                            allow_interruptions=True,
-                        )
-                    elif not send_realtime_text_input(initial_greeting_trigger_text):
-                        raise RuntimeError("realtime session is not ready")
-
+                if request_agent_reply(
+                    initial_greeting_instructions,
+                    initial_greeting_trigger_text,
+                ):
                     greeted_user = True
                     logger.info(
                         f"🗣️ Sending initial greeting after {trigger} "
@@ -914,12 +923,8 @@ async def entrypoint(ctx: JobContext):
                     )
                     mark_conversation_activity()
                     return
-                except RuntimeError as e:
-                    if "isn't running" not in str(e):
-                        logger.warning(f"⚠️ Initial greeting skipped: {e}")
-                        return
 
-                    await asyncio.sleep(0.25)
+                await asyncio.sleep(0.25)
 
             logger.warning(
                 "⚠️ Initial greeting skipped after retries: session is not running"
@@ -1111,19 +1116,25 @@ async def entrypoint(ctx: JobContext):
             silence_nudge_count += 1
             last_conversation_activity_at = asyncio.get_running_loop().time()
 
-            try:
-                session.say(
-                    nudge_text,
-                    allow_interruptions=True,
-                    add_to_chat_ctx=True,
-                )
+            nudge_instructions = (
+                "사용자가 통화 중 몇 초간 대답이 없다. "
+                "자는지 확인하면서 깨우는 말을 한국어로 한 문장만 말해. "
+                f"가능하면 이 문장을 그대로 사용해: {nudge_text}"
+            )
+            nudge_trigger_text = (
+                "시스템 트리거: 사용자가 통화 중 5초간 대답이 없다. "
+                "이 문장을 언급하지 말고, 한국어로 짧게 깨워라. "
+                f"말할 내용: {nudge_text}"
+            )
+
+            if request_agent_reply(nudge_instructions, nudge_trigger_text):
                 logger.info(
-                    "⏰ User silence nudge sent "
+                    "⏰ User silence nudge requested "
                     f"({silence_nudge_count}/{max_nudges}) after "
                     f"{nudge_seconds:.1f}s of inactivity"
                 )
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to send user silence nudge: {e}")
+            else:
+                logger.warning("⚠️ Failed to request user silence nudge")
 
             await asyncio.sleep(0.5)
 

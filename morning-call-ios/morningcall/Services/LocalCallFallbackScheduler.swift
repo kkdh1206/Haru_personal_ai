@@ -42,13 +42,10 @@ final class LocalCallFallbackScheduler {
             guard let self else { return }
 
             self.monitorQueue.async {
-                let wasOnline = self.isOnline
                 self.isOnline = path.status == .satisfied
 
                 if self.isOnline {
-                    self.cancelAllFallbacks()
-                } else if wasOnline {
-                    self.replaceScheduledFallbacks(with: self.cachedAlarms)
+                    _ = self.markDueFallbacksForPushIgnore()
                 }
             }
         }
@@ -99,13 +96,10 @@ final class LocalCallFallbackScheduler {
     func syncFallbacks(with alarms: [Alarm]) {
         monitorQueue.async { [weak self] in
             guard let self else { return }
+            let alarmsToCancel = self.cachedAlarms + alarms
             self.cachedAlarms = alarms
 
-            if self.isOnline {
-                self.cancelAllFallbacks()
-            } else {
-                self.replaceScheduledFallbacks(with: alarms)
-            }
+            self.replaceScheduledFallbacks(with: alarms, canceling: alarmsToCancel)
         }
     }
 
@@ -119,7 +113,7 @@ final class LocalCallFallbackScheduler {
             }
 
             self.cancelFallback(for: alarm.id) { [weak self] in
-                guard let self, !self.isOnline else { return }
+                guard let self else { return }
                 self.scheduleFallback(for: alarm)
             }
         }
@@ -156,7 +150,7 @@ final class LocalCallFallbackScheduler {
         }
     }
 
-    private func replaceScheduledFallbacks(with alarms: [Alarm]) {
+    private func replaceScheduledFallbacks(with alarms: [Alarm], canceling alarmsToCancel: [Alarm]? = nil) {
         clearScheduledFallbackFireDates()
 
         center.getPendingNotificationRequests { [weak self] requests in
@@ -168,7 +162,7 @@ final class LocalCallFallbackScheduler {
 
             self.center.removePendingNotificationRequests(withIdentifiers: existingIds)
             self.removeDeliveredFallbacks()
-            self.cancelAlarmKitFallbacks(for: alarms)
+            self.cancelAlarmKitFallbacks(for: alarmsToCancel ?? alarms)
 
             alarms.forEach { self.scheduleFallback(for: $0) }
         }
