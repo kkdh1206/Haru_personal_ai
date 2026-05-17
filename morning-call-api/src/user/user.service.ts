@@ -39,19 +39,34 @@ export class UserService {
   }
 
   async update(userId: string, updateUserDto: UpdateUserDto) {
+    const $set: Partial<User> = {};
+
+    if (updateUserDto.name !== undefined) {
+      const name = updateUserDto.name.trim();
+      if (name) $set.name = name;
+    }
+    if (updateUserDto.interest !== undefined)
+      $set.interest = updateUserDto.interest;
+    if (updateUserDto.location !== undefined)
+      $set.location = updateUserDto.location;
+    if (updateUserDto.language !== undefined)
+      $set.language = updateUserDto.language;
+
     return this.userModel
       .findByIdAndUpdate(
         { _id: userId },
-        {
-          $set: {
-            name: updateUserDto.name,
-            interest: updateUserDto.interest,
-            location: updateUserDto.location,
-            language: updateUserDto.language,
-          },
-        },
+        { $set },
         { new: true },
       )
+      .lean();
+  }
+
+  updateLocation(userId: string, location: string, timeZone?: string) {
+    const $set: Partial<User> = { location };
+    if (timeZone) $set.timeZone = timeZone;
+
+    return this.userModel
+      .findByIdAndUpdate({ _id: userId }, { $set }, { new: true })
       .lean();
   }
 

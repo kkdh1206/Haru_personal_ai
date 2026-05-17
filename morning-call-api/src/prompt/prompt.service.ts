@@ -68,16 +68,7 @@ export class PromptService {
       timeZone,
     );
 
-    // 2. 뉴스, 날씨 가져오기
-    const news =
-      callType === 'retry'
-        ? []
-        : await this.informationService.getCurrentNews(
-            user.interest || 'korea-top',
-          );
-    const newsInfo = Array.isArray(news)
-      ? news.map((item: any) => item.title).filter(Boolean)
-      : [];
+    // 2. 날씨 가져오기
     const weather = await this.informationService.getCurrentWeather(
       user.location || 'Seoul',
     );
@@ -85,9 +76,10 @@ export class PromptService {
       ? `${weather.weather} ${weather.temperature}`
       : '정보 없음';
 
-    // 3. 일정, 뉴스, 날씨를 바탕으로 프롬프트 구성
+    // 3. 일정, 날씨를 바탕으로 프롬프트 구성
     const prompt = buildMorningCallPrompt({
       name: user.name,
+      assistantName: alarm.role || '하루',
       language: user.language,
       timeZone,
       wakeIntensity: alarm.wakeIntensity,
@@ -99,14 +91,13 @@ export class PromptService {
       currentTimeLabel,
       currentIsoTime,
       schedule: schedules,
-      news: newsInfo,
       weather: weatherInfo,
     });
 
     return prompt;
   }
 
-  async getTestCallPrompt(user, wakeIntensity = 'gentle') {
+  async getTestCallPrompt(user, wakeIntensity = 'gentle', assistantName = '하루') {
     const timeZone = user.timeZone || 'Asia/Seoul';
     const now = DateTime.now().setZone(timeZone);
     const todayLabel = now.toFormat('yyyy년 MM월 dd일 cccc');
@@ -119,13 +110,7 @@ export class PromptService {
       timeZone,
     );
 
-    // 2. 뉴스, 날씨 가져오기
-    const news = await this.informationService.getCurrentNews(
-      user.interest || 'korea-top',
-    );
-    const newsInfo = Array.isArray(news)
-      ? news.map((item: any) => item.title).filter(Boolean)
-      : [];
+    // 2. 날씨 가져오기
     const weather = await this.informationService.getCurrentWeather(
       user.location || 'Seoul',
     );
@@ -133,9 +118,10 @@ export class PromptService {
       ? `${weather.weather} ${weather.temperature}`
       : '정보 없음';
 
-    // 3. 일정, 뉴스, 날씨를 바탕으로 프롬프트 구성
+    // 3. 일정, 날씨를 바탕으로 프롬프트 구성
     const prompt = buildMorningCallPrompt({
       name: user.name,
+      assistantName,
       language: user.language,
       timeZone,
       wakeIntensity,
@@ -147,7 +133,6 @@ export class PromptService {
       currentTimeLabel,
       currentIsoTime,
       schedule: schedules,
-      news: newsInfo,
       weather: weatherInfo,
     });
 

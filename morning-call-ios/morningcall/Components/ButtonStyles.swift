@@ -12,9 +12,9 @@ struct PrimaryButtonStyle: ButtonStyle {
         configuration.label
             .frame(maxWidth: .infinity)
             .padding()
-            .background(configuration.isPressed ? Color.white.opacity(0.9) : Color.white)
-            .foregroundColor(.black)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .background(configuration.isPressed ? Color.black.opacity(0.78) : Color.black.opacity(0.88))
+            .foregroundColor(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .fontWeight(.bold)
     }
 }
@@ -24,9 +24,9 @@ struct SecondaryButtonStyle: ButtonStyle {
         configuration.label
             .frame(maxWidth: .infinity)
             .padding()
-            .background(configuration.isPressed ? Color.gray.opacity(0.15) : Color.gray.opacity(0.2))
-            .foregroundColor(.white)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .background(configuration.isPressed ? Color.white.opacity(0.72) : Color.white.opacity(0.88))
+            .foregroundColor(Color.black.opacity(0.78))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .fontWeight(.bold)
     }
 }

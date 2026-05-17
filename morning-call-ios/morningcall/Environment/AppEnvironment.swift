@@ -16,6 +16,5 @@ enum OnboardingStep {
     case loading
     case enterName
     case requestLocation
-    case selectInterests
     case completed
 }

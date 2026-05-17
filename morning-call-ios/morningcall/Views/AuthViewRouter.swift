@@ -8,6 +8,9 @@
 import SwiftUI
 import FirebaseAuth
 import GoogleSignInSwift
+import AuthenticationServices
+import CryptoKit
+import Security
 
 struct UserInfo: Decodable {
     let name: String?
@@ -19,6 +22,7 @@ struct UserInfo: Decodable {
 struct RootView: View {
     @StateObject private var viewModel = AuthViewModel()
     @EnvironmentObject var env: AppEnvironment
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -31,12 +35,11 @@ struct RootView: View {
                     EnterNameView()
                 case .requestLocation:
                     RequestLocationView()
-                case .selectInterests:
-                    SelectInterestsView()
                 case .completed:
                     AlarmListView()
                         .task {
                             registerDeviceTokenToAPI()
+                            CurrentLocationManager.shared.refreshAndSaveIfAuthorized(env: env)
                         }
                 }
             } else {
@@ -45,6 +48,10 @@ struct RootView: View {
         }
         .onAppear {
             viewModel.checkAuthState()
+        }
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active, viewModel.isLoggedIn, env.onboardingStep == .completed else { return }
+            CurrentLocationManager.shared.refreshAndSaveIfAuthorized(env: env)
         }
         .environmentObject(viewModel)
     }
@@ -61,9 +68,13 @@ struct RootView: View {
                         interest: user.interest,
                         language: user.language
                     )
-                    print(user.name ?? "이름 없음")
-                    if user.name == nil {
+                    let trimmedName = user.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let trimmedLocation = user.location?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+                    if trimmedName.isEmpty {
                         env.onboardingStep = .enterName
+                    } else if trimmedLocation.isEmpty {
+                        env.onboardingStep = .requestLocation
                     } else {
                         env.onboardingStep = .completed
                     }
@@ -119,19 +130,146 @@ struct LoginView: View {
     @Environment(\.openURL) var openURL
     
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Text("Haru")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-            Spacer()
-            Text(.init("시작하기 버튼을 누르면 [서비스 이용약관](https://example.com/terms) 및\n[개인정보 처리방침](https://example.com/privacy)에 동의하는 것으로 간주합니다."))
-                .font(.footnote)
-                .tint(.blue)
-                .multilineTextAlignment(.center)
-            SignInWithGoogleButton()
+        ZStack {
+            Image("Background_morning")
+                .resizable()
+                .scaledToFill()
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Haru")
+                        .font(.system(size: 44, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.black.opacity(0.92))
+
+                    Text("따뜻한 아침을 함께 준비해요.")
+                        .font(.system(.headline, design: .rounded).weight(.medium))
+                        .foregroundStyle(Color.black.opacity(0.62))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 36)
+
+                Spacer(minLength: 16)
+
+                Image("Haru_morning")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 250)
+                    .shadow(color: Color.black.opacity(0.10), radius: 18, y: 12)
+
+                Spacer(minLength: 20)
+
+                VStack(spacing: 12) {
+                    AppleSignInButton()
+                    SignInWithGoogleButton()
+
+                    Text(.init("시작하면 [서비스 이용약관](https://example.com/terms) 및 [개인정보 처리방침](https://example.com/privacy)에 동의하게 됩니다."))
+                        .font(.system(.footnote, design: .rounded))
+                        .tint(Color.black.opacity(0.72))
+                        .foregroundStyle(Color.black.opacity(0.56))
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 6)
+                }
+                .padding(18)
+                .background(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(Color.white.opacity(0.86))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                                .stroke(Color.white.opacity(0.72), lineWidth: 1)
+                        )
+                )
+                .padding(.bottom, 18)
+            }
+            .padding(.horizontal, 22)
         }
-        .padding()
+        .preferredColorScheme(.light)
+    }
+}
+
+struct AppleSignInButton: View {
+    @EnvironmentObject var authVM: AuthViewModel
+    @State private var currentNonce: String?
+
+    var body: some View {
+        SignInWithAppleButton(.signIn) { request in
+            let nonce = randomNonceString()
+            currentNonce = nonce
+            request.requestedScopes = [.fullName, .email]
+            request.nonce = sha256(nonce)
+        } onCompletion: { result in
+            switch result {
+            case .success(let authorization):
+                handleAuthorization(authorization)
+            case .failure(let error):
+                print("❌ Apple login error: \(error.localizedDescription)")
+            }
+        }
+        .signInWithAppleButtonStyle(.black)
+        .frame(height: 52)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func handleAuthorization(_ authorization: ASAuthorization) {
+        guard
+            let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential,
+            let nonce = currentNonce,
+            let appleIDToken = appleIDCredential.identityToken,
+            let idTokenString = String(data: appleIDToken, encoding: .utf8)
+        else {
+            print("❌ Apple credential error")
+            return
+        }
+
+        let credential = OAuthProvider.appleCredential(
+            withIDToken: idTokenString,
+            rawNonce: nonce,
+            fullName: appleIDCredential.fullName
+        )
+
+        Auth.auth().signIn(with: credential) { authResult, error in
+            if let error = error {
+                print("❌ Firebase Apple login error: \(error.localizedDescription)")
+                return
+            }
+
+            print("✅ Firebase Apple login success: \(authResult?.user.uid ?? "")")
+            authVM.checkAuthState()
+        }
+    }
+
+    private func sha256(_ input: String) -> String {
+        let inputData = Data(input.utf8)
+        let hashedData = SHA256.hash(data: inputData)
+        return hashedData.compactMap { String(format: "%02x", $0) }.joined()
+    }
+
+    private func randomNonceString(length: Int = 32) -> String {
+        precondition(length > 0)
+        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        var result = ""
+        var remainingLength = length
+
+        while remainingLength > 0 {
+            var randoms = [UInt8](repeating: 0, count: 16)
+            let errorCode = SecRandomCopyBytes(kSecRandomDefault, randoms.count, &randoms)
+            guard errorCode == errSecSuccess else {
+                fatalError("Unable to generate nonce. SecRandomCopyBytes failed with OSStatus \(errorCode)")
+            }
+
+            randoms.forEach { random in
+                if remainingLength == 0 {
+                    return
+                }
+
+                if Int(random) < charset.count {
+                    result.append(charset[Int(random)])
+                    remainingLength -= 1
+                }
+            }
+        }
+
+        return result
     }
 }
 

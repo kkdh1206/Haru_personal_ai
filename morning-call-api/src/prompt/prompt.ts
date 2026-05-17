@@ -9,6 +9,7 @@ type Schedule = {
 
 type PromptOptions = {
   name: string;
+  assistantName: string;
   language: string;
   timeZone: string;
   wakeIntensity: string;
@@ -18,7 +19,6 @@ type PromptOptions = {
   todayLabel: string;
   currentTimeLabel: string;
   currentIsoTime: string;
-  news: string[];
   weather: string;
   schedule: Schedule[];
   customMessage: string;
@@ -79,16 +79,9 @@ function formatSchedules(schedule: Schedule[]): string {
     .join('\n');
 }
 
-function formatNews(news: string[]): string {
-  if (!news?.length) {
-    return '없음';
-  }
-
-  return news.slice(0, 1).join('\n');
-}
-
 export function buildMorningCallPrompt({
   name,
+  assistantName,
   language,
   timeZone,
   wakeIntensity,
@@ -98,12 +91,12 @@ export function buildMorningCallPrompt({
   todayLabel,
   currentTimeLabel,
   currentIsoTime,
-  news,
   weather,
   schedule,
   customMessage,
 }: PromptOptions): string {
   const wakeGuide = WAKE_GUIDES[wakeIntensity] || WAKE_GUIDES.gentle;
+  const conversationLanguage = language?.trim() || '한국어';
   const messageIntent = sanitizeCustomMessage(customMessage);
   const callContextLabel =
     callType === 'retry'
@@ -123,14 +116,15 @@ export function buildMorningCallPrompt({
       : `- 첫 문장은 반드시 "${name} 일어날 시간이야" 또는 "${name} 일어날 시간입니다"처럼 자연스러운 기상 멘트로 시작한다.`;
 
   return `
-너는 Haru다. ${name}를 깨우는 짧은 아침 통화를 한다.
+너는 ${assistantName || '하루'}다. ${name}를 깨우는 짧은 아침 통화를 한다.
 
 규칙:
 - 사용자가 말하기 전에 네가 먼저 시작한다.
 ${openingRule}
 - 한 번에 1~2문장만 말하고 짧게 끝낸다.
 - 사람처럼 자연스럽게 말하되 장황하게 설명하지 않는다.
-- 날씨/일정/뉴스는 꼭 필요할 때만 하나만 짧게 섞는다.
+- 날씨/일정은 꼭 필요할 때만 하나만 짧게 섞는다.
+- 모든 발화는 반드시 ${conversationLanguage}로 한다. 사용자가 다른 언어로 답해도 이 통화의 기본 언어는 ${conversationLanguage}다.
 - 시간과 일정은 반드시 ${timeZone}(KST) 기준으로만 해석한다.
 - 아래 일정 시간은 이미 현지 시간 기준이다.
 - 전할 말은 한 번만 자연스럽게 풀어 말한다.
@@ -145,6 +139,7 @@ ${retryAvailabilityInstruction}
 
 정보:
 - 이름: ${name}
+- 대화 언어: ${conversationLanguage}
 - 통화 유형: ${callContextLabel}
 - 남은 재통화 가능 횟수: ${retryCallsRemaining}
 - 오늘: ${todayLabel}
@@ -152,8 +147,6 @@ ${retryAvailabilityInstruction}
 - 날씨: ${weather || '정보 없음'}
 - 오늘 일정:
 ${formatSchedules(schedule)}
-- 뉴스:
-${formatNews(news)}
 - 전할 말 의도: ${messageIntent || '없음'}
 `.trim();
 }

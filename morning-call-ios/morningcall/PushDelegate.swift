@@ -133,9 +133,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
         }
 
         switch response.actionIdentifier {
-        case LocalCallFallbackScheduler.stopActionIdentifier,
-             UNNotificationDefaultActionIdentifier,
-             UNNotificationDismissActionIdentifier:
+        case LocalCallFallbackScheduler.stopActionIdentifier:
             LocalCallFallbackScheduler.shared.cancelFallback(for: alarmId) {
                 completionHandler()
             }

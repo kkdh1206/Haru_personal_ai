@@ -15,12 +15,14 @@ import { ConfigService } from '@nestjs/config';
 import { ReportCallOutcomeDto } from './dto/report-call-outcome.dto';
 
 const HARU_NAME = '하루';
-const HARU_VOICE = 'Leda';
+const HARI_NAME = '하리';
+const HARU_VOICE = 'Rasalgethi';
+const HARI_VOICE = 'Leda';
 const DEFAULT_WAKE_INTENSITY = 'gentle';
 const DEFAULT_RETRY_MINUTES = 3;
 const MAX_DAILY_RETRY_CALLS = 3;
 const DEFAULT_RETRY_LIMIT_MESSAGE =
-  "전화를 여러 번 드렸는데 연결이 잘 안 돼서 메시지를 남겨요. 오늘 하루도 무사히 잘 보내길 바랄게요.";
+  '전화를 여러 번 드렸는데 연결이 잘 안 돼서 메시지를 남겨요. 오늘 하루도 무사히 잘 보내길 바랄게요.';
 
 @Injectable()
 export class AlarmService {
@@ -41,18 +43,34 @@ export class AlarmService {
   private normalizeAlarmPayload(dto: Partial<AlarmDto | TestCallDto>) {
     const wakeIntensity =
       dto.wakeIntensity === 'firm' ? 'firm' : DEFAULT_WAKE_INTENSITY;
+    const role = dto.role === HARI_NAME ? HARI_NAME : HARU_NAME;
 
     return {
       ...dto,
       personality: wakeIntensity,
-      role: HARU_NAME,
-      voice: HARU_VOICE,
+      role,
+      voice: role === HARI_NAME ? HARI_VOICE : HARU_VOICE,
       wakeIntensity,
     };
   }
 
   private getLocalDateKey(timeZone: string) {
-    return DateTime.now().setZone(timeZone || 'Asia/Seoul').toFormat('yyyy-MM-dd');
+    return DateTime.now()
+      .setZone(timeZone || 'Asia/Seoul')
+      .toFormat('yyyy-MM-dd');
+  }
+
+  private fallbackPrompt(
+    language?: string,
+    name?: string,
+    assistantName = HARU_NAME,
+  ) {
+    const displayName = name?.trim() || '사용자';
+    if (language?.toLowerCase().includes('english')) {
+      return `You are ${assistantName}. Wake ${displayName} up in short, natural English. Start with a wake-up line.`;
+    }
+
+    return `${assistantName}다. ${displayName}를 짧고 자연스럽게 깨워라. 첫 문장은 일어날 시간이라는 말로 시작한다.`;
   }
 
   private async resetDailyRetryStateIfNeeded(alarm: AlarmDocument) {
@@ -80,11 +98,12 @@ export class AlarmService {
 
     const wakeIntensity =
       alarmObject.wakeIntensity === 'firm' ? 'firm' : DEFAULT_WAKE_INTENSITY;
+    const role = alarmObject.role === HARI_NAME ? HARI_NAME : HARU_NAME;
 
     return {
       ...alarmObject,
-      role: HARU_NAME,
-      voice: HARU_VOICE,
+      role,
+      voice: role === HARI_NAME ? HARI_VOICE : HARU_VOICE,
       personality: wakeIntensity,
       wakeIntensity,
     };
@@ -159,17 +178,29 @@ export class AlarmService {
           );
           const state = await job.getState();
           console.log(
-            `[Alarm] scheduled → ${job.id} at ${next.toISOString()} delay=${delay} state=${state}`,
+            `[Alarm] scheduled → ${
+              job.id
+            } at ${next.toISOString()} delay=${delay} state=${state}`,
           );
         }),
       );
     } else {
       // 1회성 알람
-      const next = this.nextOnce(hour, minute, tz, alarm.targetDate || undefined);
+      const next = this.nextOnce(
+        hour,
+        minute,
+        tz,
+        alarm.targetDate || undefined,
+      );
       const delay = next.getTime() - Date.now();
       const job = await this.alarmQueue.add(
         'trigger',
-        { alarmId: alarm._id, oneTime: true, callType: 'initial', retryCount: 0 },
+        {
+          alarmId: alarm._id,
+          oneTime: true,
+          callType: 'initial',
+          retryCount: 0,
+        },
         {
           jobId: `${alarm._id}-once`,
           delay,
@@ -178,7 +209,9 @@ export class AlarmService {
       );
       const state = await job.getState();
       console.log(
-        `[Alarm] scheduled → ${job.id} at ${next.toISOString()} delay=${delay} state=${state}`,
+        `[Alarm] scheduled → ${
+          job.id
+        } at ${next.toISOString()} delay=${delay} state=${state}`,
       );
     }
   }
@@ -200,7 +233,12 @@ export class AlarmService {
     return target.toJSDate(); // JS Date (UTC 기반)
   }
 
-  private nextOnce(h: number, m: number, tz: string, targetDate?: string): Date {
+  private nextOnce(
+    h: number,
+    m: number,
+    tz: string,
+    targetDate?: string,
+  ): Date {
     const now = DateTime.local().setZone(tz);
     let target = targetDate
       ? DateTime.fromISO(targetDate, { zone: tz }).set({
@@ -320,10 +358,19 @@ export class AlarmService {
     // 2. 프롬프트 생성
     let prompt: string;
     try {
-      prompt = await this.promptService.getPrompt(alarmId, callType, retryCount);
+      prompt = await this.promptService.getPrompt(
+        alarmId,
+        callType,
+        retryCount,
+      );
     } catch (error) {
       console.error(`[Alarm] prompt failed → ${alarmId}`, error);
-      prompt = `${HARU_NAME}다. 사용자를 짧고 자연스럽게 깨워라. 첫 문장은 일어날 시간이라는 말로 시작한다.`;
+      const user = await this.userService.findOne(new Types.ObjectId(userId));
+      prompt = this.fallbackPrompt(
+        user?.language,
+        user?.name,
+        normalizedAlarm.role,
+      );
     }
 
     // 3. 에이전트 준비
@@ -369,6 +416,7 @@ export class AlarmService {
     const prompt = await this.promptService.getTestCallPrompt(
       user,
       normalizedTest.wakeIntensity,
+      normalizedTest.role,
     );
 
     // 2. 에이전트 준비
@@ -443,7 +491,9 @@ export class AlarmService {
     );
     const state = await job.getState();
     console.log(
-      `[Alarm] retry scheduled → ${job.id} at ${scheduledAt.toISOString()} delay=${delay} state=${state}`,
+      `[Alarm] retry scheduled → ${
+        job.id
+      } at ${scheduledAt.toISOString()} delay=${delay} state=${state}`,
     );
 
     alarm.dailyRetryCount = retryCount;
@@ -474,7 +524,9 @@ export class AlarmService {
     await alarm.save();
 
     if (dto.wakeStatus === 'awake') {
-      const existingRetryJob = await this.alarmQueue.getJob(`${dto.alarmId}-retry`);
+      const existingRetryJob = await this.alarmQueue.getJob(
+        `${dto.alarmId}-retry`,
+      );
       if (existingRetryJob) {
         await existingRetryJob.remove();
       }
@@ -487,7 +539,10 @@ export class AlarmService {
     }
 
     const retryMinutes = dto.retryMinutes ?? DEFAULT_RETRY_MINUTES;
-    const retryResult = await this.scheduleRetryCallForAlarm(alarm, retryMinutes);
+    const retryResult = await this.scheduleRetryCallForAlarm(
+      alarm,
+      retryMinutes,
+    );
 
     if (retryResult.success) {
       return {

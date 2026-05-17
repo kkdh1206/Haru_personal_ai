@@ -44,7 +44,7 @@ struct Alarm: Identifiable, Codable, Hashable {
             wakeIntensity = "gentle"
         }
         personality = try container.decodeIfPresent(String.self, forKey: .personality) ?? wakeIntensity
-        voice = try container.decodeIfPresent(String.self, forKey: .voice) ?? "Leda"
+        voice = try container.decodeIfPresent(String.self, forKey: .voice) ?? "Rasalgethi"
         role = try container.decodeIfPresent(String.self, forKey: .role) ?? "하루"
     }
 

@@ -45,15 +45,18 @@ struct TestCallView: View {
     }
 
     private func testCall() {
+        let character = CharacterPreferenceStore.current
         APIClient.request(path: "/alarm/test-call", method: .POST, body: [
-            "wakeIntensity": wakeIntensity
+            "wakeIntensity": wakeIntensity,
+            "voice": character.voiceName,
+            "role": character.roleName
         ]) { (result: Result<LiveKitInfo, Error>) in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let updated):
                     print("방 생성 성공: \(updated)")
                     CallManager.shared.prepareIncoming(url: updated.lkUrl, token: updated.lkToken, alarmId: "-")
-                    CallManager.shared.startOutgoing(handle: "하루")
+                    CallManager.shared.startOutgoing(handle: character.roleName)
                 case .failure(let error):
                     print("방 생성 실패: \(error)")
                 }

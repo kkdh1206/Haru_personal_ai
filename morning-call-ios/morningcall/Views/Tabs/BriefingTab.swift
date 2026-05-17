@@ -45,10 +45,6 @@ struct BriefingView: View {
                         EventSection()
                     }
                     .listRowSeparator(.hidden)
-                    NewsSection()
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                    
                 }
             }
             .listRowSeparator(.hidden)

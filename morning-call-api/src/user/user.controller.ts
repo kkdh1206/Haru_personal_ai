@@ -15,6 +15,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { DeviceTokenDto } from './dto/device-token.dto';
 import { CalendarTokenDto } from './dto/calendar-token.dto';
 import { CustomMessageDto } from './dto/custom-message.dto';
+import { LocationDto } from './dto/location.dto';
 
 @ApiTags('User')
 @UseGuards(AuthGuard)
@@ -82,6 +83,23 @@ export class UserController {
     );
     if (!updated) return 'failed';
     return 'updated';
+  }
+
+  @Patch('location')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '유저 위치 업데이트',
+    description: '날씨 제공을 위한 현재 위치와 타임존을 업데이트합니다.',
+  })
+  async updateLocation(@Req() req, @Body() dto: LocationDto) {
+    const updated = await this.userService.updateLocation(
+      req.user._id,
+      dto.location,
+      dto.timeZone,
+    );
+    if (!updated) throw new NotFoundException('User not found');
+    return updated;
   }
 
   @Put()

@@ -9,13 +9,7 @@ import SwiftUI
 
 struct UserSettings: Codable {
     var name: String
-    var language: String       // "ko", "en" 같은 코드
-    var topic: String          // "korea-top", "world", ...
-    enum CodingKeys: String, CodingKey {
-            case name
-            case language
-            case topic = "interest"   // 서버 JSON 키 -> topic에 매핑
-        }
+    var language: String
 }
 
 struct LiveKitInfo: Codable {
@@ -36,7 +30,6 @@ struct SettingView: View {
     // 새로 추가되는 상태들
     @State private var userName: String = ""
     @State private var selectedLanguage: String = "한국어"
-    @State private var selectedTopic: String = ""   // 하나만 선택
     @State private var selectedCharacter: CharacterPreference = CharacterPreferenceStore.current
 
     @State private var isSettingsLoading = false   // 설정용 로딩
@@ -46,138 +39,28 @@ struct SettingView: View {
         ("English", "English")
     ]
     
-    /// 서버에서 쓰는 topic 코드 (id로 사용)
-    private let newsTopics: [String] = [
-        "korea-top",
-        "world",
-        "business",
-        "tech",
-        "health",
-        "sport",
-        "entertainment",
-        "politics"
-    ]
-    
-    /// 화면에 보여줄 라벨 (원하면 더 이쁘게 매핑 가능)
-    private func topicLabel(_ code: String) -> String {
-        switch code {
-        case "korea-top": return "한국 뉴스"
-        case "world": return "세계"
-        case "business": return "경제"
-        case "tech": return "IT/과학"
-        case "health": return "건강"
-        case "sport": return "스포츠"
-        case "entertainment": return "연예"
-        case "politics": return "정치"
-        default: return code
-        }
-    }
-    
     var body: some View {
-        List {
-            // 프로필 / 이름 설정
-            Section(header: Text("프로필")) {
-                TextField("이름", text: $userName)
-                    .textInputAutocapitalization(.never)
-                    .onSubmit { saveProfile() }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                profileSection
+                callSection
+                characterSection
+                calendarSection
+                logoutSection
             }
-            // 언어 설정
-            Section(header: Text("통화 시 언어")) {
-                Picker("언어", selection: $selectedLanguage) {
-                    ForEach(languageOptions, id: \.code) { lang in
-                        Text(lang.label)
-                            .tag(lang.code)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: selectedLanguage) { _ in
-                    saveProfile()
-                }
-            }
-            
-            // 뉴스 관심 주제 설정 (단일 선택)
-            Section(header: Text("뉴스 관심 주제")) {
-                ForEach(newsTopics, id: \.self) { topic in
-                    HStack {
-                        Text(topicLabel(topic))
-                        Spacer()
-                        if selectedTopic == topic {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        toggleTopic(topic)
-                    }
-                }
-            }
-
-            Section(header: Text("기상 화면 캐릭터")) {
-                ForEach(CharacterPreference.allCases, id: \.rawValue) { character in
-                    HStack(spacing: 14) {
-                        Image(character.assetName())
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 44, height: 44)
-
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(character.displayName)
-                                .font(.headline)
-                            Text(character.description)
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-
-                        Spacer()
-
-                        if selectedCharacter == character {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.blue)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        selectedCharacter = character
-                        CharacterPreferenceStore.current = character
-                    }
-                }
-            }
-
-            Section(header: Text("구글 캘린더")) {
-                Button("캘린더 연동 다시 하기") {
-                    googleHelper.signInForCalendar()
-                }
-                Text("대화 중 약속이 나오면 Haru가 바로 일정에 추가할 수 있어요.")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-            }
-
-            Button("로그아웃") {
-                authVM.signOut()
-            }
-            .frame(maxWidth: .infinity, alignment: .center)
-            .foregroundColor(.red)
-            
-            // 캘린더 연동 / 로그아웃
-            // TODO: 일정 가져오는 쪽으로 옮겨야될듯...? 일정 조회시 에러 나면 연동하기 버튼 띄우는 쪽으로 -> API 부터 수정해야됨;;
-//                    Button("캘린더 연동하기") {
-//                        googleHelper.signInForCalendar()
-//                    }
-//                    .padding(.vertical, 8)
-//                    .frame(maxWidth: .infinity, alignment: .center)
-//                    
-//                    if let token = googleHelper.accessToken {
-//                        Text("✅ 연동 완료!")
-//                        Text("AccessToken: \(token)")
-//                            .font(.caption)
-//                            .lineLimit(2)
-//                    }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 36)
         }
-        .listStyle(.insetGrouped)
+        .background(Color(red: 0.97, green: 0.96, blue: 0.93).ignoresSafeArea())
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: { showingTestCallSheet = true }) {
                     Image(systemName: "phone.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .frame(width: 38, height: 38)
+                        .background(Color.white.opacity(0.78), in: Circle())
                 }
             }
         }
@@ -185,38 +68,184 @@ struct SettingView: View {
             TestCallView()
         }
         .navigationTitle("설정")
+        .navigationBarTitleDisplayMode(.inline)
+        .tint(.black)
         .task {
             loadInitialSettings()
         }
+        .preferredColorScheme(.light)
+    }
+
+    private var profileSection: some View {
+        settingsCard(title: "프로필") {
+            TextField("이름", text: $userName)
+                .font(.system(.body, design: .rounded).weight(.semibold))
+                .foregroundStyle(.black)
+                .textInputAutocapitalization(.never)
+                .submitLabel(.done)
+                .onSubmit { saveProfile() }
+                .padding(18)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color.white.opacity(0.78))
+                )
+        }
+    }
+
+    private var callSection: some View {
+        settingsCard(title: "통화 시 언어") {
+            Picker("언어", selection: $selectedLanguage) {
+                ForEach(languageOptions, id: \.code) { lang in
+                    Text(lang.label)
+                        .tag(lang.code)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: selectedLanguage) { _ in
+                saveProfile()
+            }
+        }
+    }
+
+    private var characterSection: some View {
+        settingsCard(title: "기상 화면 캐릭터") {
+            VStack(spacing: 12) {
+                ForEach(CharacterPreference.allCases, id: \.rawValue) { character in
+                    Button {
+                        applyCharacterPreference(character)
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(character.assetName())
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 44, height: 44)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(character.displayName)
+                                    .font(.system(.body, design: .rounded).weight(.semibold))
+                                    .foregroundStyle(.black)
+                                Text(character.description)
+                                    .font(.system(.footnote, design: .rounded))
+                                    .foregroundStyle(Color.black.opacity(0.58))
+                                    .multilineTextAlignment(.leading)
+                            }
+
+                            Spacer()
+
+                            Image(systemName: selectedCharacter == character ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(
+                                    selectedCharacter == character
+                                    ? Color(red: 0.47, green: 0.61, blue: 0.92)
+                                    : Color.secondary.opacity(0.45)
+                                )
+                        }
+                        .padding(18)
+                        .background(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .fill(selectedCharacter == character ? Color.white.opacity(0.9) : Color.white.opacity(0.58))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var calendarSection: some View {
+        settingsCard(title: "구글 캘린더") {
+            VStack(alignment: .leading, spacing: 12) {
+                Button {
+                    googleHelper.signInForCalendar()
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "calendar.badge.plus")
+                            .font(.system(size: 19, weight: .semibold))
+                        Text("캘린더 연동 다시 하기")
+                            .font(.system(.body, design: .rounded).weight(.semibold))
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 14, weight: .bold))
+                    }
+                    .foregroundStyle(.black)
+                    .padding(18)
+                    .background(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .fill(Color.white.opacity(0.78))
+                    )
+                }
+                Text("대화 중 약속이 나오면 Haru가 바로 일정에 추가할 수 있어요.")
+                    .font(.system(.footnote, design: .rounded))
+                    .foregroundStyle(Color.black.opacity(0.58))
+            }
+        }
+    }
+
+    private var logoutSection: some View {
+        VStack(spacing: 0) {
+            Button("로그아웃") {
+                authVM.signOut()
+            }
+            .font(.system(.body, design: .rounded).weight(.semibold))
+            .foregroundStyle(Color(red: 0.84, green: 0.16, blue: 0.16))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 17)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.white.opacity(0.82))
+            )
+        }
+    }
+
+    private func settingsCard<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .foregroundStyle(.black)
+
+            content()
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(settingsSectionBackground)
+    }
+
+    private var settingsSectionBackground: some View {
+        RoundedRectangle(cornerRadius: 28, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(Color.white.opacity(0.55), lineWidth: 1)
+            )
     }
     
     // MARK: - 설정 관련 helper
-    
-    /// 단일 선택: 이미 선택된 걸 다시 누르면 해제, 아니면 교체
-    private func toggleTopic(_ topic: String) {
-        if selectedTopic == topic {
-            selectedTopic = ""
-        } else {
-            selectedTopic = topic
-        }
-        saveProfile();
-    }
-    
-    
+
     private func saveProfile() {
+        let trimmedName = userName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            userName = env.user?.name ?? ""
+            return
+        }
+
+        let language = selectedLanguage.isEmpty ? "한국어" : selectedLanguage
         let body: [String: Any] = [
-            "name": userName,
-            "language": selectedLanguage,
-            "interest": selectedTopic   // ✅ 여기 interest로 보내기
+            "name": trimmedName,
+            "language": language,
+            "location": env.user?.location ?? ""
         ]
         
         APIClient.request(path: "/user", method: .PUT, body: body) { (result: Result<UserSettings, Error>) in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let updated):
-                    env.user?.name = userName
-                    env.user?.language = selectedLanguage
-                    env.user?.interest = selectedTopic
+                    userName = trimmedName
+                    selectedLanguage = language
+                    env.user?.name = trimmedName
+                    env.user?.language = language
                     print("✅ 사용자 설정 저장 완료: \(updated)")
                 case .failure(let error):
                     print("❌ 사용자 설정 저장 실패: \(error)")
@@ -227,8 +256,43 @@ struct SettingView: View {
     
     private func loadInitialSettings() {
         self.userName = env.user?.name ?? ""
-        self.selectedLanguage = env.user?.language ?? ""
-        self.selectedTopic = env.user?.interest ?? ""
+        self.selectedLanguage = env.user?.language?.isEmpty == false ? env.user?.language ?? "한국어" : "한국어"
         self.selectedCharacter = CharacterPreferenceStore.current
+    }
+
+    private func applyCharacterPreference(_ character: CharacterPreference) {
+        selectedCharacter = character
+        CharacterPreferenceStore.current = character
+
+        APIClient.request(path: "/alarm", method: .GET) { (result: Result<[Alarm], Error>) in
+            guard case .success(let alarms) = result else { return }
+
+            alarms.forEach { alarm in
+                var body: [String: Any] = [
+                    "time": alarm.time,
+                    "timeZone": TimeZone.current.identifier,
+                    "repeatDays": alarm.repeatDays,
+                    "isOn": alarm.isOn,
+                    "wakeIntensity": alarm.wakeIntensity,
+                    "personality": alarm.personality,
+                    "voice": character.voiceName,
+                    "role": character.roleName,
+                ]
+
+                if let targetDate = alarm.targetDate, !targetDate.isEmpty {
+                    body["targetDate"] = targetDate
+                }
+
+                APIClient.request(
+                    path: "/alarm/\(alarm.id)",
+                    method: .PUT,
+                    body: body
+                ) { (updateResult: Result<Alarm, Error>) in
+                    if case .success(let updatedAlarm) = updateResult {
+                        LocalCallFallbackScheduler.shared.rescheduleFallback(for: updatedAlarm)
+                    }
+                }
+            }
+        }
     }
 }

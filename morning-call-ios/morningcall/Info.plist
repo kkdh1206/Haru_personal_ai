@@ -23,6 +23,8 @@
 		<string>com.google</string>
 		<string>com.googleusercontent.apps.118080996247-6f7ohopc1celgmk97n3a7bc2fadgqv92</string>
 	</array>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>voip</string>

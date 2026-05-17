@@ -35,6 +35,24 @@ enum CharacterPreference: String, CaseIterable, Codable {
         }
     }
 
+    var roleName: String {
+        switch self {
+        case .haru:
+            return "하루"
+        case .hari:
+            return "하리"
+        }
+    }
+
+    var voiceName: String {
+        switch self {
+        case .haru:
+            return "Rasalgethi"
+        case .hari:
+            return "Leda"
+        }
+    }
+
     func assetName(for period: HaruDayPeriod = .current()) -> String {
         switch self {
         case .haru:

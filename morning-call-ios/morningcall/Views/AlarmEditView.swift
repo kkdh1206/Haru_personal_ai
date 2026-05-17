@@ -118,7 +118,6 @@ struct AlarmEditView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    headerCard
                     timeSection
                     wakeStyleSection
 
@@ -177,35 +176,6 @@ struct AlarmEditView: View {
             }
         }
         .preferredColorScheme(.light)
-    }
-
-    private var headerCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(context.subtitle)
-                .font(.system(.subheadline, design: .rounded))
-                .foregroundStyle(Color.black.opacity(0.58))
-
-            Text(displayTime)
-                .font(.system(size: 42, weight: .semibold, design: .rounded))
-                .foregroundStyle(Color.black.opacity(0.92))
-
-            if context.isException {
-                Toggle("이 날은 알람 쉬기", isOn: $isSkipped)
-                    .tint(Color(red: 0.47, green: 0.61, blue: 0.92))
-                    .padding(.top, 8)
-                    .foregroundStyle(.black)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(24)
-        .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .stroke(Color.white.opacity(0.6), lineWidth: 1)
-                )
-        )
     }
 
     private var timeSection: some View {

@@ -16,7 +16,7 @@ export class Alarm {
   @Prop({ default: 'bright' })
   personality: string;
 
-  @Prop({ default: 'Leda' })
+  @Prop({ default: 'Rasalgethi' })
   voice: string;
 
   @Prop({ required: true, default: '하루' })

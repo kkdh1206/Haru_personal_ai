@@ -362,13 +362,13 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Haru;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "정확한 날씨 정보를 제공하기 위해 현재 위치 접근 권한이 필요해요.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Voice call needs microphone";
-				INFOPLIST_KEY_NSVoIPUsageDescription = "";
+				INFOPLIST_KEY_NSVoIPUsageDescription = "알람 시간에 Haru의 아침 전화를 받기 위해 필요해요.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
-				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -398,13 +398,13 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Haru;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "정확한 날씨 정보를 제공하기 위해 현재 위치 접근 권한이 필요해요.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Voice call needs microphone";
-				INFOPLIST_KEY_NSVoIPUsageDescription = "";
+				INFOPLIST_KEY_NSVoIPUsageDescription = "알람 시간에 Haru의 아침 전화를 받기 위해 필요해요.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
-				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
