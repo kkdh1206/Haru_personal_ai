@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+set -e
+
+if [ -x "./gradle/wrapper/gradle-wrapper.jar" ]; then
+  exec java -jar ./gradle/wrapper/gradle-wrapper.jar "$@"
+fi
+
+if command -v gradle >/dev/null 2>&1; then
+  exec gradle "$@"
+fi
+
+echo "Gradle wrapper jar is not checked in and no system Gradle was found." >&2
+echo "Install Gradle 9.5.1 or regenerate the wrapper with: gradle wrapper --gradle-version 9.5.1" >&2
+exit 1

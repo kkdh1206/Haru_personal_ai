@@ -13,6 +13,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { BullBoardModule } from 'src/bull-board/bull-board.module';
 import { LivekitService } from 'src/livekit/livekit.service';
 import { PromptModule } from 'src/prompt/prompt.module';
+import { FcmService } from 'src/fcm/fcm.service';
 
 @Module({
   imports: [
@@ -29,7 +30,13 @@ import { PromptModule } from 'src/prompt/prompt.module';
     PromptModule,
   ],
   controllers: [AlarmController],
-  providers: [AlarmService, AlarmProcessor, ApnsService, LivekitService],
+  providers: [
+    AlarmService,
+    AlarmProcessor,
+    ApnsService,
+    FcmService,
+    LivekitService,
+  ],
   exports: [AlarmService, CalendarModule, InformationModule],
 })
 export class AlarmModule {}

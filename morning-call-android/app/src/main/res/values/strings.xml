@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">하루</string>
+    <string name="default_web_client_id">PUT_FIREBASE_WEB_CLIENT_ID_HERE</string>
+</resources>

@@ -13,6 +13,7 @@ import { PromptService } from 'src/prompt/prompt.service';
 import { TestCallDto } from './dto/test-call.dto';
 import { ConfigService } from '@nestjs/config';
 import { ReportCallOutcomeDto } from './dto/report-call-outcome.dto';
+import { FcmService } from 'src/fcm/fcm.service';
 
 const HARU_NAME = '하루';
 const HARI_NAME = '하리';
@@ -31,6 +32,7 @@ export class AlarmService {
   constructor(
     private readonly livekit: LivekitService,
     private readonly apnsService: ApnsService,
+    private readonly fcmService: FcmService,
     private readonly userService: UserService,
     private readonly promptService: PromptService,
     @InjectModel(Alarm.name) private alarmModel: Model<AlarmDocument>,
@@ -322,10 +324,16 @@ export class AlarmService {
       };
     }
 
-    const pushResult = await this.apnsService.sendWakeFollowupPush(
-      deviceToken.deviceToken,
-      DEFAULT_RETRY_LIMIT_MESSAGE,
-    );
+    const pushResult =
+      deviceToken.deviceType === 'android'
+        ? await this.fcmService.sendWakeFollowupPush(
+            deviceToken.deviceToken,
+            DEFAULT_RETRY_LIMIT_MESSAGE,
+          )
+        : await this.apnsService.sendWakeFollowupPush(
+            deviceToken.deviceToken,
+            DEFAULT_RETRY_LIMIT_MESSAGE,
+          );
 
     if (pushResult.sent.length) {
       alarm.retryLimitNoticeDate = todayKey;
@@ -400,16 +408,20 @@ export class AlarmService {
     const room = alarmId;
     const tokenClient = await this.livekit.generateLivkitToken(room, userId);
 
-    // 5. APNs 푸시 보내기
-    // TODO: android 경우 다른 푸시로 처리
-    const pushResult = await this.apnsService.sendVoipPush(
-      deviceToken.deviceToken,
-      {
-        caller: HARU_NAME,
-        livekitToken: tokenClient,
-        alarmId,
-      },
-    );
+    // 5. 플랫폼별 푸시 보내기
+    const pushResult =
+      deviceToken.deviceType === 'android'
+        ? await this.fcmService.sendCallPush(deviceToken.deviceToken, {
+            caller: HARU_NAME,
+            lkUrl: this.livekitUrl,
+            lkToken: tokenClient,
+            alarmId,
+          })
+        : await this.apnsService.sendVoipPush(deviceToken.deviceToken, {
+            caller: HARU_NAME,
+            livekitToken: tokenClient,
+            alarmId,
+          });
     if (!pushResult.sent.length) {
       throw new Error(`APNs push failed for alarm ${alarmId}`);
     }

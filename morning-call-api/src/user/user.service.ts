@@ -14,6 +14,8 @@ import {
   UserProfile,
   UserProfileDocument,
 } from 'src/memory/schemas/user-profile.schema';
+import { ConfigService } from '@nestjs/config';
+import { google } from 'googleapis';
 
 @Injectable()
 export class UserService {
@@ -24,6 +26,7 @@ export class UserService {
     @InjectModel(UserProfile.name)
     private userProfileModel: Model<UserProfileDocument>,
     private readonly crypto: CryptoService,
+    private readonly cs: ConfigService,
   ) {}
 
   async oauthSync(firebaseUid: string, email: string) {
@@ -91,18 +94,25 @@ export class UserService {
     return await user.save();
   }
 
-  updateDeviceToken(userId: string, deviceToken: string) {
+  updateDeviceToken(
+    userId: string,
+    deviceToken: string,
+    deviceType: 'ios' | 'android' = 'ios',
+  ) {
     return this.userModel
       .findByIdAndUpdate(
         { _id: userId },
-        { $set: { deviceToken: deviceToken } },
+        { $set: { deviceToken, deviceType } },
         { new: true },
       )
       .lean();
   }
 
   getUserDeviceToken(userId: string) {
-    return this.userModel.findById(userId).select('deviceToken').lean();
+    return this.userModel
+      .findById(userId)
+      .select('deviceToken deviceType')
+      .lean();
   }
 
   updateCalendarToken(
@@ -122,6 +132,26 @@ export class UserService {
         { new: true },
       )
       .lean();
+  }
+
+  async updateCalendarTokenFromAuthCode(userId: string, serverAuthCode: string) {
+    const oAuth2Client = new google.auth.OAuth2(
+      this.cs.get<string>('google.clientId'),
+      this.cs.get<string>('google.clientSecret'),
+    );
+
+    const { tokens } = await oAuth2Client.getToken(serverAuthCode);
+    if (!tokens.access_token || !tokens.refresh_token) {
+      throw new Error('Google Calendar auth code did not return tokens.');
+    }
+
+    await this.updateCalendarToken(
+      userId,
+      tokens.access_token,
+      tokens.refresh_token,
+    );
+
+    return { connected: true };
   }
 
   async getUserCalendarToken(userId: string) {
