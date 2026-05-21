@@ -200,7 +200,7 @@ struct AlarmTabView: View {
                             .font(.system(size: 42, weight: .bold, design: .rounded))
                             .foregroundStyle(Color.black.opacity(0.92))
 
-                        Text("이번 주 알람을 추가해서 아침 루틴을 준비해보세요.")
+                        Text("알람을 추가해서 아침 루틴을 준비해보세요.")
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(Color.black.opacity(0.58))
                     }
