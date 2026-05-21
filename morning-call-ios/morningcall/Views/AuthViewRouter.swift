@@ -140,7 +140,7 @@ struct LoginView: View {
             GeometryReader { proxy in
                 VStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Haru")
+                        Text("하루")
                             .font(.system(size: 44, weight: .bold, design: .rounded))
                             .foregroundStyle(Color.black.opacity(0.92))
 
@@ -157,7 +157,7 @@ struct LoginView: View {
                         AppleSignInButton()
                         SignInWithGoogleButton()
 
-                        Text(.init("시작하면 [서비스 이용약관](https://example.com/terms) 및 [개인정보 처리방침](https://example.com/privacy)에 동의하게 됩니다."))
+                        Text(.init("시작하면 **[서비스 이용약관](https://example.com/terms)** 및 **[개인정보 처리방침](https://example.com/privacy)**에 동의하게 됩니다."))
                             .font(.system(.footnote, design: .rounded))
                             .tint(Color.black.opacity(0.72))
                             .foregroundStyle(Color.black.opacity(0.56))
