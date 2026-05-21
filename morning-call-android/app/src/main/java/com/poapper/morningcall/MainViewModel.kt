@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import java.io.IOException
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -85,7 +86,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     selectedLanguage = user.language ?: "한국어",
                     selectedCharacter = characterStore.current,
                 )
-                registerFcmToken()
+                registerFcmTokenSafely()
                 if (step == OnboardingStep.Completed) {
                     refreshAlarms()
                     refreshCalendarStatus()
@@ -257,6 +258,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         api.registerDeviceToken(token)
     }
 
+    private suspend fun registerFcmTokenSafely() {
+        runCatching { registerFcmToken() }
+            .onFailure {
+                _state.value = _state.value.copy(
+                    error = "FCM 토큰 등록 실패: ${it.readableMessage()}",
+                )
+            }
+    }
+
     private fun refreshCalendarStatus() {
         viewModelScope.launch {
             runCatching {
@@ -291,6 +301,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun weekdayIndex(date: LocalDate): Int = date.dayOfWeek.value % 7
 
     private fun setError(error: Throwable) {
-        _state.value = _state.value.copy(isLoading = false, error = error.message ?: "요청에 실패했어요.")
+        _state.value = _state.value.copy(isLoading = false, error = error.readableMessage())
+    }
+
+    private fun Throwable.readableMessage(): String {
+        val message = message ?: return "요청에 실패했어요."
+        return when {
+            this is IOException && message.startsWith("HTTP 403") ->
+                "서버 인증에 실패했어요. Android Firebase 앱이 서버의 Firebase 프로젝트와 같은지 확인해 주세요. ($message)"
+            this is IOException && message.startsWith("HTTP") ->
+                "서버 요청에 실패했어요. $message"
+            else -> message
+        }
     }
 }

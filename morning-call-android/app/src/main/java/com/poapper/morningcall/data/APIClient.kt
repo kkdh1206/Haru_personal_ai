@@ -13,6 +13,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -154,7 +156,7 @@ class APIClient(private val authRepository: AuthRepository) {
         execute(path, method, body)
     }
 
-    private suspend fun execute(path: String, method: String, body: JsonObject? = null): String? {
+    private suspend fun execute(path: String, method: String, body: JsonObject? = null): String? = withContext(Dispatchers.IO) {
         val requestBuilder = Request.Builder()
             .url(BASE_URL + path)
             .header("Authorization", "Bearer ${authRepository.idToken()}")
@@ -170,7 +172,7 @@ class APIClient(private val authRepository: AuthRepository) {
             else -> error("Unsupported method $method")
         }
 
-        return client.newCall(requestBuilder.build()).execute().use { response ->
+        client.newCall(requestBuilder.build()).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("HTTP ${response.code} for $method $path")
             }

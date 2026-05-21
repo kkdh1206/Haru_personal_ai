@@ -9,7 +9,7 @@ Native Kotlin Android client for Haru morning call.
    - Enable Google Sign-In and Firebase Cloud Messaging.
 2. Place Firebase config at:
    - `app/google-services.json`
-3. Replace `PUT_FIREBASE_WEB_CLIENT_ID_HERE` in `app/src/main/res/values/strings.xml` with the Firebase Web client ID.
+3. The Google Services Gradle plugin generates `R.string.default_web_client_id` from `app/google-services.json`.
 4. Install Android SDK 36 and Gradle 9.5.1, or regenerate a standard wrapper:
    - `gradle wrapper --gradle-version 9.5.1`
 

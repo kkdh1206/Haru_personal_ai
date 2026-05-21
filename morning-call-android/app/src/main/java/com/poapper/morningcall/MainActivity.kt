@@ -112,12 +112,40 @@ private fun HaruApp(viewModel: MainViewModel) {
         }
 
         when (state.onboardingStep) {
-            OnboardingStep.Loading -> CenterText("불러오는 중...")
+            OnboardingStep.Loading -> LoadingScreen(
+                error = state.error,
+                onRetry = viewModel::bootstrap,
+                onLogout = viewModel::signOut,
+            )
             OnboardingStep.EnterName -> EnterNameScreen(viewModel::saveName)
             OnboardingStep.RequestLocation -> LocationScreen(viewModel::saveLocation)
             OnboardingStep.Completed -> HomeScreen(viewModel, onConnectCalendar = {
                 calendarSignIn.launch(viewModel.calendarIntent())
             })
+        }
+    }
+}
+
+@Composable
+private fun LoadingScreen(
+    error: String?,
+    onRetry: () -> Unit,
+    onLogout: () -> Unit,
+) {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("불러오는 중...", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        if (!error.isNullOrBlank()) {
+            Spacer(Modifier.height(14.dp))
+            Text(error, color = Color(0xFFB3261E), textAlign = TextAlign.Center)
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = onRetry) { Text("다시 시도") }
+                TextButton(onClick = onLogout) { Text("로그아웃") }
+            }
         }
     }
 }
