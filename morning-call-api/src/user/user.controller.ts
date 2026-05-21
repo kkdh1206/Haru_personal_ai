@@ -17,6 +17,7 @@ import { DeviceTokenDto } from './dto/device-token.dto';
 import { CalendarTokenDto } from './dto/calendar-token.dto';
 import { CustomMessageDto } from './dto/custom-message.dto';
 import { LocationDto } from './dto/location.dto';
+import { CalendarCodeDto } from './dto/calendar-code.dto';
 
 @ApiTags('User')
 @UseGuards(AuthGuard)
@@ -48,6 +49,7 @@ export class UserController {
     const updated = await this.userService.updateDeviceToken(
       req.user._id,
       dto.deviceToken,
+      dto.deviceType ?? 'ios',
     );
     if (!updated) return 'failed';
     return 'updated';
@@ -68,6 +70,24 @@ export class UserController {
     );
     if (!updated) return 'failed';
     return 'updated';
+  }
+
+  @Patch('calendar-code')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '구글 캘린더 auth code 교환',
+    description:
+      'Android Google Sign-In serverAuthCode를 서버에서 access/refresh token으로 교환해 저장합니다.',
+  })
+  async updateCalendarTokenFromCode(
+    @Req() req,
+    @Body() dto: CalendarCodeDto,
+  ) {
+    return this.userService.updateCalendarTokenFromAuthCode(
+      req.user._id,
+      dto.serverAuthCode,
+    );
   }
 
   @Get('calendar-status')
