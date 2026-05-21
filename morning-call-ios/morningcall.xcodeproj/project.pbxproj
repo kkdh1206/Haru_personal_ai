@@ -362,6 +362,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = morningcall/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "하루";
+				INFOPLIST_KEY_NSCameraUsageDescription = "사용자가 직접 촬영 기능을 선택한 경우에만 카메라를 사용합니다.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "현재 위치를 기반으로 날씨와 지역 정보를 설정하기 위해 사용합니다.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "기상 전화 통화 중 음성을 전달하기 위해 마이크를 사용합니다.";
 				INFOPLIST_KEY_NSVoIPUsageDescription = "알람 시간에 Haru의 아침 전화를 받기 위해 필요해요.";
