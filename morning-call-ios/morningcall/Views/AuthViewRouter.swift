@@ -184,9 +184,9 @@ struct LoginView: View {
 
     private var agreementText: AttributedString {
         var text = AttributedString("시작하면 ")
-        text.append(agreementLinkText("서비스 이용약관", url: "https://example.com/terms"))
+        text.append(agreementLinkText("서비스 이용약관", url: "https://morningcall.poapper.com/terms"))
         text.append(AttributedString(" 및 "))
-        text.append(agreementLinkText("개인정보 처리방침", url: "https://example.com/privacy"))
+        text.append(agreementLinkText("개인정보 처리방침", url: "https://morningcall.poapper.com/privacy"))
         text.append(AttributedString("에 동의하게 됩니다."))
         return text
     }

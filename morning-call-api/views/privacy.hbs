@@ -1,0 +1,114 @@
+<html lang='ko'>
+  <head>
+    <meta charset='utf-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1' />
+    <title>Haru 개인정보 처리방침</title>
+    <style>
+      :root { color-scheme: light; --bg: #f7f4ec; --text: #1f1f1f; --muted:
+      #68645d; --line: #e3ded3; --card: rgba(255, 255, 255, 0.78); --accent:
+      #4f6fb5; } * { box-sizing: border-box; } body { margin: 0; background:
+      var(--bg); color: var(--text); font-family: -apple-system,
+      BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI",
+      sans-serif; line-height: 1.72; } main { width: min(760px, calc(100% -
+      40px)); margin: 0 auto; padding: 56px 0 72px; } header { margin-bottom:
+      28px; } .eyebrow { color: var(--accent); font-size: 14px; font-weight:
+      700; margin: 0 0 8px; } h1 { margin: 0; font-size: 34px; line-height: 1.2;
+      letter-spacing: 0; } .updated { margin: 12px 0 0; color: var(--muted);
+      font-size: 14px; } article { background: var(--card); border: 1px solid
+      var(--line); border-radius: 24px; padding: 28px; } h2 { margin: 32px 0
+      8px; font-size: 20px; line-height: 1.35; } h2:first-child { margin-top: 0;
+      } p, li { color: var(--muted); font-size: 15px; } ul { padding-left: 20px;
+      } a { color: var(--accent); font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class='eyebrow'>Haru</p>
+        <h1>개인정보 처리방침</h1>
+        <p class='updated'>시행일: {{updatedAt}}</p>
+      </header>
+
+      <article>
+        <h2>1. 수집하는 개인정보</h2>
+        <p>Haru는 서비스 제공을 위해 다음 정보를 수집할 수 있습니다.</p>
+        <ul>
+          <li>계정 정보: Apple 또는 Google 로그인 식별자, 이메일</li>
+          <li>프로필 정보: 이름, 언어 설정, 캐릭터 설정</li>
+          <li>알람 정보: 알람 시간, 반복 요일, 시간대, 깨우기 강도</li>
+          <li>기기 정보: 푸시 알림을 위한 기기 토큰</li>
+          <li>위치 관련 정보: 날씨 안내를 위한 지역 및 시간대 정보</li>
+          <li>통화 관련 정보: 통화 상태, 재통화 요청</li>
+          <li>캘린더 연동 정보: 이용자가 동의한 경우 Google Calendar 접근 토큰
+            및 갱신 토큰</li>
+        </ul>
+
+        <h2>2. 개인정보 이용 목적</h2>
+        <p>수집한 정보는 다음 목적으로 사용됩니다.</p>
+        <ul>
+          <li>회원 식별 및 로그인 상태 유지</li>
+          <li>알람, 모닝콜, 재통화, 푸시 알림 제공</li>
+          <li>이용자 설정에 맞춘 AI 대화 및 아침 안내 제공</li>
+          <li>날씨, 일정, 캘린더 연동 기능 제공</li>
+          <li>서비스 안정성 확보, 오류 분석, 부정 이용 방지</li>
+          <li>고객 문의 대응 및 계정 탈퇴 처리</li>
+        </ul>
+
+        <h2>3. Google Calendar 정보 처리</h2>
+        <p>
+          이용자가 Google Calendar 연동에 동의하면 Haru는 일정 조회 및 일정 추가
+          기능을 제공하기 위해 필요한 범위의 토큰을 저장합니다. 토큰은
+          암호화하여 저장되며, 이용자는 앱 설정에서 언제든지 캘린더 연동을
+          해제할 수 있습니다.
+        </p>
+
+        <h2>4. 개인정보 보관 및 삭제</h2>
+        <p>
+          개인정보는 서비스 제공에 필요한 기간 동안 보관됩니다. 이용자가 계정
+          탈퇴를 요청하면 계정 정보, 알람, 캘린더 연동 토큰 등은 삭제됩니다.
+          다만 법령상 보관 의무가 있는 정보는 해당 법령에서 정한 기간 동안
+          보관될 수 있습니다.
+        </p>
+
+        <h2>5. 개인정보의 제3자 제공</h2>
+        <p>
+          Haru는 이용자의 동의 없이 개인정보를 제3자에게 판매하거나 제공하지
+          않습니다. 다만 법령에 따른 요청이 있거나 서비스 제공을 위해 필요한
+          외부 서비스 사용 범위에서는 관련 정보가 처리될 수 있습니다.
+        </p>
+
+        <h2>6. 개인정보 처리 위탁 및 외부 서비스</h2>
+        <p>서비스 제공 과정에서 다음 외부 서비스가 사용될 수 있습니다.</p>
+        <ul>
+          <li>Firebase Authentication: 로그인 및 인증</li>
+          <li>Google Calendar API: 캘린더 연동 기능</li>
+          <li>LiveKit 등 통화 인프라: 모닝콜 통화 제공</li>
+          <li>Google Gemini AI 모델: 대화 내용 생성, 음성 생성</li>
+          <li>AWS 서버 인프라: 서비스 운영</li>
+        </ul>
+
+        <h2>7. 이용자의 권리</h2>
+        <p>
+          이용자는 앱 설정을 통해 개인정보 일부를 수정하거나, Google Calendar
+          연동을 해제하거나, 계정 탈퇴를 요청할 수 있습니다. 추가 문의가 필요한
+          경우 아래 연락처로 요청할 수 있습니다.
+        </p>
+
+        <h2>8. 안전성 확보 조치</h2>
+        <p>
+          Haru는 인증 토큰과 캘린더 토큰을 보호하기 위해 암호화, 접근 권한 관리,
+          서버 보안 설정 등 필요한 보호 조치를 적용합니다.
+        </p>
+
+        <h2>9. 문의</h2>
+        <p>
+          개인정보 관련 문의는
+          <a href='mailto:wonbin9413@postech.ac.kr'>wonbin9413@postech.ac.kr</a>
+          또는
+          <a href='mailto:kkdh1206@postech.ac.kr'>kkdh1206@postech.ac.kr</a>로
+          연락해 주세요.
+        </p>
+      </article>
+    </main>
+  </body>
+</html>

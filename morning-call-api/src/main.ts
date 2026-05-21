@@ -1,9 +1,12 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as firebase from 'firebase-admin';
 import * as serviceAccount from '../firebase-adminsdk.json';
 import cookieParser from 'cookie-parser';
+import { join } from 'path';
+import { readFile } from 'fs/promises';
 
 const firebaseParams = {
   type: serviceAccount.type,
@@ -19,9 +22,29 @@ const firebaseParams = {
 };
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   app.use(cookieParser());
+  app.setBaseViewsDir(join(__dirname, '..', 'views'));
+  app.setViewEngine('hbs');
+  app
+    .getHttpAdapter()
+    .getInstance()
+    .engine('hbs', async (filePath, options, callback) => {
+      try {
+        let html = await readFile(filePath, 'utf8');
+        Object.entries(options).forEach(([key, value]) => {
+          if (typeof value !== 'string' && typeof value !== 'number') return;
+          html = html.replace(
+            new RegExp(`{{\\s*${key}\\s*}}`, 'g'),
+            String(value),
+          );
+        });
+        callback(null, html);
+      } catch (error) {
+        callback(error);
+      }
+    });
 
   /** Swagger API docs **/
   const config = new DocumentBuilder()
