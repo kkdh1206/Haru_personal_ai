@@ -157,7 +157,7 @@ struct LoginView: View {
                         AppleSignInButton()
                         SignInWithGoogleButton()
 
-                        Text(.init("시작하면 **[서비스 이용약관](https://example.com/terms)** 및 **[개인정보 처리방침](https://example.com/privacy)**에 동의하게 됩니다."))
+                        Text(agreementText)
                             .font(.system(.footnote, design: .rounded))
                             .tint(Color.black.opacity(0.72))
                             .foregroundStyle(Color.black.opacity(0.56))
@@ -180,6 +180,22 @@ struct LoginView: View {
             }
         }
         .preferredColorScheme(.light)
+    }
+
+    private var agreementText: AttributedString {
+        var text = AttributedString("시작하면 ")
+        text.append(agreementLinkText("서비스 이용약관", url: "https://example.com/terms"))
+        text.append(AttributedString(" 및 "))
+        text.append(agreementLinkText("개인정보 처리방침", url: "https://example.com/privacy"))
+        text.append(AttributedString("에 동의하게 됩니다."))
+        return text
+    }
+
+    private func agreementLinkText(_ title: String, url: String) -> AttributedString {
+        var text = AttributedString(title)
+        text.link = URL(string: url)
+        text.font = .system(.footnote, design: .rounded).weight(.bold)
+        return text
     }
 }
 
