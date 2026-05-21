@@ -1,114 +1,359 @@
-<html lang='ko'>
+<!doctype html>
+<html lang="ko">
   <head>
-    <meta charset='utf-8' />
-    <meta name='viewport' content='width=device-width, initial-scale=1' />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Haru 개인정보 처리방침</title>
     <style>
-      :root { color-scheme: light; --bg: #f7f4ec; --text: #1f1f1f; --muted:
-      #68645d; --line: #e3ded3; --card: rgba(255, 255, 255, 0.78); --accent:
-      #4f6fb5; } * { box-sizing: border-box; } body { margin: 0; background:
-      var(--bg); color: var(--text); font-family: -apple-system,
-      BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI",
-      sans-serif; line-height: 1.72; } main { width: min(760px, calc(100% -
-      40px)); margin: 0 auto; padding: 56px 0 72px; } header { margin-bottom:
-      28px; } .eyebrow { color: var(--accent); font-size: 14px; font-weight:
-      700; margin: 0 0 8px; } h1 { margin: 0; font-size: 34px; line-height: 1.2;
-      letter-spacing: 0; } .updated { margin: 12px 0 0; color: var(--muted);
-      font-size: 14px; } article { background: var(--card); border: 1px solid
-      var(--line); border-radius: 24px; padding: 28px; } h2 { margin: 32px 0
-      8px; font-size: 20px; line-height: 1.35; } h2:first-child { margin-top: 0;
-      } p, li { color: var(--muted); font-size: 15px; } ul { padding-left: 20px;
-      } a { color: var(--accent); font-weight: 700; }
+      :root {
+        color-scheme: light;
+        --bg: #f7f4ec;
+        --text: #1f1f1f;
+        --muted: #68645d;
+        --line: #e3ded3;
+        --card: rgba(255, 255, 255, 0.78);
+        --accent: #4f6fb5;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR",
+          "Segoe UI", sans-serif;
+        line-height: 1.72;
+      }
+
+      main {
+        width: min(760px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 56px 0 72px;
+      }
+
+      header {
+        margin-bottom: 28px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        font-size: 14px;
+        font-weight: 700;
+        margin: 0 0 8px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 34px;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      .updated {
+        margin: 12px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .language-toggle {
+        display: inline-flex;
+        gap: 4px;
+        margin-top: 22px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.62);
+      }
+
+      .language-toggle button {
+        border: 0;
+        border-radius: 999px;
+        padding: 8px 14px;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .language-toggle button[aria-pressed="true"] {
+        background: var(--text);
+        color: #fff;
+      }
+
+      article {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        padding: 28px;
+      }
+
+      .lang-panel[hidden] {
+        display: none;
+      }
+
+      h2 {
+        margin: 32px 0 8px;
+        font-size: 20px;
+        line-height: 1.35;
+      }
+
+      h2:first-child {
+        margin-top: 0;
+      }
+
+      p,
+      li {
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      ul {
+        padding-left: 20px;
+      }
+
+      a {
+        color: var(--accent);
+        font-weight: 700;
+      }
     </style>
   </head>
   <body>
     <main>
       <header>
-        <p class='eyebrow'>Haru</p>
-        <h1>개인정보 처리방침</h1>
-        <p class='updated'>시행일: {{updatedAt}}</p>
+        <p class="eyebrow">Haru</p>
+        <h1 data-title-ko="개인정보 처리방침" data-title-en="Privacy Policy">
+          개인정보 처리방침
+        </h1>
+        <p
+          class="updated"
+          data-updated-ko="시행일: {{updatedAt}}"
+          data-updated-en="Effective date: {{updatedAt}}"
+        >
+          시행일: {{updatedAt}}
+        </p>
+        <div class="language-toggle" aria-label="Language">
+          <button type="button" data-lang-button="ko" aria-pressed="true">
+            한국어
+          </button>
+          <button type="button" data-lang-button="en" aria-pressed="false">
+            English
+          </button>
+        </div>
       </header>
 
       <article>
-        <h2>1. 수집하는 개인정보</h2>
-        <p>Haru는 서비스 제공을 위해 다음 정보를 수집할 수 있습니다.</p>
-        <ul>
-          <li>계정 정보: Apple 또는 Google 로그인 식별자, 이메일</li>
-          <li>프로필 정보: 이름, 언어 설정, 캐릭터 설정</li>
-          <li>알람 정보: 알람 시간, 반복 요일, 시간대, 깨우기 강도</li>
-          <li>기기 정보: 푸시 알림을 위한 기기 토큰</li>
-          <li>위치 관련 정보: 날씨 안내를 위한 지역 및 시간대 정보</li>
-          <li>통화 관련 정보: 통화 상태, 재통화 요청</li>
-          <li>캘린더 연동 정보: 이용자가 동의한 경우 Google Calendar 접근 토큰
-            및 갱신 토큰</li>
-        </ul>
+        <section class="lang-panel" data-lang-panel="ko">
+          <h2>1. 수집하는 개인정보</h2>
+          <p>Haru는 서비스 제공을 위해 다음 정보를 수집할 수 있습니다.</p>
+          <ul>
+            <li>계정 정보: Apple 또는 Google 로그인 식별자, 이메일</li>
+            <li>프로필 정보: 이름, 언어 설정, 캐릭터 설정</li>
+            <li>알람 정보: 알람 시간, 반복 요일, 시간대, 깨우기 강도</li>
+            <li>기기 정보: 푸시 알림을 위한 기기 토큰</li>
+            <li>위치 관련 정보: 날씨 안내를 위한 지역 및 시간대 정보</li>
+            <li>통화 관련 정보: 통화 상태, 재통화 요청</li>
+            <li>
+              캘린더 연동 정보: 이용자가 동의한 경우 Google Calendar 접근 토큰 및
+              갱신 토큰
+            </li>
+          </ul>
 
-        <h2>2. 개인정보 이용 목적</h2>
-        <p>수집한 정보는 다음 목적으로 사용됩니다.</p>
-        <ul>
-          <li>회원 식별 및 로그인 상태 유지</li>
-          <li>알람, 모닝콜, 재통화, 푸시 알림 제공</li>
-          <li>이용자 설정에 맞춘 AI 대화 및 아침 안내 제공</li>
-          <li>날씨, 일정, 캘린더 연동 기능 제공</li>
-          <li>서비스 안정성 확보, 오류 분석, 부정 이용 방지</li>
-          <li>고객 문의 대응 및 계정 탈퇴 처리</li>
-        </ul>
+          <h2>2. 개인정보 이용 목적</h2>
+          <p>수집한 정보는 다음 목적으로 사용됩니다.</p>
+          <ul>
+            <li>회원 식별 및 로그인 상태 유지</li>
+            <li>알람, 모닝콜, 재통화, 푸시 알림 제공</li>
+            <li>이용자 설정에 맞춘 AI 대화 및 아침 안내 제공</li>
+            <li>날씨, 일정, 캘린더 연동 기능 제공</li>
+            <li>서비스 안정성 확보, 오류 분석, 부정 이용 방지</li>
+            <li>고객 문의 대응 및 계정 탈퇴 처리</li>
+          </ul>
 
-        <h2>3. Google Calendar 정보 처리</h2>
-        <p>
-          이용자가 Google Calendar 연동에 동의하면 Haru는 일정 조회 및 일정 추가
-          기능을 제공하기 위해 필요한 범위의 토큰을 저장합니다. 토큰은
-          암호화하여 저장되며, 이용자는 앱 설정에서 언제든지 캘린더 연동을
-          해제할 수 있습니다.
-        </p>
+          <h2>3. Google Calendar 정보 처리</h2>
+          <p>
+            이용자가 Google Calendar 연동에 동의하면 Haru는 일정 조회 및 일정
+            추가 기능을 제공하기 위해 필요한 범위의 토큰을 저장합니다. 토큰은
+            암호화하여 저장되며, 이용자는 앱 설정에서 언제든지 캘린더 연동을
+            해제할 수 있습니다.
+          </p>
 
-        <h2>4. 개인정보 보관 및 삭제</h2>
-        <p>
-          개인정보는 서비스 제공에 필요한 기간 동안 보관됩니다. 이용자가 계정
-          탈퇴를 요청하면 계정 정보, 알람, 캘린더 연동 토큰 등은 삭제됩니다.
-          다만 법령상 보관 의무가 있는 정보는 해당 법령에서 정한 기간 동안
-          보관될 수 있습니다.
-        </p>
+          <h2>4. 개인정보 보관 및 삭제</h2>
+          <p>
+            개인정보는 서비스 제공에 필요한 기간 동안 보관됩니다. 이용자가 계정
+            탈퇴를 요청하면 계정 정보, 알람, 캘린더 연동 토큰 등은 삭제됩니다.
+            다만 법령상 보관 의무가 있는 정보는 해당 법령에서 정한 기간 동안
+            보관될 수 있습니다.
+          </p>
 
-        <h2>5. 개인정보의 제3자 제공</h2>
-        <p>
-          Haru는 이용자의 동의 없이 개인정보를 제3자에게 판매하거나 제공하지
-          않습니다. 다만 법령에 따른 요청이 있거나 서비스 제공을 위해 필요한
-          외부 서비스 사용 범위에서는 관련 정보가 처리될 수 있습니다.
-        </p>
+          <h2>5. 개인정보의 제3자 제공</h2>
+          <p>
+            Haru는 이용자의 동의 없이 개인정보를 제3자에게 판매하거나 제공하지
+            않습니다. 다만 법령에 따른 요청이 있거나 서비스 제공을 위해 필요한
+            외부 서비스 사용 범위에서는 관련 정보가 처리될 수 있습니다.
+          </p>
 
-        <h2>6. 개인정보 처리 위탁 및 외부 서비스</h2>
-        <p>서비스 제공 과정에서 다음 외부 서비스가 사용될 수 있습니다.</p>
-        <ul>
-          <li>Firebase Authentication: 로그인 및 인증</li>
-          <li>Google Calendar API: 캘린더 연동 기능</li>
-          <li>LiveKit 등 통화 인프라: 모닝콜 통화 제공</li>
-          <li>Google Gemini AI 모델: 대화 내용 생성, 음성 생성</li>
-          <li>AWS 서버 인프라: 서비스 운영</li>
-        </ul>
+          <h2>6. 개인정보 처리 위탁 및 외부 서비스</h2>
+          <p>서비스 제공 과정에서 다음 외부 서비스가 사용될 수 있습니다.</p>
+          <ul>
+            <li>Firebase Authentication: 로그인 및 인증</li>
+            <li>Google Calendar API: 캘린더 연동 기능</li>
+            <li>LiveKit 등 통화 인프라: 모닝콜 통화 제공</li>
+            <li>Google Gemini AI 모델: 대화 내용 생성, 음성 생성</li>
+            <li>AWS 서버 인프라: 서비스 운영</li>
+          </ul>
 
-        <h2>7. 이용자의 권리</h2>
-        <p>
-          이용자는 앱 설정을 통해 개인정보 일부를 수정하거나, Google Calendar
-          연동을 해제하거나, 계정 탈퇴를 요청할 수 있습니다. 추가 문의가 필요한
-          경우 아래 연락처로 요청할 수 있습니다.
-        </p>
+          <h2>7. 이용자의 권리</h2>
+          <p>
+            이용자는 앱 설정을 통해 개인정보 일부를 수정하거나, Google Calendar
+            연동을 해제하거나, 계정 탈퇴를 요청할 수 있습니다. 추가 문의가 필요한
+            경우 아래 연락처로 요청할 수 있습니다.
+          </p>
 
-        <h2>8. 안전성 확보 조치</h2>
-        <p>
-          Haru는 인증 토큰과 캘린더 토큰을 보호하기 위해 암호화, 접근 권한 관리,
-          서버 보안 설정 등 필요한 보호 조치를 적용합니다.
-        </p>
+          <h2>8. 안전성 확보 조치</h2>
+          <p>
+            Haru는 인증 토큰과 캘린더 토큰을 보호하기 위해 암호화, 접근 권한
+            관리, 서버 보안 설정 등 필요한 보호 조치를 적용합니다.
+          </p>
 
-        <h2>9. 문의</h2>
-        <p>
-          개인정보 관련 문의는
-          <a href='mailto:wonbin9413@postech.ac.kr'>wonbin9413@postech.ac.kr</a>
-          또는
-          <a href='mailto:kkdh1206@postech.ac.kr'>kkdh1206@postech.ac.kr</a>로
-          연락해 주세요.
-        </p>
+          <h2>9. 문의</h2>
+          <p>
+            개인정보 관련 문의는
+            <a href="mailto:wonbin9413@postech.ac.kr">wonbin9413@postech.ac.kr</a>
+            또는
+            <a href="mailto:kkdh1206@postech.ac.kr">kkdh1206@postech.ac.kr</a>로
+            연락해 주세요.
+          </p>
+        </section>
+
+        <section class="lang-panel" data-lang-panel="en" hidden>
+          <h2>1. Personal Information We Collect</h2>
+          <p>Haru may collect the following information to provide the service.</p>
+          <ul>
+            <li>Account information: Apple or Google login identifier and email</li>
+            <li>Profile information: name, language setting, and character setting</li>
+            <li>
+              Alarm information: alarm time, repeat days, time zone, and wake-up
+              intensity
+            </li>
+            <li>Device information: device token for push notifications</li>
+            <li>
+              Location-related information: region and time zone information for
+              weather guidance
+            </li>
+            <li>Call-related information: call status and retry call requests</li>
+            <li>
+              Calendar integration information: Google Calendar access token and
+              refresh token when the user consents
+            </li>
+          </ul>
+
+          <h2>2. Purpose of Use</h2>
+          <p>Collected information is used for the following purposes.</p>
+          <ul>
+            <li>Identifying members and maintaining login status</li>
+            <li>Providing alarms, morning calls, retry calls, and push notifications</li>
+            <li>
+              Providing AI conversations and morning guidance tailored to user
+              settings
+            </li>
+            <li>Providing weather, schedule, and calendar integration features</li>
+            <li>Securing service stability, analyzing errors, and preventing abuse</li>
+            <li>Responding to user inquiries and processing account deletion</li>
+          </ul>
+
+          <h2>3. Google Calendar Information</h2>
+          <p>
+            When a user agrees to connect Google Calendar, Haru stores the tokens
+            needed to provide schedule lookup and event creation features. Tokens
+            are stored in encrypted form, and users may disconnect calendar
+            integration at any time in the app settings.
+          </p>
+
+          <h2>4. Retention and Deletion</h2>
+          <p>
+            Personal information is retained for as long as necessary to provide
+            the service. When a user requests account deletion, account
+            information, alarms, calendar integration tokens, and related data are
+            deleted. Information that must be retained under applicable laws may
+            be stored for the period required by those laws.
+          </p>
+
+          <h2>5. Provision to Third Parties</h2>
+          <p>
+            Haru does not sell or provide personal information to third parties
+            without the user's consent. However, information may be processed
+            within the scope necessary to comply with legal requests or provide
+            the service through external services.
+          </p>
+
+          <h2>6. Processing by External Services</h2>
+          <p>The following external services may be used to provide Haru.</p>
+          <ul>
+            <li>Firebase Authentication: login and authentication</li>
+            <li>Google Calendar API: calendar integration features</li>
+            <li>LiveKit and call infrastructure: morning call delivery</li>
+            <li>Google Gemini AI model: conversation and voice generation</li>
+            <li>AWS server infrastructure: service operation</li>
+          </ul>
+
+          <h2>7. User Rights</h2>
+          <p>
+            Users may modify certain personal information, disconnect Google
+            Calendar integration, or request account deletion through the app
+            settings. For additional requests, users may contact Haru using the
+            contact information below.
+          </p>
+
+          <h2>8. Security Measures</h2>
+          <p>
+            Haru applies necessary safeguards such as encryption, access control,
+            and server security settings to protect authentication tokens and
+            calendar tokens.
+          </p>
+
+          <h2>9. Contact</h2>
+          <p>
+            For privacy-related inquiries, contact
+            <a href="mailto:wonbin9413@postech.ac.kr">wonbin9413@postech.ac.kr</a>
+            or
+            <a href="mailto:kkdh1206@postech.ac.kr">kkdh1206@postech.ac.kr</a>.
+          </p>
+        </section>
       </article>
     </main>
+
+    <script>
+      const buttons = document.querySelectorAll("[data-lang-button]");
+      const panels = document.querySelectorAll("[data-lang-panel]");
+      const title = document.querySelector("[data-title-ko]");
+      const updated = document.querySelector("[data-updated-ko]");
+
+      function setLanguage(language) {
+        document.documentElement.lang = language;
+        buttons.forEach((button) => {
+          button.setAttribute(
+            "aria-pressed",
+            String(button.dataset.langButton === language),
+          );
+        });
+        panels.forEach((panel) => {
+          panel.hidden = panel.dataset.langPanel !== language;
+        });
+        title.textContent =
+          language === "en" ? title.dataset.titleEn : title.dataset.titleKo;
+        updated.textContent =
+          language === "en" ? updated.dataset.updatedEn : updated.dataset.updatedKo;
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => setLanguage(button.dataset.langButton));
+      });
+    </script>
   </body>
 </html>
