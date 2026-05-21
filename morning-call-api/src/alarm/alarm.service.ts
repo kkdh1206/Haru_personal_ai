@@ -69,6 +69,13 @@ export class AlarmService {
     if (language?.toLowerCase().includes('english')) {
       return `You are ${assistantName}. Wake ${displayName} up in short, natural English. Start with a wake-up line.`;
     }
+    if (
+      language?.toLowerCase().includes('japanese') ||
+      language?.includes('日本') ||
+      language?.includes('일본')
+    ) {
+      return `あなたは${assistantName}です。${displayName}を短く自然な日本語で起こしてください。最初は起床を促す一言から始めます。`;
+    }
 
     return `${assistantName}다. ${displayName}를 짧고 자연스럽게 깨워라. 첫 문장은 일어날 시간이라는 말로 시작한다.`;
   }

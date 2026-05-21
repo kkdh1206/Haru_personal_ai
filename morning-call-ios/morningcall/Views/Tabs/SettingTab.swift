@@ -6,37 +6,36 @@
 //
 
 import SwiftUI
+import FirebaseAuth
 
 struct UserSettings: Codable {
     var name: String
     var language: String
 }
 
-struct LiveKitInfo: Codable {
-    var lkToken: String
-    var lkUrl: String
+private struct CalendarConnectionStatus: Decodable {
+    let connected: Bool
 }
 
 struct SettingView: View {
-    @State private var alarms: [Alarm] = []
-    @State private var editingAlarm: Alarm? = nil
-    @State private var showingTestCallSheet = false
-    @State private var isLoading = false
-    
     @EnvironmentObject var authVM: AuthViewModel
     @StateObject private var googleHelper = GoogleSignInHelper()
     @EnvironmentObject var env: AppEnvironment
 
-    // 새로 추가되는 상태들
     @State private var userName: String = ""
     @State private var selectedLanguage: String = "한국어"
     @State private var selectedCharacter: CharacterPreference = CharacterPreferenceStore.current
-
-    @State private var isSettingsLoading = false   // 설정용 로딩
+    @State private var isCalendarConnected = false
+    @State private var isCalendarStatusLoading = false
+    @State private var isCalendarDisconnecting = false
+    @State private var isCalendarConnecting = false
+    @State private var showDeleteAccountAlert = false
+    @State private var isDeletingAccount = false
 
     private let languageOptions: [(code: String, label: String)] = [
         ("한국어", "한국어"),
-        ("English", "English")
+        ("English", "영어"),
+        ("日本語", "일본어")
     ]
     
     var body: some View {
@@ -53,25 +52,20 @@ struct SettingView: View {
             .padding(.bottom, 36)
         }
         .background(Color(red: 0.97, green: 0.96, blue: 0.93).ignoresSafeArea())
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: { showingTestCallSheet = true }) {
-                    Image(systemName: "phone.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.black)
-                        .frame(width: 38, height: 38)
-                        .background(Color.white.opacity(0.78), in: Circle())
-                }
-            }
-        }
-        .sheet(isPresented: $showingTestCallSheet) {
-            TestCallView()
-        }
         .navigationTitle("설정")
         .navigationBarTitleDisplayMode(.inline)
         .tint(.black)
         .task {
             loadInitialSettings()
+            loadCalendarStatus()
+        }
+        .alert("계정 탈퇴", isPresented: $showDeleteAccountAlert) {
+            Button("취소", role: .cancel) {}
+            Button("탈퇴", role: .destructive) {
+                deleteAccount()
+            }
+        } message: {
+            Text("계정과 알람이 삭제됩니다. 이 작업은 되돌릴 수 없어요.")
         }
         .preferredColorScheme(.light)
     }
@@ -94,13 +88,32 @@ struct SettingView: View {
 
     private var callSection: some View {
         settingsCard(title: "통화 시 언어") {
-            Picker("언어", selection: $selectedLanguage) {
-                ForEach(languageOptions, id: \.code) { lang in
-                    Text(lang.label)
-                        .tag(lang.code)
+            HStack(spacing: 12) {
+                Image(systemName: "globe")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(Color.black.opacity(0.7))
+
+                Text("선택 언어")
+                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.black)
+
+                Spacer()
+
+                Picker("언어", selection: $selectedLanguage) {
+                    ForEach(languageOptions, id: \.code) { lang in
+                        Text(lang.label)
+                            .tag(lang.code)
+                    }
                 }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .tint(.black)
             }
-            .pickerStyle(.segmented)
+            .padding(18)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.white.opacity(0.78))
+            )
             .onChange(of: selectedLanguage) { _ in
                 saveProfile()
             }
@@ -155,37 +168,89 @@ struct SettingView: View {
     private var calendarSection: some View {
         settingsCard(title: "구글 캘린더") {
             VStack(alignment: .leading, spacing: 12) {
-                Button {
-                    googleHelper.signInForCalendar()
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "calendar.badge.plus")
-                            .font(.system(size: 19, weight: .semibold))
-                        Text("캘린더 연동 다시 하기")
+                HStack(spacing: 12) {
+                    Image(systemName: isCalendarConnected ? "calendar.badge.checkmark" : "calendar.badge.exclamationmark")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(isCalendarConnected ? Color(red: 0.2, green: 0.55, blue: 0.32) : Color.black.opacity(0.68))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(isCalendarConnected ? "연동됨" : "연동 안 됨")
                             .font(.system(.body, design: .rounded).weight(.semibold))
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.black)
+                        Text(isCalendarConnected ? "Google Calendar가 연결되어 있어요." : "일정 추가를 사용하려면 캘린더를 연결해 주세요.")
+                            .font(.system(.footnote, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.58))
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(18)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color.white.opacity(0.78))
+                )
+
+                if isCalendarConnected {
+                    Button {
+                        disconnectCalendar()
+                    } label: {
+                        Text(isCalendarDisconnecting ? "해제 중..." : "캘린더 연동 해제")
+                            .font(.system(.body, design: .rounded).weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                    }
+                    .disabled(isCalendarDisconnecting)
+                    .foregroundStyle(Color(red: 0.84, green: 0.16, blue: 0.16))
+                    .background(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .fill(Color.white.opacity(0.82))
+                    )
+                } else {
+                    Button {
+                        connectCalendar()
+                    } label: {
+                        HStack(spacing: 10) {
+                            if isCalendarConnecting {
+                                ProgressView()
+                                    .tint(.black)
+                            } else {
+                                Image(systemName: "link")
+                                    .font(.system(size: 17, weight: .semibold))
+                            }
+                            Text(isCalendarConnecting ? "연동 중..." : "캘린더 연동하기")
+                                .font(.system(.body, design: .rounded).weight(.semibold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                    }
+                    .disabled(isCalendarConnecting)
                     .foregroundStyle(.black)
-                    .padding(18)
                     .background(
                         RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .fill(Color.white.opacity(0.78))
                     )
                 }
-                Text("대화 중 약속이 나오면 Haru가 바로 일정에 추가할 수 있어요.")
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(Color.black.opacity(0.58))
             }
         }
     }
 
     private var logoutSection: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 12) {
             Button("로그아웃") {
                 authVM.signOut()
             }
+            .font(.system(.body, design: .rounded).weight(.semibold))
+            .foregroundStyle(Color(red: 0.84, green: 0.16, blue: 0.16))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 17)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.white.opacity(0.82))
+            )
+
+            Button(isDeletingAccount ? "탈퇴 중..." : "계정 탈퇴") {
+                showDeleteAccountAlert = true
+            }
+            .disabled(isDeletingAccount)
             .font(.system(.body, design: .rounded).weight(.semibold))
             .foregroundStyle(Color(red: 0.84, green: 0.16, blue: 0.16))
             .frame(maxWidth: .infinity)
@@ -256,8 +321,91 @@ struct SettingView: View {
     
     private func loadInitialSettings() {
         self.userName = env.user?.name ?? ""
-        self.selectedLanguage = env.user?.language?.isEmpty == false ? env.user?.language ?? "한국어" : "한국어"
+        self.selectedLanguage = normalizedLanguage(env.user?.language)
         self.selectedCharacter = CharacterPreferenceStore.current
+    }
+
+    private func normalizedLanguage(_ language: String?) -> String {
+        guard let language, !language.isEmpty else { return "한국어" }
+        if language.lowercased().contains("english") || language == "영어" {
+            return "English"
+        }
+        if language.lowercased().contains("japanese") || language.contains("일본") || language.contains("日本") {
+            return "日本語"
+        }
+        return "한국어"
+    }
+
+    private func loadCalendarStatus() {
+        isCalendarStatusLoading = true
+
+        APIClient.request(path: "/user/calendar-status", method: .GET) { (result: Result<CalendarConnectionStatus, Error>) in
+            DispatchQueue.main.async {
+                isCalendarStatusLoading = false
+                switch result {
+                case .success(let status):
+                    isCalendarConnected = status.connected
+                case .failure(let error):
+                    print("❌ 캘린더 상태 확인 실패: \(error)")
+                }
+            }
+        }
+    }
+
+    private func connectCalendar() {
+        isCalendarConnecting = true
+        googleHelper.signInForCalendar { success in
+            DispatchQueue.main.async {
+                isCalendarConnecting = false
+                if success {
+                    loadCalendarStatus()
+                }
+            }
+        }
+    }
+
+    private func disconnectCalendar() {
+        isCalendarDisconnecting = true
+
+        APIClient.request(path: "/user/calendar-token", method: .DELETE) { (result: Result<CalendarConnectionStatus, Error>) in
+            DispatchQueue.main.async {
+                isCalendarDisconnecting = false
+                switch result {
+                case .success(let status):
+                    isCalendarConnected = status.connected
+                case .failure(let error):
+                    print("❌ 캘린더 연동 해제 실패: \(error)")
+                }
+            }
+        }
+    }
+
+    private func deleteAccount() {
+        isDeletingAccount = true
+
+        APIClient.requestVoid(path: "/user", method: .DELETE) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    guard let currentUser = Auth.auth().currentUser else {
+                        authVM.signOut()
+                        return
+                    }
+
+                    currentUser.delete { error in
+                        if let error {
+                            print("❌ Firebase 계정 삭제 실패: \(error)")
+                        }
+                        DispatchQueue.main.async {
+                            authVM.signOut()
+                        }
+                    }
+                case .failure(let error):
+                    isDeletingAccount = false
+                    print("❌ 계정 탈퇴 실패: \(error)")
+                }
+            }
+        }
     }
 
     private func applyCharacterPreference(_ character: CharacterPreference) {

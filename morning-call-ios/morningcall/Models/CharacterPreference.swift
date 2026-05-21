@@ -74,9 +74,9 @@ enum CharacterPreference: String, CaseIterable, Codable {
     var description: String {
         switch self {
         case .haru:
-            return "차분하고 포근해요."
+            return "차분하고 안정감 있는 톤"
         case .hari:
-            return "가볍고 말랑해요."
+            return "밝고 명랑한 에너지 톤"
         }
     }
 }

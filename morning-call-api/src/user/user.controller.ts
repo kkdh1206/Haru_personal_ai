@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   NotFoundException,
   Patch,
@@ -69,6 +70,30 @@ export class UserController {
     return 'updated';
   }
 
+  @Get('calendar-status')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '구글 캘린더 연동 상태 확인',
+    description: '사용자의 구글 캘린더 토큰 저장 여부를 확인합니다.',
+  })
+  async getCalendarStatus(@Req() req) {
+    return this.userService.getCalendarStatus(req.user._id);
+  }
+
+  @Delete('calendar-token')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '구글 캘린더 연동 해제',
+    description: '저장된 구글 캘린더 토큰을 삭제합니다.',
+  })
+  async disconnectCalendar(@Req() req) {
+    const updated = await this.userService.disconnectCalendar(req.user._id);
+    if (!updated) throw new NotFoundException('User not found');
+    return { connected: false };
+  }
+
   @Patch('custom-message')
   @UseGuards(AuthGuard)
   @ApiBearerAuth()
@@ -113,5 +138,18 @@ export class UserController {
     const updated = await this.userService.update(req.user._id, updateUserDto);
     if (!updated) throw new NotFoundException('User not found');
     return updated;
+  }
+
+  @Delete()
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '계정 탈퇴',
+    description: '사용자 정보와 연결된 알람, 메모리, 캘린더 토큰을 삭제합니다.',
+  })
+  async deleteAccount(@Req() req) {
+    const deleted = await this.userService.deleteAccount(req.user._id);
+    if (!deleted) throw new NotFoundException('User not found');
+    return { deleted: true };
   }
 }

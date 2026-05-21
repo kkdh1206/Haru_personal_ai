@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString } from 'class-validator';
 
 export class UpdateUserDto {
   @ApiProperty()
@@ -16,8 +16,9 @@ export class UpdateUserDto {
   @IsOptional()
   location?: string;
 
-  @ApiProperty()
+  @ApiProperty({ enum: ['한국어', 'English', '日本語'] })
   @IsString()
+  @IsIn(['한국어', 'English', '日本語'])
   @IsOptional()
   language?: string;
 }

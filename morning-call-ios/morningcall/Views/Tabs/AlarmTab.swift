@@ -185,7 +185,7 @@ struct AlarmTabView: View {
                     .foregroundStyle(Color.black.opacity(0.55))
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("다음 기상까지")
+                    Text("다음 모닝콜까지")
                         .font(.system(.title3, design: .rounded).weight(.semibold))
                         .foregroundStyle(Color.black.opacity(0.78))
 

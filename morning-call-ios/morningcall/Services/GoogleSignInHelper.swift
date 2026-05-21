@@ -10,13 +10,17 @@ import GoogleSignIn
 import GoogleSignInSwift
 import FirebaseAuth
 import FirebaseCore
+import UIKit
 
 class GoogleSignInHelper: ObservableObject {
     @Published var accessToken: String?
     @Published var refreshToken: String?
 
-    func signInForCalendar() {
-        guard let clientID = FirebaseApp.app()?.options.clientID else { return }
+    func signInForCalendar(completion: @escaping (Bool) -> Void = { _ in }) {
+        guard let clientID = FirebaseApp.app()?.options.clientID else {
+            completion(false)
+            return
+        }
 
         let config = GIDConfiguration(clientID: clientID)
         GIDSignIn.sharedInstance.configuration = config
@@ -26,6 +30,7 @@ class GoogleSignInHelper: ObservableObject {
             let rootVC = windowScene.windows.first?.rootViewController
         else {
             print("No root view controller found.")
+            completion(false)
             return
         }
 
@@ -43,16 +48,28 @@ class GoogleSignInHelper: ObservableObject {
                 let refreshToken = result.user.refreshToken.tokenString
                 print("✅ Access Token: \(accessToken)")
                 print("✅ Refresh Token: \(refreshToken)")
-                registerCalendarTokenToAPI(accessToken: accessToken, refreshToken: refreshToken)
+                registerCalendarTokenToAPI(
+                    accessToken: accessToken,
+                    refreshToken: refreshToken,
+                    completion: completion
+                )
             } catch {
                 print("❌ Sign-in error: \(error)")
+                completion(false)
             }
         }
     }
     
-    private func registerCalendarTokenToAPI(accessToken: String, refreshToken: String) {
+    private func registerCalendarTokenToAPI(
+        accessToken: String,
+        refreshToken: String,
+        completion: @escaping (Bool) -> Void
+    ) {
         AuthTokenManager.shared.refreshTokenIfNeeded { idToken in
-            guard let idToken = idToken else { return }
+            guard let idToken = idToken else {
+                completion(false)
+                return
+            }
 
             var request = URLRequest(url: URL(string: "https://morningcall.poapper.com/user/calendar-token")!)
             request.httpMethod = "PATCH"
@@ -65,9 +82,21 @@ class GoogleSignInHelper: ObservableObject {
             URLSession.shared.dataTask(with: request) { data, response, error in
                 if let error = error {
                     print("🌐 등록 에러: \(error.localizedDescription)")
+                    completion(false)
+                    return
+                }
+                if let httpResponse = response as? HTTPURLResponse,
+                   !(200...299).contains(httpResponse.statusCode) {
+                    print("🌐 캘린더 토큰 등록 실패: \(httpResponse.statusCode)")
+                    completion(false)
                     return
                 }
                 print("✅ 캘린더 토큰 등록 완료")
+                DispatchQueue.main.async {
+                    self.accessToken = accessToken
+                    self.refreshToken = refreshToken
+                    completion(true)
+                }
             }.resume()
         }
     }

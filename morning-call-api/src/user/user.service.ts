@@ -8,11 +8,21 @@ import { Model, Types } from 'mongoose';
 import { User, UserDocument } from './schemas/user.schema';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CryptoService } from 'src/utils/crypto.service';
+import { Alarm, AlarmDocument } from 'src/alarm/schemas/alarm.schema';
+import { Memory, MemoryDocument } from 'src/memory/schemas/memory.schema';
+import {
+  UserProfile,
+  UserProfileDocument,
+} from 'src/memory/schemas/user-profile.schema';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(Alarm.name) private alarmModel: Model<AlarmDocument>,
+    @InjectModel(Memory.name) private memoryModel: Model<MemoryDocument>,
+    @InjectModel(UserProfile.name)
+    private userProfileModel: Model<UserProfileDocument>,
     private readonly crypto: CryptoService,
   ) {}
 
@@ -126,5 +136,40 @@ export class UserService {
       calendarAccessToken: this.crypto.decrypt(user.calendarAccessToken),
       calendarRefreshToken: this.crypto.decrypt(user.calendarRefreshToken),
     };
+  }
+
+  async getCalendarStatus(userId: string) {
+    const user = await this.userModel
+      .findById(userId)
+      .select('calendarAccessToken calendarRefreshToken')
+      .lean();
+    if (!user) throw new NotFoundException('User not found');
+
+    return {
+      connected: Boolean(user.calendarAccessToken && user.calendarRefreshToken),
+    };
+  }
+
+  disconnectCalendar(userId: string) {
+    return this.userModel
+      .findByIdAndUpdate(
+        { _id: userId },
+        { $unset: { calendarAccessToken: '', calendarRefreshToken: '' } },
+        { new: true },
+      )
+      .lean();
+  }
+
+  async deleteAccount(userId: string) {
+    const user = await this.userModel.findById(userId).select('_id').lean();
+    if (!user) return null;
+
+    await Promise.all([
+      this.alarmModel.deleteMany({ userId }),
+      this.memoryModel.deleteMany({ userId }),
+      this.userProfileModel.deleteOne({ userId }),
+    ]);
+
+    return this.userModel.findByIdAndDelete(userId).lean();
   }
 }

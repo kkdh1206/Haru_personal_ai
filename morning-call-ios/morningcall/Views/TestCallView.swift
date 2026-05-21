@@ -1,5 +1,10 @@
 import SwiftUI
 
+struct LiveKitInfo: Codable {
+    var lkToken: String
+    var lkUrl: String
+}
+
 struct TestCallView: View {
     @Environment(\.dismiss) var dismiss
     @State private var wakeIntensity = "gentle"
