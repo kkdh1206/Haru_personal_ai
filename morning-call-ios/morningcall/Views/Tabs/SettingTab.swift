@@ -108,7 +108,7 @@ struct SettingView: View {
     }
 
     private var characterSection: some View {
-        settingsCard(title: "기상 화면 캐릭터") {
+        settingsCard(title: "통화 시 캐릭터") {
             VStack(spacing: 12) {
                 ForEach(CharacterPreference.allCases, id: \.rawValue) { character in
                     Button {
@@ -263,6 +263,7 @@ struct SettingView: View {
     private func applyCharacterPreference(_ character: CharacterPreference) {
         selectedCharacter = character
         CharacterPreferenceStore.current = character
+        AppIconManager.apply(for: character)
 
         APIClient.request(path: "/alarm", method: .GET) { (result: Result<[Alarm], Error>) in
             guard case .success(let alarms) = result else { return }

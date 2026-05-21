@@ -21,9 +21,11 @@ struct EnterNameView: View {
                     Text("1 / 2")
                         .font(.system(.headline, design: .rounded).weight(.semibold))
                         .foregroundStyle(Color.black.opacity(0.56))
+                        .lineLimit(1)
+                        .frame(height: 28)
                         .frame(maxWidth: .infinity, alignment: .trailing)
 
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 24)
 
                     VStack(alignment: .leading, spacing: 18) {
                         VStack(alignment: .leading, spacing: 10) {
@@ -41,8 +43,7 @@ struct EnterNameView: View {
                             .padding(16)
                             .background(Color.white.opacity(0.88), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                             .foregroundStyle(Color.black.opacity(0.90))
-                            .submitLabel(.next)
-                            .onSubmit(goNext)
+                            .submitLabel(.done)
 
                         if showNameError {
                             Text("이름을 입력해야 다음으로 넘어갈 수 있어요.")
@@ -50,21 +51,20 @@ struct EnterNameView: View {
                                 .foregroundStyle(Color.red.opacity(0.82))
                         }
                     }
-                    .padding(.bottom, 116)
+                    .frame(maxWidth: .infinity)
+
+                    Spacer(minLength: 24)
+
+                    Button("다음") {
+                        goNext()
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .padding(.bottom, proxy.safeAreaInsets.bottom + 44)
                 }
                 .padding(.horizontal, 22)
-                .padding(.top, proxy.safeAreaInsets.top + 28)
+                .padding(.top, proxy.safeAreaInsets.top + 44)
                 .frame(width: proxy.size.width, height: proxy.size.height)
             }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            Button("다음") {
-                goNext()
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .padding(.horizontal, 22)
-            .padding(.top, 10)
-            .padding(.bottom, 30)
         }
         .preferredColorScheme(.light)
     }

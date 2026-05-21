@@ -29,9 +29,9 @@ enum CharacterPreference: String, CaseIterable, Codable {
     var displayName: String {
         switch self {
         case .haru:
-            return "Haru"
+            return "하루"
         case .hari:
-            return "Hari"
+            return "하리"
         }
     }
 
@@ -53,6 +53,15 @@ enum CharacterPreference: String, CaseIterable, Codable {
         }
     }
 
+    var alternateAppIconName: String? {
+        switch self {
+        case .haru:
+            return nil
+        case .hari:
+            return "HariAppIcon"
+        }
+    }
+
     func assetName(for period: HaruDayPeriod = .current()) -> String {
         switch self {
         case .haru:
@@ -65,9 +74,9 @@ enum CharacterPreference: String, CaseIterable, Codable {
     var description: String {
         switch self {
         case .haru:
-            return "차분하고 포근한 분위기의 기본 캐릭터"
+            return "차분하고 포근해요."
         case .hari:
-            return "조금 더 가볍고 말랑한 분위기의 캐릭터"
+            return "가볍고 말랑해요."
         }
     }
 }

@@ -169,9 +169,11 @@ struct RequestLocationView: View {
                     Text("2 / 2")
                         .font(.system(.headline, design: .rounded).weight(.semibold))
                         .foregroundStyle(Color.black.opacity(0.56))
+                        .lineLimit(1)
+                        .frame(height: 28)
                         .frame(maxWidth: .infinity, alignment: .trailing)
 
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 24)
 
                     VStack(alignment: .leading, spacing: 18) {
                         VStack(alignment: .leading, spacing: 10) {
@@ -186,33 +188,32 @@ struct RequestLocationView: View {
 
                         locationStatusCard
                     }
-                    .padding(.bottom, 116)
+                    .frame(maxWidth: .infinity)
+
+                    Spacer(minLength: 24)
+
+                    Button(primaryButtonTitle) {
+                        if locationManager.cityAndProvince != nil {
+                            completeOnboarding()
+                        } else {
+                            switch locationManager.authStatus {
+                            case .notDetermined, .authorizedWhenInUse, .authorizedAlways:
+                                locationManager.requestLocationFlow()
+                            case .denied, .restricted:
+                                showSettingsAlert = true
+                            @unknown default:
+                                showSettingsAlert = true
+                            }
+                        }
+                    }
+                    .disabled(locationManager.isLoading || isSaving)
+                    .buttonStyle(PrimaryButtonStyle())
+                    .padding(.bottom, proxy.safeAreaInsets.bottom + 44)
                 }
                 .padding(.horizontal, 22)
-                .padding(.top, proxy.safeAreaInsets.top + 28)
+                .padding(.top, proxy.safeAreaInsets.top + 44)
                 .frame(width: proxy.size.width, height: proxy.size.height)
             }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            Button(primaryButtonTitle) {
-                if locationManager.cityAndProvince != nil {
-                    completeOnboarding()
-                } else {
-                    switch locationManager.authStatus {
-                    case .notDetermined, .authorizedWhenInUse, .authorizedAlways:
-                        locationManager.requestLocationFlow()
-                    case .denied, .restricted:
-                        showSettingsAlert = true
-                    @unknown default:
-                        showSettingsAlert = true
-                    }
-                }
-            }
-            .disabled(locationManager.isLoading || isSaving)
-            .buttonStyle(PrimaryButtonStyle())
-            .padding(.horizontal, 22)
-            .padding(.top, 10)
-            .padding(.bottom, 30)
         }
         .alert("권한이 필요합니다",
                isPresented: $showSettingsAlert,

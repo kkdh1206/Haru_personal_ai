@@ -46,11 +46,20 @@ private struct NextAlarmSummary {
     let supportingText: String
 }
 
+private struct CountdownToken: Identifiable {
+    let id: Int
+    let value: String
+    let isNumber: Bool
+}
+
 struct AlarmTabView: View {
     @State private var alarms: [Alarm] = []
     @State private var isLoading = false
     @State private var editorContext: AlarmEditorContext?
     @State private var selectedCharacter = CharacterPreferenceStore.current
+    @State private var now = Date()
+
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private let weekdayOrder = [1, 2, 3, 4, 5, 6, 0]
     private let weekdayLabels = [
@@ -68,37 +77,39 @@ struct AlarmTabView: View {
     }
 
     private var currentDayPeriod: HaruDayPeriod {
-        HaruDayPeriod.current()
+        HaruDayPeriod.current(date: now)
     }
 
     private var nextAlarmSummary: NextAlarmSummary? {
         let calendar = Calendar.current
-        let now = Date()
 
-        let candidates: [(Date, Alarm)] = recurringAlarms.compactMap { alarm in
+        let candidates: [(Date, Alarm)] = alarms.compactMap { alarm in
             guard alarm.isOn else { return nil }
 
-            let next = nextRecurringDate(for: alarm, after: now, calendar: calendar)
-            return next.map { ($0, alarm) }
+            if let targetDate = alarm.targetDate, !targetDate.isEmpty {
+                guard let day = AlarmDateFormatter.storage.date(from: targetDate) else { return nil }
+                let target = merge(date: day, time: alarm.time)
+                return target > now ? (target, alarm) : nil
+            } else {
+                let next = nextRecurringDate(for: alarm, after: now, calendar: calendar)
+                return next.map { ($0, alarm) }
+            }
         }
 
         guard let earliest = candidates.min(by: { $0.0 < $1.0 }) else {
             return nil
         }
 
-        let components = calendar.dateComponents([.hour, .minute], from: now, to: earliest.0)
-        let hours = max(components.hour ?? 0, 0)
-        let minutes = max(components.minute ?? 0, 0)
-        let countdown = hours > 0
-            ? "\(hours)시간 \(minutes)분 뒤"
-            : "\(minutes)분 뒤"
-
-        let style = wakeStyleLabel(for: earliest.1.personality, wakeIntensity: earliest.1.wakeIntensity)
+        let remaining = max(earliest.0.timeIntervalSince(now), 0)
 
         return NextAlarmSummary(
             timeText: earliest.1.time,
-            countdownText: countdown,
-            supportingText: "\(style) 톤으로 깨워드릴게요."
+            countdownText: countdownText(for: remaining),
+            supportingText: alarmSupportingText(
+                for: earliest.0,
+                timeText: earliest.1.time,
+                remaining: remaining
+            )
         )
     }
 
@@ -113,7 +124,7 @@ struct AlarmTabView: View {
                 GeometryReader { proxy in
                     ZStack(alignment: .topTrailing) {
                         heroSection
-                            .padding(.top, proxy.safeAreaInsets.top + 38)
+                            .padding(.top, proxy.safeAreaInsets.top + 58)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
                         VStack(spacing: 10) {
@@ -129,17 +140,12 @@ struct AlarmTabView: View {
                             Image(systemName: "gearshape.fill")
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundStyle(Color.black.opacity(0.78))
-                                .frame(width: 44, height: 44)
-                                .background(Color.white.opacity(0.84), in: Circle())
-                                .overlay(
-                                    Circle()
-                                        .stroke(Color.white.opacity(0.72), lineWidth: 1)
-                                )
-                                .shadow(color: Color.black.opacity(0.08), radius: 10, y: 5)
+                                .frame(width: 48, height: 48)
+                                .modifier(SettingsGlassModifier())
                         }
                         .buttonStyle(.plain)
                         .padding(.trailing, 20)
-                        .padding(.top, proxy.safeAreaInsets.top + 28)
+                        .padding(.top, proxy.safeAreaInsets.top + 36)
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                 }
@@ -165,13 +171,16 @@ struct AlarmTabView: View {
             .onAppear {
                 selectedCharacter = CharacterPreferenceStore.current
             }
+            .onReceive(ticker) { date in
+                now = date
+            }
         }
     }
 
     private var heroSection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(AlarmDateFormatter.heroDate.string(from: Date()))
+            VStack(alignment: .leading, spacing: 14) {
+                Text(AlarmDateFormatter.heroDate.string(from: now))
                     .font(.system(.headline, design: .rounded).weight(.medium))
                     .foregroundStyle(Color.black.opacity(0.55))
 
@@ -181,16 +190,10 @@ struct AlarmTabView: View {
                         .foregroundStyle(Color.black.opacity(0.78))
 
                     if let summary = nextAlarmSummary {
-                        Text(summary.timeText)
-                            .font(.system(size: 54, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color.black.opacity(0.92))
-
-                        Text("다음 기상까지 \(summary.countdownText)")
-                            .font(.system(.headline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.black.opacity(0.88))
+                        countdownLabel(summary.countdownText)
 
                         Text(summary.supportingText)
-                            .font(.system(.subheadline, design: .rounded))
+                            .font(.system(.headline, design: .rounded).weight(.medium))
                             .foregroundStyle(Color.black.opacity(0.58))
                     } else {
                         Text("알람 없음")
@@ -241,6 +244,45 @@ struct AlarmTabView: View {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .fill(Color.white.opacity(0.90))
         )
+    }
+
+    private func countdownLabel(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            ForEach(countdownTokens(from: text)) { token in
+                Text(token.value)
+                    .font(
+                        token.isNumber
+                        ? .system(size: 48, weight: .bold, design: .rounded)
+                        : .system(size: 24, weight: .bold, design: .rounded)
+                    )
+            }
+        }
+        .foregroundStyle(Color.black.opacity(0.92))
+    }
+
+    private func countdownTokens(from text: String) -> [CountdownToken] {
+        var tokens: [CountdownToken] = []
+        var current = ""
+        var currentIsNumber: Bool?
+
+        for character in text {
+            let isNumber = character.isNumber
+            if currentIsNumber == isNumber {
+                current.append(character)
+            } else {
+                if !current.isEmpty, let type = currentIsNumber {
+                    tokens.append(CountdownToken(id: tokens.count, value: current, isNumber: type))
+                }
+                current = String(character)
+                currentIsNumber = isNumber
+            }
+        }
+
+        if !current.isEmpty, let type = currentIsNumber {
+            tokens.append(CountdownToken(id: tokens.count, value: current, isNumber: type))
+        }
+
+        return tokens
     }
 
     private var weekdaySlots: [WeekdaySlot] {
@@ -525,6 +567,51 @@ struct AlarmTabView: View {
         AlarmDateFormatter.time.date(from: time) ?? merge(date: Date(), time: time)
     }
 
+    private func countdownText(for interval: TimeInterval) -> String {
+        let totalSeconds = max(Int(ceil(interval)), 0)
+
+        if totalSeconds == 0 {
+            return "곧"
+        }
+
+        let days = totalSeconds / (24 * 60 * 60)
+        let hours = (totalSeconds % (24 * 60 * 60)) / (60 * 60)
+        let minutes = (totalSeconds % (60 * 60)) / 60
+        let seconds = totalSeconds % 60
+
+        if days > 0 {
+            return hours > 0
+                ? "\(days)일 \(hours)시간 \(minutes)분 \(seconds)초"
+                : "\(days)일 \(minutes)분 \(seconds)초"
+        }
+
+        if hours > 0 {
+            return "\(hours)시간 \(minutes)분 \(seconds)초"
+        }
+
+        return minutes > 0
+            ? "\(minutes)분 \(seconds)초"
+            : "\(seconds)초"
+    }
+
+    private func alarmSupportingText(for date: Date, timeText: String, remaining: TimeInterval) -> String {
+        if remaining > 24 * 60 * 60 {
+            return "내일은 알람이 없어요."
+        }
+
+        let calendar = Calendar.current
+        let dayText: String
+        if calendar.isDateInToday(date) {
+            dayText = "오늘"
+        } else if calendar.isDateInTomorrow(date) {
+            dayText = "내일"
+        } else {
+            dayText = AlarmDateFormatter.monthDay.string(from: date)
+        }
+
+        return "\(dayText) \(timeText)에 깨워드릴게요."
+    }
+
     private func wakeStyleLabel(for personality: String, wakeIntensity: String) -> String {
         switch personality {
         case "aggressive":
@@ -533,6 +620,19 @@ struct AlarmTabView: View {
             return "보통"
         default:
             return wakeIntensity == "firm" ? "강하게" : "부드럽게"
+        }
+    }
+}
+
+private struct SettingsGlassModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(.regular.interactive(), in: Circle())
+        } else {
+            content
+                .background(.ultraThinMaterial, in: Circle())
         }
     }
 }

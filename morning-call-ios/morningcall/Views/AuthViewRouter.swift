@@ -48,6 +48,7 @@ struct RootView: View {
         }
         .onAppear {
             viewModel.checkAuthState()
+            AppIconManager.applyStoredPreference()
         }
         .onChange(of: scenePhase) { phase in
             guard phase == .active, viewModel.isLoggedIn, env.onboardingStep == .completed else { return }
@@ -136,52 +137,47 @@ struct LoginView: View {
                 .scaledToFill()
                 .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Haru")
-                        .font(.system(size: 44, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.black.opacity(0.92))
+            GeometryReader { proxy in
+                VStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Haru")
+                            .font(.system(size: 44, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.92))
 
-                    Text("따뜻한 아침을 함께 준비해요.")
-                        .font(.system(.headline, design: .rounded).weight(.medium))
-                        .foregroundStyle(Color.black.opacity(0.62))
+                        Text("따뜻한 아침을 함께 준비해요.")
+                            .font(.system(.headline, design: .rounded).weight(.medium))
+                            .foregroundStyle(Color.black.opacity(0.62))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, proxy.safeAreaInsets.top + 64)
+
+                    Spacer(minLength: 40)
+
+                    VStack(spacing: 12) {
+                        AppleSignInButton()
+                        SignInWithGoogleButton()
+
+                        Text(.init("시작하면 [서비스 이용약관](https://example.com/terms) 및 [개인정보 처리방침](https://example.com/privacy)에 동의하게 됩니다."))
+                            .font(.system(.footnote, design: .rounded))
+                            .tint(Color.black.opacity(0.72))
+                            .foregroundStyle(Color.black.opacity(0.56))
+                            .multilineTextAlignment(.center)
+                            .padding(.top, 6)
+                    }
+                    .padding(18)
+                    .background(
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .fill(Color.white.opacity(0.86))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                                    .stroke(Color.white.opacity(0.72), lineWidth: 1)
+                            )
+                    )
+                    .padding(.bottom, proxy.safeAreaInsets.bottom + 44)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 36)
-
-                Spacer(minLength: 16)
-
-                Image("Haru_morning")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 250)
-                    .shadow(color: Color.black.opacity(0.10), radius: 18, y: 12)
-
-                Spacer(minLength: 20)
-
-                VStack(spacing: 12) {
-                    AppleSignInButton()
-                    SignInWithGoogleButton()
-
-                    Text(.init("시작하면 [서비스 이용약관](https://example.com/terms) 및 [개인정보 처리방침](https://example.com/privacy)에 동의하게 됩니다."))
-                        .font(.system(.footnote, design: .rounded))
-                        .tint(Color.black.opacity(0.72))
-                        .foregroundStyle(Color.black.opacity(0.56))
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 6)
-                }
-                .padding(18)
-                .background(
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(Color.white.opacity(0.86))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                                .stroke(Color.white.opacity(0.72), lineWidth: 1)
-                        )
-                )
-                .padding(.bottom, 18)
+                .padding(.horizontal, 22)
+                .frame(width: proxy.size.width, height: proxy.size.height)
             }
-            .padding(.horizontal, 22)
         }
         .preferredColorScheme(.light)
     }
@@ -189,25 +185,48 @@ struct LoginView: View {
 
 struct AppleSignInButton: View {
     @EnvironmentObject var authVM: AuthViewModel
+    @StateObject private var coordinator = AppleSignInCoordinator()
     @State private var currentNonce: String?
 
     var body: some View {
-        SignInWithAppleButton(.signIn) { request in
-            let nonce = randomNonceString()
-            currentNonce = nonce
-            request.requestedScopes = [.fullName, .email]
-            request.nonce = sha256(nonce)
-        } onCompletion: { result in
-            switch result {
-            case .success(let authorization):
-                handleAuthorization(authorization)
-            case .failure(let error):
-                print("❌ Apple login error: \(error.localizedDescription)")
+        Button {
+            startAppleSignIn()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "applelogo")
+                    .font(.system(size: 18, weight: .semibold))
+                Text("Apple로 계속하기")
+                    .font(.system(.body, design: .rounded).weight(.semibold))
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .foregroundStyle(.white)
+            .background(Color.black.opacity(0.92))
         }
-        .signInWithAppleButtonStyle(.black)
+        .buttonStyle(.plain)
         .frame(height: 52)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func startAppleSignIn() {
+        let nonce = randomNonceString()
+        currentNonce = nonce
+
+        coordinator.onAuthorization = { authorization in
+            handleAuthorization(authorization)
+        }
+        coordinator.onError = { error in
+            print("❌ Apple login error: \(error.localizedDescription)")
+        }
+
+        let provider = ASAuthorizationAppleIDProvider()
+        let request = provider.createRequest()
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = sha256(nonce)
+
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = coordinator
+        controller.presentationContextProvider = coordinator
+        controller.performRequests()
     }
 
     private func handleAuthorization(_ authorization: ASAuthorization) {
@@ -270,6 +289,27 @@ struct AppleSignInButton: View {
         }
 
         return result
+    }
+}
+
+final class AppleSignInCoordinator: NSObject, ObservableObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+    var onAuthorization: ((ASAuthorization) -> Void)?
+    var onError: ((Error) -> Void)?
+
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
+        onAuthorization?(authorization)
+    }
+
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+        onError?(error)
+    }
+
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return scenes
+            .flatMap(\.windows)
+            .first { $0.isKeyWindow }
+            ?? ASPresentationAnchor()
     }
 }
 
