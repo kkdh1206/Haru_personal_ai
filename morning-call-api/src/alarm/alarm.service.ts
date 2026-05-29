@@ -423,7 +423,16 @@ export class AlarmService {
             alarmId,
           });
     if (!pushResult.sent.length) {
-      throw new Error(`APNs push failed for alarm ${alarmId}`);
+      const reasons = pushResult.failed
+        .map((failure) => {
+          const reason = failure.response?.reason || failure.error?.message;
+          return [failure.status, reason].filter(Boolean).join(' ');
+        })
+        .filter(Boolean)
+        .join(', ');
+      throw new Error(
+        `Push failed for alarm ${alarmId}${reasons ? `: ${reasons}` : ''}`,
+      );
     }
   }
 

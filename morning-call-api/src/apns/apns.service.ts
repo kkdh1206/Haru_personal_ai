@@ -7,6 +7,19 @@ type ApnNotificationWithHeaders = apn.Notification & {
   headers: () => Record<string, string | number>;
 };
 
+function summarizeApnsResult(res: apn.Responses) {
+  return {
+    sent: res.sent,
+    failed: res.failed.map((failure) => ({
+      device: failure.device,
+      status: failure.status,
+      reason: failure.response?.reason,
+      timestamp: failure.response?.timestamp,
+      error: failure.error?.message,
+    })),
+  };
+}
+
 @Injectable()
 export class ApnsService implements OnModuleDestroy {
   private provider: apn.Provider;
@@ -54,7 +67,10 @@ export class ApnsService implements OnModuleDestroy {
     this.applyVoipHeaders(note);
 
     const res = await this.provider.send(note, token);
-    console.log(res.sent.length ? '✅ sent' : '❌ failed', res);
+    console.log(
+      res.sent.length ? '✅ sent' : '❌ failed',
+      summarizeApnsResult(res),
+    );
     return res;
   }
 
@@ -71,7 +87,10 @@ export class ApnsService implements OnModuleDestroy {
     this.applyVoipHeaders(note);
 
     const res = await this.provider.send(note, token);
-    console.log(res.sent.length ? '✅ followup sent' : '❌ followup failed', res);
+    console.log(
+      res.sent.length ? '✅ followup sent' : '❌ followup failed',
+      summarizeApnsResult(res),
+    );
     return res;
   }
 

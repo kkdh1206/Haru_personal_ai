@@ -108,7 +108,13 @@ struct RootView: View {
                     print("🌐 등록 에러: \(error.localizedDescription)")
                     return
                 }
-                print("✅ 디바이스 토큰 등록 완료")
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                if (200..<300).contains(statusCode) {
+                    print("✅ 디바이스 토큰 등록 완료")
+                } else {
+                    let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                    print("❌ 디바이스 토큰 등록 실패: \(statusCode) \(body)")
+                }
             }.resume()
         }
     }

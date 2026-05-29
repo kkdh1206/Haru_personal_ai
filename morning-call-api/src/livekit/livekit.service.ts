@@ -8,7 +8,7 @@ import {
 
 @Injectable()
 export class LivekitService {
-  private static readonly AGENT_WAIT_TIMEOUT_MS = 15000;
+  private static readonly AGENT_WAIT_TIMEOUT_MS = 30000;
   private static readonly AGENT_WAIT_INTERVAL_MS = 300;
 
   private readonly apiKey = this.configService.get<string>('livekit.apiKey');
@@ -54,7 +54,7 @@ export class LivekitService {
     }
 
     // 2. 에이전트가 이미 방에 들어가 있는지 확인
-    const participant = await this.roomService.listParticipants(roomName);
+    const participant = await this.listParticipantsIfRoomExists(roomName);
     if (participant.length > 0) {
       console.log('[Livekit] Haru already exists in room', roomName);
       return;
@@ -100,7 +100,7 @@ export class LivekitService {
     const deadline = Date.now() + LivekitService.AGENT_WAIT_TIMEOUT_MS;
 
     while (Date.now() < deadline) {
-      const participants = await this.roomService.listParticipants(roomName);
+      const participants = await this.listParticipantsIfRoomExists(roomName);
       if (participants.length > 0) {
         return;
       }
@@ -113,5 +113,24 @@ export class LivekitService {
     throw new Error(
       `[Livekit] Timed out waiting for agent to join room ${roomName}`,
     );
+  }
+
+  private async listParticipantsIfRoomExists(roomName: string) {
+    try {
+      return await this.roomService.listParticipants(roomName);
+    } catch (error) {
+      if (this.isLivekitNotFoundError(error)) {
+        console.warn(
+          `[Livekit] room not visible yet; retrying participant lookup ${roomName}`,
+        );
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  private isLivekitNotFoundError(error: unknown) {
+    const maybeError = error as { code?: string; status?: number };
+    return maybeError.status === 404 || maybeError.code === 'not_found';
   }
 }
