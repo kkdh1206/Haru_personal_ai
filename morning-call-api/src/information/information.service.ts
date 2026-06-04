@@ -67,7 +67,7 @@ export class InformationService {
 
   // 날씨 데이터 가져오기
   async getCurrentWeather(location: string) {
-    const cacheKey = `weather:${location}`;
+    const cacheKey = `weather:v2:${location}`;
 
     return this.getOrSetCache(cacheKey, async () => {
       // getOrSetCache가 데이터 오래된거면 아래 함수 fetcher()를 수행시킴
@@ -90,10 +90,18 @@ export class InformationService {
           city: data.name,
           temperature: data.main.temp,
           feels_like: data.main.feels_like,
+          temp_min: data.main.temp_min,
+          temp_max: data.main.temp_max,
           weather: data.weather?.[0]?.description,
           icon: data.weather?.[0]?.icon,
           humidity: data.main.humidity,
+          pressure: data.main.pressure,
           wind_speed: data.wind.speed,
+          wind_gust: data.wind.gust,
+          cloudiness: data.clouds?.all,
+          visibility: data.visibility,
+          rain_1h: data.rain?.['1h'],
+          snow_1h: data.snow?.['1h'],
         };
 
         return refined;

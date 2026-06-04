@@ -48,9 +48,9 @@ DEFAULT_USER_SILENCE_NUDGE_SECONDS = 5.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
 DEFAULT_NO_RESPONSE_RETRY_MINUTES = 3
 DEFAULT_USER_SILENCE_NUDGE_TEXTS = (
-    "일어나 있으면 짧게라도 대답해줘. 목소리 한 번만 확인할게.",
-    "눈 뜨고 있으면 한마디만 해줘. 바로 준비할 수 있게 같이 챙겨줄게.",
-    "마지막으로 한 번만 확인할게. 일어났으면 짧게 대답해줘.",
+    "일어나 있으면 짧게 대답해줘. 목소리만 확인할게.",
+    "눈 뜨고 있으면 지금 몸부터 일으켜. 한마디만 해줘.",
+    "마지막 확인이야. 대답 없으면 다시 잠든 걸로 보고 더 세게 깨울게.",
 )
 
 _vad_instance = None
@@ -1212,14 +1212,16 @@ async def entrypoint(ctx: JobContext):
 
             nudge_instructions = (
                 "사용자가 통화 중 몇 초간 대답이 없다. "
-                "자는지 확인하면서 깨우는 말을 한국어로 한 문장만 말해. "
-                "매번 같은 표현을 반복하지 말고 현재 nudge 단계에 맞게 말해. "
-                f"이번에는 가능하면 이 문장을 그대로 사용해: {nudge_text}"
+                "자는지 확인하면서 깨우는 말을 한국어로 한두 문장만 말해. "
+                "직전 표현을 반복하지 말고 리듬, 단어, 압박 수위를 바꿔라. "
+                "강하게 깨우는 맥락이면 '일어나, 일어나'처럼 반복 호출하거나 짜증 섞인 재촉을 해도 된다. "
+                "다만 인신공격, 혐오, 위협은 하지 마라. "
+                f"현재 단계 참고 문구: {nudge_text}"
             )
             nudge_trigger_text = (
                 f"시스템 트리거: 사용자가 통화 중 {nudge_seconds:.0f}초간 대답이 없다. "
-                "이 문장을 언급하지 말고, 한국어로 짧게 깨워라. "
-                f"말할 내용: {nudge_text}"
+                "이 문장을 언급하지 말고, 한국어로 짧고 다르게 깨워라. "
+                f"참고 문구: {nudge_text}"
             )
 
             if request_agent_reply(nudge_instructions, nudge_trigger_text):

@@ -41,6 +41,32 @@ export class PromptService {
     }));
   }
 
+  private formatWeatherInfo(weather: any) {
+    if (!weather) {
+      return '정보 없음';
+    }
+
+    const parts = [
+      weather.weather,
+      weather.temperature != null ? `현재 ${weather.temperature}도` : null,
+      weather.feels_like != null ? `체감 ${weather.feels_like}도` : null,
+      weather.temp_min != null && weather.temp_max != null
+        ? `주변 기온 ${weather.temp_min}~${weather.temp_max}도`
+        : null,
+      weather.humidity != null ? `습도 ${weather.humidity}%` : null,
+      weather.wind_speed != null ? `바람 ${weather.wind_speed}m/s` : null,
+      weather.wind_gust != null ? `돌풍 ${weather.wind_gust}m/s` : null,
+      weather.cloudiness != null ? `구름 ${weather.cloudiness}%` : null,
+      weather.visibility != null
+        ? `가시거리 ${(weather.visibility / 1000).toFixed(1)}km`
+        : null,
+      weather.rain_1h != null ? `최근 1시간 비 ${weather.rain_1h}mm` : null,
+      weather.snow_1h != null ? `최근 1시간 눈 ${weather.snow_1h}mm` : null,
+    ].filter(Boolean);
+
+    return parts.length ? parts.join(', ') : '정보 없음';
+  }
+
   async getPrompt(
     alarmId: string,
     callType: 'initial' | 'retry' = 'initial',
@@ -60,7 +86,8 @@ export class PromptService {
     const now = DateTime.now().setZone(timeZone);
     const todayLabel = now.toFormat('yyyy년 MM월 dd일 cccc');
     const currentTimeLabel = now.toFormat('yyyy년 MM월 dd일 cccc HH:mm');
-    const currentIsoTime = now.toISO() || now.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
+    const currentIsoTime =
+      now.toISO() || now.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
 
     // 1. 구글 캘린더 일정 조회
     const schedules = this.normalizeSchedules(
@@ -72,9 +99,7 @@ export class PromptService {
     const weather = await this.informationService.getCurrentWeather(
       user.location || 'Seoul',
     );
-    const weatherInfo = weather
-      ? `${weather.weather} ${weather.temperature}`
-      : '정보 없음';
+    const weatherInfo = this.formatWeatherInfo(weather);
 
     // 3. 일정, 날씨를 바탕으로 프롬프트 구성
     const prompt = buildMorningCallPrompt({
@@ -97,12 +122,17 @@ export class PromptService {
     return prompt;
   }
 
-  async getTestCallPrompt(user, wakeIntensity = 'gentle', assistantName = '하루') {
+  async getTestCallPrompt(
+    user,
+    wakeIntensity = 'gentle',
+    assistantName = '하루',
+  ) {
     const timeZone = user.timeZone || 'Asia/Seoul';
     const now = DateTime.now().setZone(timeZone);
     const todayLabel = now.toFormat('yyyy년 MM월 dd일 cccc');
     const currentTimeLabel = now.toFormat('yyyy년 MM월 dd일 cccc HH:mm');
-    const currentIsoTime = now.toISO() || now.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
+    const currentIsoTime =
+      now.toISO() || now.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
 
     // 1. 구글 캘린더 일정 조회
     const schedules = this.normalizeSchedules(
@@ -114,9 +144,7 @@ export class PromptService {
     const weather = await this.informationService.getCurrentWeather(
       user.location || 'Seoul',
     );
-    const weatherInfo = weather
-      ? `${weather.weather} ${weather.temperature}`
-      : '정보 없음';
+    const weatherInfo = this.formatWeatherInfo(weather);
 
     // 3. 일정, 날씨를 바탕으로 프롬프트 구성
     const prompt = buildMorningCallPrompt({
