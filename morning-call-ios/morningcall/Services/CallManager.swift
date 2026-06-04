@@ -13,7 +13,7 @@ final actor CallManager: NSObject, ObservableObject {
     static let shared = CallManager()
 
     // CallKit
-    private let provider: CXProvider
+    nonisolated(unsafe) private let provider: CXProvider
     private let callController = CXCallController()
     private var currentCallUUID: UUID? // 현재 활성화된 통화의 고유 ID
     private var isOutgoing = false // 통화가 발신(true)인지 수신(false)인지 여부
@@ -46,6 +46,9 @@ final actor CallManager: NSObject, ObservableObject {
         // LiveKit Room 초기화
         self.room = Room(delegate: self)
 
+        // LiveKit의 기본 출력은 스피커 우선이므로 일반 통화처럼 수화부를 우선 사용합니다.
+        AudioManager.shared.isSpeakerOutputPreferred = false
+
         // WebRTC 오디오 세션 수동 관리 설정
         let rtc = LKRTCAudioSession.sharedInstance()
         rtc.useManualAudio = true // 오디오 세션을 직접 활성화/비활성화
@@ -72,12 +75,58 @@ final actor CallManager: NSObject, ObservableObject {
     // MARK: - Public helpers (UI/외부 호출)
     
     /// **CallKit**에 수신 통화가 왔음을 알림 (앱이 백그라운드나 종료된 상태에서 사용)
-    func reportIncoming(handle: String) {
+    nonisolated func reportIncoming(
+        handle: String,
+        url: String,
+        token: String,
+        alarmId: String?,
+        completion: (() -> Void)? = nil
+    ) {
         let uuid = UUID()
+        let update = incomingCallUpdate(handle: handle)
+
+        Task {
+            await self.stageIncomingCall(uuid: uuid, url: url, token: token, alarmId: alarmId)
+        }
+
+        // CallKit에 새 수신 통화를 보고
+        provider.reportNewIncomingCall(with: uuid, update: update) { err in
+            if let err = err { print("Incoming error: \(err.localizedDescription)") }
+            completion?()
+        }
+        print("reportIncoming... \(handle)")
+    }
+
+    private func stageIncomingCall(uuid: UUID, url: String, token: String, alarmId: String?) {
+        cancelIfOngoing()
         currentCallUUID = uuid
         isOutgoing = false
         isConnectingOrConnected = false
+        prepareIncoming(url: url, token: token, alarmId: alarmId)
+    }
 
+    /// 통화가 아닌 VoIP 푸시나 처리할 수 없는 푸시도 CallKit에 보고한 뒤 즉시 종료합니다.
+    /// PushKit VoIP 푸시를 보고 없이 반환하면 iOS가 앱을 강제 종료합니다.
+    nonisolated func reportDiscardedIncoming(
+        handle: String,
+        reason: CXCallEndedReason,
+        completion: @escaping () -> Void
+    ) {
+        let uuid = UUID()
+        let provider = self.provider
+        let update = incomingCallUpdate(handle: handle)
+
+        provider.reportNewIncomingCall(with: uuid, update: update) { error in
+            if let error {
+                print("Discarded incoming report error: \(error.localizedDescription)")
+            } else {
+                provider.reportCall(with: uuid, endedAt: Date(), reason: reason)
+            }
+            completion()
+        }
+    }
+
+    nonisolated private func incomingCallUpdate(handle: String) -> CXCallUpdate {
         let update = CXCallUpdate()
         update.hasVideo = false
         update.supportsHolding = false
@@ -86,12 +135,7 @@ final actor CallManager: NSObject, ObservableObject {
         update.supportsGrouping = false
         update.localizedCallerName = handle
         update.remoteHandle = CXHandle(type: .generic, value: handle)
-
-        // CallKit에 새 수신 통화를 보고
-        provider.reportNewIncomingCall(with: uuid, update: update) { err in
-            if let err = err { print("Incoming error: \(err.localizedDescription)") }
-        }
-        print("reportIncoming... \(handle)")
+        return update
     }
 
     /// 현재 진행 중인 통화가 있다면 CallKit을 통해 종료 요청
@@ -190,11 +234,16 @@ final actor CallManager: NSObject, ObservableObject {
 
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            try audioSession.setCategory(.playAndRecord, options: [.allowBluetooth])
+            try audioSession.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,
+                options: [.allowBluetoothHFP]
+            )
+            try audioSession.overrideOutputAudioPort(.none)
             try audioSession.setPreferredSampleRate(48_000)
             try audioSession.setPreferredIOBufferDuration(0.005)
             try audioSession.setActive(true)
-            print("🔊 AVAudioSession activated manually")
+            print("🔊 AVAudioSession activated with receiver preferred")
         } catch {
             print("AVAudioSession config/activate error: \(error)")
         }

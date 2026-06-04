@@ -1,5 +1,6 @@
 import UIKit
 import PushKit
+import CallKit
 import Firebase
 import GoogleSignIn
 import UserNotifications
@@ -20,6 +21,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
         let notificationCenter = UNUserNotificationCenter.current()
         notificationCenter.delegate = self
         LocalCallFallbackScheduler.shared.registerNotificationCategory()
+        application.registerForRemoteNotifications()
         notificationCenter.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error {
                 print("❌ Notification authorization failed:", error.localizedDescription)
@@ -57,15 +59,33 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
         DeviceTokenManager.shared.deviceToken = tokenString
     }
 
+    func application(_ application: UIApplication,
+                     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        let tokenString = deviceToken.map { String(format: "%02x", $0) }.joined()
+        print("📲 Notification token:", tokenString)
+        DeviceTokenManager.shared.notificationToken = tokenString
+    }
+
+    func application(_ application: UIApplication,
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("❌ Notification token registration failed:", error.localizedDescription)
+    }
+
     // 푸시 수신 → CallKit 보고
     func pushRegistry(_ registry: PKPushRegistry,
                       didReceiveIncomingPushWith payload: PKPushPayload,
                       for type: PKPushType,
                       completion: @escaping () -> Void) {
 
-        defer { completion() }
+        guard type == .voIP else {
+            completion()
+            return
+        }
 
-        guard let dict = payload.dictionaryPayload as? [String: Any] else { return }
+        guard let dict = payload.dictionaryPayload as? [String: Any] else {
+            CallManager.shared.reportDiscardedIncoming(handle: "Haru", reason: .failed, completion: completion)
+            return
+        }
 
         // 1) payload.* 우선, 2) 최상위 키 백업
         let data = (dict["payload"] as? [String: Any]) ?? dict
@@ -74,6 +94,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
             let title = (data["title"] as? String) ?? "Haru"
             let body = (data["body"] as? String) ?? "전화를 여러 번 드렸는데 연결이 잘 안 돼서 메시지를 남겨요."
             showLocalWakeFollowup(title: title, body: body)
+            CallManager.shared.reportDiscardedIncoming(handle: title, reason: .failed, completion: completion)
             return
         }
 
@@ -83,18 +104,24 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
         let alarmId = (data["alarmId"] as? String)
 
         if LocalCallFallbackScheduler.shared.shouldIgnoreIncomingPush(for: alarmId) {
+            CallManager.shared.reportDiscardedIncoming(handle: caller, reason: .unanswered, completion: completion)
             return
         }
 
         // 필수 값 체크
         guard let lkURL, let lkToken else {
             print("🛑 LiveKit push payload missing url/token")
+            CallManager.shared.reportDiscardedIncoming(handle: caller, reason: .failed, completion: completion)
             return
         }
 
-        CallManager.shared.cancelIfOngoing()
-        CallManager.shared.prepareIncoming(url: lkURL, token: lkToken, alarmId: alarmId)
-        CallManager.shared.reportIncoming(handle: caller)
+        CallManager.shared.reportIncoming(
+            handle: caller,
+            url: lkURL,
+            token: lkToken,
+            alarmId: alarmId,
+            completion: completion
+        )
     }
 
     private func showLocalWakeFollowup(title: String, body: String) {

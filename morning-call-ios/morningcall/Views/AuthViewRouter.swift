@@ -7,6 +7,7 @@
 
 import SwiftUI
 import FirebaseAuth
+import FirebaseCore
 import GoogleSignInSwift
 import AuthenticationServices
 import CryptoKit
@@ -87,36 +88,7 @@ struct RootView: View {
     }
     
     private func registerDeviceTokenToAPI() {
-        guard let apnsToken = DeviceTokenManager.shared.deviceToken else {
-            print("❌ APNs 토큰 없음")
-            return
-        }
-
-        AuthTokenManager.shared.refreshTokenIfNeeded { idToken in
-            guard let idToken = idToken else { return }
-
-            var request = URLRequest(url: URL(string: "https://morningcall.poapper.com/user/device-token")!)
-            request.httpMethod = "PATCH"
-            request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-            let body: [String: Any] = ["deviceToken": apnsToken]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
-
-            URLSession.shared.dataTask(with: request) { data, response, error in
-                if let error = error {
-                    print("🌐 등록 에러: \(error.localizedDescription)")
-                    return
-                }
-                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-                if (200..<300).contains(statusCode) {
-                    print("✅ 디바이스 토큰 등록 완료")
-                } else {
-                    let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                    print("❌ 디바이스 토큰 등록 실패: \(statusCode) \(body)")
-                }
-            }.resume()
-        }
+        DeviceTokenManager.shared.registerTokensToAPI()
     }
 }
 
@@ -335,8 +307,53 @@ final class AppleSignInCoordinator: NSObject, ObservableObject, ASAuthorizationC
     }
 }
 
-// 임시 저장소 (PushDelegate가 이 값 설정해야 함)
 class DeviceTokenManager: ObservableObject {
     static let shared = DeviceTokenManager()
-    @Published var deviceToken: String? = nil
+
+    @Published var deviceToken: String? = nil {
+        didSet { registerTokensToAPI() }
+    }
+    @Published var notificationToken: String? = nil {
+        didSet { registerTokensToAPI() }
+    }
+
+    func registerTokensToAPI() {
+        guard FirebaseApp.app() != nil else { return }
+        guard let voipToken = deviceToken else {
+            print("❌ VoIP APNs 토큰 없음")
+            return
+        }
+
+        AuthTokenManager.shared.refreshTokenIfNeeded { idToken in
+            guard let idToken else { return }
+
+            var request = URLRequest(url: URL(string: "https://morningcall.poapper.com/user/device-token")!)
+            request.httpMethod = "PATCH"
+            request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+            var body: [String: Any] = [
+                "deviceToken": voipToken,
+                "deviceType": "ios"
+            ]
+            if let notificationToken = self.notificationToken {
+                body["notificationToken"] = notificationToken
+            }
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
+
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                if let error {
+                    print("🌐 토큰 등록 에러: \(error.localizedDescription)")
+                    return
+                }
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                if (200..<300).contains(statusCode) {
+                    print("✅ 디바이스 토큰 등록 완료")
+                } else {
+                    let responseBody = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                    print("❌ 디바이스 토큰 등록 실패: \(statusCode) \(responseBody)")
+                }
+            }.resume()
+        }
+    }
 }

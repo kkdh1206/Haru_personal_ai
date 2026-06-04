@@ -37,13 +37,23 @@ export class ApnsService implements OnModuleDestroy {
     });
   }
 
-  private applyVoipHeaders(note: apn.Notification) {
+  private applyPushHeaders(
+    note: apn.Notification,
+    pushType: 'alert' | 'voip',
+    expiration?: number,
+  ) {
     const notification = note as ApnNotificationWithHeaders;
     const originalHeaders = notification.headers.bind(notification);
-    notification.headers = () => ({
-      ...originalHeaders(),
-      'apns-push-type': 'voip',
-    });
+    notification.headers = () => {
+      const headers: Record<string, string | number> = {
+        ...originalHeaders(),
+        'apns-push-type': pushType,
+      };
+      if (expiration !== undefined) {
+        headers['apns-expiration'] = expiration;
+      }
+      return headers;
+    };
   }
 
   async sendVoipPush(
@@ -64,7 +74,7 @@ export class ApnsService implements OnModuleDestroy {
       lkToken: payload.livekitToken,
       alarmId: payload.alarmId,
     };
-    this.applyVoipHeaders(note);
+    this.applyPushHeaders(note, 'voip', 0);
 
     const res = await this.provider.send(note, token);
     console.log(
@@ -76,15 +86,16 @@ export class ApnsService implements OnModuleDestroy {
 
   async sendWakeFollowupPush(token: string, body: string) {
     const note = new apn.Notification();
-    note.topic = `${this.cs.get<string>('apns.bundleId')}.voip`;
-    note.priority = 5;
-    note.aps = { 'content-available': 1 };
-    note.payload = {
-      type: 'wake_followup',
+    note.topic = this.cs.getOrThrow<string>('apns.bundleId');
+    note.priority = 10;
+    note.expiry = Math.floor(Date.now() / 1000) + 120;
+    note.alert = {
       title: 'Haru',
       body,
     };
-    this.applyVoipHeaders(note);
+    note.sound = 'default';
+    note.payload = { type: 'wake_followup' };
+    this.applyPushHeaders(note, 'alert');
 
     const res = await this.provider.send(note, token);
     console.log(

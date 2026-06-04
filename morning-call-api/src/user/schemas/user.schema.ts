@@ -36,6 +36,9 @@ export class User {
   deviceToken: string;
 
   @Prop({ nullable: true })
+  notificationToken: string;
+
+  @Prop({ nullable: true })
   deviceType: 'ios' | 'android';
 
   @Prop({ nullable: true })
