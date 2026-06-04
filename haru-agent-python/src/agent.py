@@ -31,9 +31,10 @@ logger = logging.getLogger("agent")
 load_dotenv(".env.local")
 
 CONTROL_INSTRUCTIONS = """
-If the user clearly wants to end the call, call request_hangup immediately.
-Do not say goodbye first in plain text.
-If unclear, ask one short confirmation.
+Only call request_hangup when the user clearly asks to end the call.
+Do not treat wake confirmations like "일어났어", "응", "알겠어", or "준비할게" as hangup requests.
+After the user says they are awake, briefly care for them with weather/schedule context and wait for one more response before ending.
+If the user's intent to end the call is unclear, ask one short confirmation.
 """
 
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-live-preview"
@@ -47,9 +48,9 @@ DEFAULT_USER_SILENCE_NUDGE_SECONDS = 5.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
 DEFAULT_NO_RESPONSE_RETRY_MINUTES = 3
 DEFAULT_USER_SILENCE_NUDGE_TEXTS = (
-    "설마 다시 자는 거 아니지? 눈 뜨고 있으면 짧게라도 대답해줘.",
-    "지금 대답 없으면 다시 잠든 걸로 볼게. 일어나 있으면 한 마디만 해줘.",
-    "마지막 확인이야. 일어났으면 짧게라도 응답해줘.",
+    "일어나 있으면 짧게라도 대답해줘. 목소리 한 번만 확인할게.",
+    "눈 뜨고 있으면 한마디만 해줘. 바로 준비할 수 있게 같이 챙겨줄게.",
+    "마지막으로 한 번만 확인할게. 일어났으면 짧게 대답해줘.",
 )
 
 _vad_instance = None
@@ -374,7 +375,6 @@ def is_explicit_hangup_request(text: str) -> bool:
         "통화 종료",
         "끊어 줘",
         "끊어줘",
-        "이만",
         "그만하자",
         "끝내자",
         "hang up",
@@ -389,9 +389,9 @@ def get_vad():
     if _vad_instance is None:
         _vad_instance = silero.VAD.load(
             min_speech_duration=0.18,
-            min_silence_duration=0.9,
+            min_silence_duration=0.55,
             prefix_padding_duration=0.35,
-            activation_threshold=0.72,
+            activation_threshold=0.63,
         )
     return _vad_instance
 
@@ -827,8 +827,8 @@ async def entrypoint(ctx: JobContext):
         "allow_interruptions": True,
         "min_interruption_duration": 1.0,
         "min_interruption_words": 2,
-        "min_endpointing_delay": 0.85,
-        "max_endpointing_delay": 2.4,
+        "min_endpointing_delay": 0.45,
+        "max_endpointing_delay": 1.2,
         "false_interruption_timeout": 1.2,
         "resume_false_interruption": True,
         "min_consecutive_speech_delay": 0.15,
@@ -940,7 +940,7 @@ async def entrypoint(ctx: JobContext):
                 )
                 return
 
-            await asyncio.sleep(0.35)
+            await asyncio.sleep(0.1)
             if call_type == "retry":
                 initial_greeting_instructions = (
                     "이번 통화는 재통화다. 사용자가 아직 못 일어났거나 다시 전화해 달라고 "

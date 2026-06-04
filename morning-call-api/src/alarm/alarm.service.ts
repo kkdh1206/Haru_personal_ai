@@ -17,7 +17,7 @@ import { FcmService } from 'src/fcm/fcm.service';
 
 const HARU_NAME = '하루';
 const HARI_NAME = '하리';
-const HARU_VOICE = 'Rasalgethi';
+const HARU_VOICE = 'Charon';
 const HARI_VOICE = 'Leda';
 const DEFAULT_WAKE_INTENSITY = 'gentle';
 const DEFAULT_RETRY_MINUTES = 3;

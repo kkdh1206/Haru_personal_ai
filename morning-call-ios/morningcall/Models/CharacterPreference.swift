@@ -47,7 +47,7 @@ enum CharacterPreference: String, CaseIterable, Codable {
     var voiceName: String {
         switch self {
         case .haru:
-            return "Rasalgethi"
+            return "Charon"
         case .hari:
             return "Leda"
         }
