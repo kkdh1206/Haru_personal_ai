@@ -56,6 +56,27 @@ describe('UserService', () => {
     );
   });
 
+  it('stores a separate iOS notification token', async () => {
+    await createService().updateDeviceToken(
+      'user-1',
+      'voip-token',
+      'ios',
+      'notification-token',
+    );
+
+    expect(findByIdAndUpdate).toHaveBeenCalledWith(
+      { _id: 'user-1' },
+      {
+        $set: {
+          deviceToken: 'voip-token',
+          deviceType: 'ios',
+          notificationToken: 'notification-token',
+        },
+      },
+      { new: true },
+    );
+  });
+
   it('exchanges Android calendar auth code and stores encrypted tokens', async () => {
     getToken.mockResolvedValue({
       tokens: {

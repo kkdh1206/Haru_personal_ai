@@ -50,6 +50,7 @@ export class UserController {
       req.user._id,
       dto.deviceToken,
       dto.deviceType ?? 'ios',
+      dto.notificationToken,
     );
     if (!updated) return 'failed';
     return 'updated';

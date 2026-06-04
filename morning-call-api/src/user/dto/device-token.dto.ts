@@ -6,6 +6,11 @@ export class DeviceTokenDto {
   @IsString()
   deviceToken: string;
 
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  notificationToken?: string;
+
   @ApiProperty({ required: false, enum: ['ios', 'android'], default: 'ios' })
   @IsOptional()
   @IsIn(['ios', 'android'])

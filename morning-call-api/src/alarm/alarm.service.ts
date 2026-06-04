@@ -324,14 +324,29 @@ export class AlarmService {
       };
     }
 
+    const followupToken =
+      deviceToken.deviceType === 'android'
+        ? deviceToken.deviceToken
+        : deviceToken.notificationToken;
+
+    if (!followupToken) {
+      alarm.retryLimitNoticeDate = todayKey;
+      await alarm.save();
+      return {
+        success: true,
+        skipped: true,
+        message: 'Notification token not found.',
+      };
+    }
+
     const pushResult =
       deviceToken.deviceType === 'android'
         ? await this.fcmService.sendWakeFollowupPush(
-            deviceToken.deviceToken,
+            followupToken,
             DEFAULT_RETRY_LIMIT_MESSAGE,
           )
         : await this.apnsService.sendWakeFollowupPush(
-            deviceToken.deviceToken,
+            followupToken,
             DEFAULT_RETRY_LIMIT_MESSAGE,
           );
 

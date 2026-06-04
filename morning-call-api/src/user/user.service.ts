@@ -98,20 +98,22 @@ export class UserService {
     userId: string,
     deviceToken: string,
     deviceType: 'ios' | 'android' = 'ios',
+    notificationToken?: string,
   ) {
+    const $set: Partial<User> = { deviceToken, deviceType };
+    if (notificationToken) {
+      $set.notificationToken = notificationToken;
+    }
+
     return this.userModel
-      .findByIdAndUpdate(
-        { _id: userId },
-        { $set: { deviceToken, deviceType } },
-        { new: true },
-      )
+      .findByIdAndUpdate({ _id: userId }, { $set }, { new: true })
       .lean();
   }
 
   getUserDeviceToken(userId: string) {
     return this.userModel
       .findById(userId)
-      .select('deviceToken deviceType')
+      .select('deviceToken notificationToken deviceType')
       .lean();
   }
 
