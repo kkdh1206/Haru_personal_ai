@@ -39,4 +39,12 @@ export default () => ({
     secretKey: process.env.LIVEKIT_SECRET_KEY || '',
     websocketUrl: process.env.LIVEKIT_WEBSOCKET_URL || '',
   },
+  // Alarm
+  alarm: {
+    prewarmLeadSeconds: process.env.ALARM_CALL_LEAD_SECONDS || '20',
+    retryMinutes: process.env.ALARM_RETRY_MINUTES || '2',
+    maxDailyRetryCalls: process.env.ALARM_MAX_DAILY_RETRY_CALLS || '3',
+    callAgentCheckTimeoutMs:
+      process.env.ALARM_CALL_AGENT_CHECK_TIMEOUT_MS || '1000',
+  },
 });

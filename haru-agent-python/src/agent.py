@@ -34,11 +34,13 @@ CONTROL_INSTRUCTIONS = """
 Only call request_hangup when the user clearly asks to end the call.
 Do not treat wake confirmations like "일어났어", "응", "알겠어", or "준비할게" as hangup requests.
 After the user says they are awake, briefly care for them with weather/schedule context and wait for one more response before ending.
+Before ending after the user is awake, remind them of one final practical item like water, clothes, umbrella, or first schedule, then encourage them briefly.
+If the assistant already said a goodbye and the user stays silent, end the call naturally.
 If the user's intent to end the call is unclear, ask one short confirmation.
 """
 
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-live-preview"
-DEFAULT_NO_ANSWER_TIMEOUT_SECONDS = 45
+DEFAULT_NO_ANSWER_TIMEOUT_SECONDS = 90
 DEFAULT_HANGUP_GRACE_SECONDS = 0.1
 DEFAULT_GEMINI_THINKING_MODE = "disabled"
 DEFAULT_MAX_MEMORY_CONTEXT_CHARS = 500
@@ -46,11 +48,11 @@ DEFAULT_MAX_CONVERSATION_MESSAGES = 8
 DEFAULT_MAX_RETRY_CALLS = 3
 DEFAULT_USER_SILENCE_NUDGE_SECONDS = 5.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
-DEFAULT_NO_RESPONSE_RETRY_MINUTES = 3
+DEFAULT_NO_RESPONSE_RETRY_MINUTES = 2
 DEFAULT_USER_SILENCE_NUDGE_TEXTS = (
-    "일어나 있으면 짧게 대답해줘. 목소리만 확인할게.",
-    "눈 뜨고 있으면 지금 몸부터 일으켜. 한마디만 해줘.",
-    "마지막 확인이야. 대답 없으면 다시 잠든 걸로 보고 더 세게 깨울게.",
+    "대답한 거면 좋아. 근데 자는 거 아니지? 지금 침대에서 몸부터 세워.",
+    "눈 뜬 거 맞으면 앉아서 물 한 모금 마셔. 했으면 했다고 말해.",
+    "마지막 확인이야. 앉았다는 말 없으면 아직 누워 있는 걸로 보고 다시 전화할게.",
 )
 
 _vad_instance = None
@@ -304,7 +306,28 @@ def infer_wake_status(
     if not user_texts:
         return "no_response", False
 
-    awake_patterns = (
+    action_awake_patterns = (
+        "앉았",
+        "앉아있",
+        "몸 세웠",
+        "몸부터 세웠",
+        "일어섰",
+        "침대에서 나왔",
+        "침대 밖",
+        "물 마셨",
+        "물마셨",
+        "물 먹었",
+        "물먹었",
+        "세수",
+        "화장실",
+        "책상",
+        "awake",
+        "sat up",
+        "out of bed",
+        "got up",
+        "drank water",
+    )
+    weak_awake_patterns = (
         "일어났",
         "깼",
         "깨었",
@@ -313,7 +336,6 @@ def infer_wake_status(
         "일어날게",
         "일어날게요",
         "준비할게",
-        "awake",
         "i'm up",
         "im up",
     )
@@ -349,10 +371,13 @@ def infer_wake_status(
     if any(pattern in joined for pattern in retry_patterns):
         return "retry_requested", True
 
-    if any(pattern in joined for pattern in awake_patterns):
+    if any(pattern in joined for pattern in action_awake_patterns):
         return "awake", True
 
     if any(pattern in joined for pattern in sleepy_patterns):
+        return "not_awake", True
+
+    if any(pattern in joined for pattern in weak_awake_patterns):
         return "not_awake", True
 
     if all(text in {word.lower() for word in filler_words} for text in user_texts):
@@ -382,6 +407,24 @@ def is_explicit_hangup_request(text: str) -> bool:
         "stop the call",
     )
     return any(pattern in normalized for pattern in hangup_patterns)
+
+
+def is_assistant_goodbye(text: str) -> bool:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+
+    goodbye_patterns = (
+        "좋은 하루",
+        "잘 보내",
+        "안녕",
+        "끊을게",
+        "이제 끊",
+        "마무리할게",
+        "bye",
+        "goodbye",
+    )
+    return any(pattern in normalized for pattern in goodbye_patterns)
 
 
 def get_vad():
@@ -529,7 +572,7 @@ class Assistant(Agent):
 
     @function_tool
     async def request_retry_call(
-        self, context: RunContext, retry_minutes: int = 3
+        self, context: RunContext, retry_minutes: int = DEFAULT_NO_RESPONSE_RETRY_MINUTES
     ):
         """
         사용자가 아직 못 일어났고 몇 분 뒤 다시 전화해 달라고 요청할 때 사용합니다.
@@ -690,6 +733,7 @@ async def entrypoint(ctx: JobContext):
     agent_is_speaking = False
     user_is_speaking = False
     silence_nudge_count = 0
+    assistant_said_goodbye = False
 
     def start_background_task(coro, *, name: str | None = None) -> asyncio.Task:
         task = asyncio.create_task(coro, name=name)
@@ -1033,6 +1077,8 @@ async def entrypoint(ctx: JobContext):
 
     @session.on("conversation_item_added")
     def _on_conversation_item_added(ev):
+        nonlocal assistant_said_goodbye
+
         item = getattr(ev, "item", None)
         if not isinstance(item, ChatMessage):
             return
@@ -1045,8 +1091,10 @@ async def entrypoint(ctx: JobContext):
         append_conversation_message(conversation_messages, role, text)
 
         if role == "assistant":
+            assistant_said_goodbye = is_assistant_goodbye(text)
             logger.info(f"🤖 Gemini says: {text}")
         else:
+            assistant_said_goodbye = False
             clear_waiting_for_user_response(reset_silence_nudges=True)
             logger.info(f"👤 User said: {text}")
             if not hangup_requested and is_explicit_hangup_request(text):
@@ -1184,6 +1232,10 @@ async def entrypoint(ctx: JobContext):
                 await asyncio.sleep(min(nudge_seconds - elapsed, 0.5))
                 continue
 
+            if assistant_said_goodbye:
+                _trigger_hangup("👋 Ending call after goodbye and user silence")
+                return
+
             if silence_nudge_count >= max_nudges:
                 result = await schedule_retry_after_user_silence()
                 if result and result.get("action") == "retry_limit_reached":
@@ -1214,13 +1266,14 @@ async def entrypoint(ctx: JobContext):
                 "사용자가 통화 중 몇 초간 대답이 없다. "
                 "자는지 확인하면서 깨우는 말을 한국어로 한두 문장만 말해. "
                 "직전 표현을 반복하지 말고 리듬, 단어, 압박 수위를 바꿔라. "
-                "강하게 깨우는 맥락이면 '일어나, 일어나'처럼 반복 호출하거나 짜증 섞인 재촉을 해도 된다. "
-                "다만 인신공격, 혐오, 위협은 하지 마라. "
+                "단순히 대답만 요구하지 말고 지금 앉기, 몸 세우기, 물 한 모금 마시기 중 하나를 바로 시켜라. "
+                "강하게 깨우는 맥락이면 '일어나, 일어나'처럼 반복 호출하거나 '야', '진짜', '아니 지금 뭐해' 같은 짜증 섞인 감탄과 재촉을 해도 된다. "
+                "다만 특정 정체성 비하, 혐오, 위협은 하지 마라. "
                 f"현재 단계 참고 문구: {nudge_text}"
             )
             nudge_trigger_text = (
                 f"시스템 트리거: 사용자가 통화 중 {nudge_seconds:.0f}초간 대답이 없다. "
-                "이 문장을 언급하지 말고, 한국어로 짧고 다르게 깨워라. "
+                "이 문장을 언급하지 말고, 한국어로 짧고 다르게 깨워라. 앉기나 물 마시기 같은 행동을 하나 시켜라. "
                 f"참고 문구: {nudge_text}"
             )
 

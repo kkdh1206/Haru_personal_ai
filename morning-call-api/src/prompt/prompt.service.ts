@@ -7,14 +7,16 @@ import { buildMorningCallPrompt } from './prompt';
 
 @Injectable()
 export class PromptService {
-  private readonly maxDailyRetryCalls = 3;
-
   constructor(
     @Inject(forwardRef(() => AlarmService))
     private readonly alarmService: AlarmService,
     private readonly calendarService: CalendarService,
     private readonly informationService: InformationService,
   ) {}
+
+  private getMaxDailyRetryCalls() {
+    return this.alarmService.getMaxDailyRetryCalls();
+  }
 
   private formatScheduleTime(value: string, timeZone: string) {
     if (!value) {
@@ -41,30 +43,70 @@ export class PromptService {
     }));
   }
 
-  private formatWeatherInfo(weather: any) {
+  private formatWeatherInfo(weather: any, timeZone: string) {
     if (!weather) {
       return '정보 없음';
     }
 
+    const observedAt = this.formatWeatherObservedAt(
+      weather.observed_at,
+      timeZone,
+    );
+    const locationLabel = [weather.city, weather.country]
+      .filter(Boolean)
+      .join(', ');
     const parts = [
+      locationLabel ? `${locationLabel} 기준` : null,
+      observedAt ? `관측 ${observedAt}` : null,
       weather.weather,
-      weather.temperature != null ? `현재 ${weather.temperature}도` : null,
-      weather.feels_like != null ? `체감 ${weather.feels_like}도` : null,
+      weather.temperature != null
+        ? `현재 ${this.formatWeatherNumber(weather.temperature)}도`
+        : null,
+      weather.feels_like != null
+        ? `체감 ${this.formatWeatherNumber(weather.feels_like)}도`
+        : null,
       weather.temp_min != null && weather.temp_max != null
-        ? `주변 기온 ${weather.temp_min}~${weather.temp_max}도`
+        ? `주변 기온 ${this.formatWeatherNumber(
+            weather.temp_min,
+          )}~${this.formatWeatherNumber(weather.temp_max)}도`
         : null,
       weather.humidity != null ? `습도 ${weather.humidity}%` : null,
-      weather.wind_speed != null ? `바람 ${weather.wind_speed}m/s` : null,
-      weather.wind_gust != null ? `돌풍 ${weather.wind_gust}m/s` : null,
+      weather.wind_speed != null
+        ? `바람 ${this.formatWeatherNumber(weather.wind_speed)}m/s`
+        : null,
+      weather.wind_gust != null
+        ? `돌풍 ${this.formatWeatherNumber(weather.wind_gust)}m/s`
+        : null,
       weather.cloudiness != null ? `구름 ${weather.cloudiness}%` : null,
       weather.visibility != null
         ? `가시거리 ${(weather.visibility / 1000).toFixed(1)}km`
         : null,
-      weather.rain_1h != null ? `최근 1시간 비 ${weather.rain_1h}mm` : null,
-      weather.snow_1h != null ? `최근 1시간 눈 ${weather.snow_1h}mm` : null,
+      weather.rain_1h != null
+        ? `최근 1시간 비 ${this.formatWeatherNumber(weather.rain_1h)}mm`
+        : null,
+      weather.snow_1h != null
+        ? `최근 1시간 눈 ${this.formatWeatherNumber(weather.snow_1h)}mm`
+        : null,
     ].filter(Boolean);
 
     return parts.length ? parts.join(', ') : '정보 없음';
+  }
+
+  private formatWeatherNumber(value: number) {
+    return Number(value).toFixed(1).replace(/\.0$/, '');
+  }
+
+  private formatWeatherObservedAt(value?: string | null, timeZone = 'Asia/Seoul') {
+    if (!value) {
+      return '';
+    }
+
+    const parsed = DateTime.fromISO(value, { setZone: true });
+    if (!parsed.isValid) {
+      return '';
+    }
+
+    return parsed.setZone(timeZone || 'Asia/Seoul').toFormat('HH:mm');
   }
 
   async getPrompt(
@@ -81,7 +123,7 @@ export class PromptService {
     const timeZone = user.timeZone || 'Asia/Seoul';
     const retryCallsRemaining = Math.max(
       0,
-      this.maxDailyRetryCalls - (alarm.dailyRetryCount || 0),
+      this.getMaxDailyRetryCalls() - (alarm.dailyRetryCount || 0),
     );
     const now = DateTime.now().setZone(timeZone);
     const todayLabel = now.toFormat('yyyy년 MM월 dd일 cccc');
@@ -99,7 +141,7 @@ export class PromptService {
     const weather = await this.informationService.getCurrentWeather(
       user.location || 'Seoul',
     );
-    const weatherInfo = this.formatWeatherInfo(weather);
+    const weatherInfo = this.formatWeatherInfo(weather, timeZone);
 
     // 3. 일정, 날씨를 바탕으로 프롬프트 구성
     const prompt = buildMorningCallPrompt({
@@ -144,7 +186,7 @@ export class PromptService {
     const weather = await this.informationService.getCurrentWeather(
       user.location || 'Seoul',
     );
-    const weatherInfo = this.formatWeatherInfo(weather);
+    const weatherInfo = this.formatWeatherInfo(weather, timeZone);
 
     // 3. 일정, 날씨를 바탕으로 프롬프트 구성
     const prompt = buildMorningCallPrompt({
@@ -155,7 +197,7 @@ export class PromptService {
       wakeIntensity,
       callType: 'initial',
       retryCount: 0,
-      retryCallsRemaining: this.maxDailyRetryCalls,
+      retryCallsRemaining: this.getMaxDailyRetryCalls(),
       customMessage: user.customMessage,
       todayLabel,
       currentTimeLabel,

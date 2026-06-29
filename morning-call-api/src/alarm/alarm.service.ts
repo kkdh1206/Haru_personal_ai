@@ -20,14 +20,23 @@ const HARI_NAME = '하리';
 const HARU_VOICE = 'Charon';
 const HARI_VOICE = 'Leda';
 const DEFAULT_WAKE_INTENSITY = 'gentle';
-const DEFAULT_RETRY_MINUTES = 3;
+const DEFAULT_PREWARM_LEAD_SECONDS = 20;
+const DEFAULT_RETRY_MINUTES = 2;
 const MAX_DAILY_RETRY_CALLS = 3;
+const DEFAULT_CALL_AGENT_CHECK_TIMEOUT_MS = 1000;
 const DEFAULT_RETRY_LIMIT_MESSAGE =
   '전화를 여러 번 드렸는데 연결이 잘 안 돼서 메시지를 남겨요. 오늘 하루도 무사히 잘 보내길 바랄게요.';
+
+type AlarmCallType = 'initial' | 'retry';
+type AlarmJobAction = 'prewarm' | 'call';
 
 @Injectable()
 export class AlarmService {
   private readonly livekitUrl: string;
+  private readonly prewarmLeadMs: number;
+  private readonly defaultRetryMinutes: number;
+  private readonly maxDailyRetryCalls: number;
+  private readonly callAgentCheckTimeoutMs: number;
 
   constructor(
     private readonly livekit: LivekitService,
@@ -40,6 +49,43 @@ export class AlarmService {
     private readonly cs: ConfigService,
   ) {
     this.livekitUrl = this.cs.getOrThrow<string>('livekit.websocketUrl');
+    this.prewarmLeadMs =
+      this.getNonNegativeConfigNumber(
+        'alarm.prewarmLeadSeconds',
+        DEFAULT_PREWARM_LEAD_SECONDS,
+      ) * 1000;
+    this.defaultRetryMinutes = this.getPositiveConfigNumber(
+      'alarm.retryMinutes',
+      DEFAULT_RETRY_MINUTES,
+    );
+    this.maxDailyRetryCalls = this.getPositiveConfigNumber(
+      'alarm.maxDailyRetryCalls',
+      MAX_DAILY_RETRY_CALLS,
+    );
+    this.callAgentCheckTimeoutMs = this.getPositiveConfigNumber(
+      'alarm.callAgentCheckTimeoutMs',
+      DEFAULT_CALL_AGENT_CHECK_TIMEOUT_MS,
+    );
+  }
+
+  getMaxDailyRetryCalls() {
+    return this.maxDailyRetryCalls;
+  }
+
+  private getPositiveConfigNumber(path: string, defaultValue: number) {
+    const value = Number(this.cs.get<string | number>(path));
+    if (!Number.isFinite(value) || value <= 0) {
+      return defaultValue;
+    }
+    return value;
+  }
+
+  private getNonNegativeConfigNumber(path: string, defaultValue: number) {
+    const value = Number(this.cs.get<string | number>(path));
+    if (!Number.isFinite(value) || value < 0) {
+      return defaultValue;
+    }
+    return value;
   }
 
   private normalizeAlarmPayload(dto: Partial<AlarmDto | TestCallDto>) {
@@ -173,25 +219,7 @@ export class AlarmService {
     if (alarm.repeatDays.length) {
       // 반복 알람 → 각 요일별 개별 job
       await Promise.all(
-        alarm.repeatDays.map(async (day) => {
-          const next = this.nextDayOfWeek(day, hour, minute, tz);
-          const delay = next.getTime() - Date.now();
-          const job = await this.alarmQueue.add(
-            'trigger',
-            { alarmId: alarm._id, day, callType: 'initial', retryCount: 0 },
-            {
-              jobId: `${alarm._id}-${day}`,
-              delay,
-              removeOnComplete: true,
-            },
-          );
-          const state = await job.getState();
-          console.log(
-            `[Alarm] scheduled → ${
-              job.id
-            } at ${next.toISOString()} delay=${delay} state=${state}`,
-          );
-        }),
+        alarm.repeatDays.map((day) => this.scheduleRepeatDay(alarm, day)),
       );
     } else {
       // 1회성 알람
@@ -201,28 +229,85 @@ export class AlarmService {
         tz,
         alarm.targetDate || undefined,
       );
-      const delay = next.getTime() - Date.now();
-      const job = await this.alarmQueue.add(
-        'trigger',
-        {
-          alarmId: alarm._id,
+      await this.scheduleCallJobs({
+        baseJobId: `${alarm._id}-once`,
+        callAt: next,
+        data: {
+          alarmId: alarm._id.toString(),
           oneTime: true,
           callType: 'initial',
           retryCount: 0,
         },
+      });
+    }
+  }
+
+  async scheduleNextRepeatAlarm(alarm: AlarmDocument, day: number) {
+    return this.scheduleRepeatDay(alarm, day);
+  }
+
+  private async scheduleRepeatDay(alarm: AlarmDocument, day: number) {
+    const [hour, minute] = alarm.time.split(':').map(Number);
+    const next = this.nextDayOfWeek(day, hour, minute, alarm.timeZone);
+    return this.scheduleCallJobs({
+      baseJobId: `${alarm._id}-${day}`,
+      callAt: next,
+      data: {
+        alarmId: alarm._id.toString(),
+        day,
+        callType: 'initial',
+        retryCount: 0,
+      },
+    });
+  }
+
+  private async scheduleCallJobs({
+    baseJobId,
+    callAt,
+    data,
+  }: {
+    baseJobId: string;
+    callAt: Date;
+    data: Record<string, any>;
+  }) {
+    const prewarmAt = new Date(callAt.getTime() - this.prewarmLeadMs);
+    const prewarmDelay = Math.max(0, prewarmAt.getTime() - Date.now());
+    const callDelay = Math.max(0, callAt.getTime() - Date.now());
+
+    const [prewarmJob, callJob] = await Promise.all([
+      this.alarmQueue.add(
+        'trigger',
         {
-          jobId: `${alarm._id}-once`,
-          delay,
+          ...data,
+          action: 'prewarm' as AlarmJobAction,
+        },
+        {
+          jobId: `${baseJobId}-prewarm`,
+          delay: prewarmDelay,
           removeOnComplete: true,
         },
-      );
-      const state = await job.getState();
-      console.log(
-        `[Alarm] scheduled → ${
-          job.id
-        } at ${next.toISOString()} delay=${delay} state=${state}`,
-      );
-    }
+      ),
+      this.alarmQueue.add(
+        'trigger',
+        {
+          ...data,
+          action: 'call' as AlarmJobAction,
+        },
+        {
+          jobId: `${baseJobId}-call`,
+          delay: callDelay,
+          removeOnComplete: true,
+        },
+      ),
+    ]);
+    const prewarmState = await prewarmJob.getState();
+    const callState = await callJob.getState();
+    console.log(
+      `[Alarm] prewarm scheduled → ${prewarmJob.id} at ${prewarmAt.toISOString()} delay=${prewarmDelay} state=${prewarmState}`,
+    );
+    console.log(
+      `[Alarm] call scheduled → ${callJob.id} at ${callAt.toISOString()} delay=${callDelay} state=${callState}`,
+    );
   }
 
   /* ---------- 헬퍼 ---------- */
@@ -269,10 +354,20 @@ export class AlarmService {
   private async clearJobs(alarmId: string) {
     const jobIds = [
       `${alarmId}-once`,
+      `${alarmId}-once-prewarm`,
+      `${alarmId}-once-call`,
       `${alarmId}-retry`,
+      `${alarmId}-retry-prewarm`,
+      `${alarmId}-retry-call`,
       ...Array.from({ length: 7 }, (_, day) => `${alarmId}-${day}`),
+      ...Array.from({ length: 7 }, (_, day) => `${alarmId}-${day}-prewarm`),
+      ...Array.from({ length: 7 }, (_, day) => `${alarmId}-${day}-call`),
     ];
 
+    await this.removeJobs(jobIds);
+  }
+
+  private async removeJobs(jobIds: string[]) {
     await Promise.all(
       jobIds.map(async (jobId) => {
         const job = await this.alarmQueue.getJob(jobId);
@@ -362,10 +457,30 @@ export class AlarmService {
     };
   }
 
-  // user에게 전화걸기 -> 알람 설정한 시간이 되었을때 호출
-  async call(
+  private async buildPromptForAlarm(
+    normalizedAlarm: Record<string, any>,
+    callType: AlarmCallType,
+    retryCount: number,
+  ) {
+    const alarmId = normalizedAlarm._id.toString();
+    const userId = normalizedAlarm.userId.toString();
+
+    try {
+      return await this.promptService.getPrompt(alarmId, callType, retryCount);
+    } catch (error) {
+      console.error(`[Alarm] prompt failed → ${alarmId}`, error);
+      const user = await this.userService.findOne(new Types.ObjectId(userId));
+      return this.fallbackPrompt(
+        user?.language,
+        user?.name,
+        normalizedAlarm.role,
+      );
+    }
+  }
+
+  async prewarmCall(
     alarm,
-    options: { callType?: 'initial' | 'retry'; retryCount?: number } = {},
+    options: { callType?: AlarmCallType; retryCount?: number } = {},
   ) {
     const normalizedAlarm = this.serializeAlarm(alarm);
     if (!normalizedAlarm?._id || !normalizedAlarm?.userId) {
@@ -374,6 +489,35 @@ export class AlarmService {
 
     const callType = options.callType || 'initial';
     const retryCount = options.retryCount ?? 0;
+    const alarmId = normalizedAlarm._id.toString();
+    const userId = normalizedAlarm.userId.toString();
+    const prompt = await this.buildPromptForAlarm(
+      normalizedAlarm,
+      callType,
+      retryCount,
+    );
+
+    await this.livekit.prewarmAgent(
+      alarmId,
+      prompt,
+      normalizedAlarm.voice,
+      userId,
+      normalizedAlarm.timeZone || 'Asia/Seoul',
+      alarmId,
+      callType,
+      retryCount,
+    );
+  }
+
+  // user에게 전화걸기 -> 알람 설정한 시간이 되었을때 호출
+  async call(
+    alarm,
+    options: { callType?: AlarmCallType; retryCount?: number } = {},
+  ) {
+    const normalizedAlarm = this.serializeAlarm(alarm);
+    if (!normalizedAlarm?._id || !normalizedAlarm?.userId) {
+      throw new Error('Invalid alarm payload');
+    }
 
     // 0. 유저 ID 가져오기
     const alarmId = normalizedAlarm._id.toString();
@@ -385,38 +529,20 @@ export class AlarmService {
       throw new Error(`Device token not found for user ${userId}`);
     }
 
-    // 2. 프롬프트 생성
-    let prompt: string;
-    try {
-      prompt = await this.promptService.getPrompt(
-        alarmId,
-        callType,
-        retryCount,
-      );
-    } catch (error) {
-      console.error(`[Alarm] prompt failed → ${alarmId}`, error);
-      const user = await this.userService.findOne(new Types.ObjectId(userId));
-      prompt = this.fallbackPrompt(
-        user?.language,
-        user?.name,
-        normalizedAlarm.role,
-      );
-    }
+    // 2. prewarm 실패가 있어도 정시 푸시가 사용할 방은 보장한다.
+    await this.livekit.ensureRoom(alarmId);
 
-    // 3. 에이전트 준비
+    // 3. 정시 푸시를 막지 않도록 에이전트 확인은 짧게만 한다.
     try {
-      await this.livekit.readyAgent(
+      await this.livekit.waitForAgentParticipant(
         alarmId,
-        prompt,
-        normalizedAlarm.voice,
-        userId,
-        normalizedAlarm.timeZone || 'Asia/Seoul',
-        alarmId,
-        callType,
-        retryCount,
+        this.callAgentCheckTimeoutMs,
       );
     } catch (error) {
-      console.error(`[Alarm] LiveKit agent failed → ${alarmId}`, error);
+      console.warn(
+        `[Alarm] LiveKit agent not visible before push → ${alarmId}`,
+        error,
+      );
     }
 
     // 4. 유저 용 Livekit 토큰 생성
@@ -463,7 +589,7 @@ export class AlarmService {
     );
 
     // 2. 에이전트 준비
-    await this.livekit.readyAgent(
+    await this.livekit.ensureAgentReadyForTest(
       user._id + '_test',
       prompt,
       normalizedTest.voice,
@@ -481,7 +607,7 @@ export class AlarmService {
     };
   }
 
-  async scheduleRetryCall(alarmId: string, retryMinutes = 3) {
+  async scheduleRetryCall(alarmId: string, retryMinutes?: number) {
     const alarm = await this.alarmModel.findById(alarmId);
     if (!alarm) {
       throw new Error(`Alarm not found: ${alarmId}`);
@@ -492,12 +618,15 @@ export class AlarmService {
 
   private async scheduleRetryCallForAlarm(
     alarm: AlarmDocument,
-    retryMinutes = DEFAULT_RETRY_MINUTES,
+    retryMinutes?: number,
   ) {
-    const normalizedRetryMinutes = Math.min(Math.max(retryMinutes, 1), 30);
+    const normalizedRetryMinutes = Math.min(
+      Math.max(retryMinutes ?? this.defaultRetryMinutes, 1),
+      30,
+    );
     await this.resetDailyRetryStateIfNeeded(alarm);
 
-    if (alarm.dailyRetryCount >= MAX_DAILY_RETRY_CALLS) {
+    if (alarm.dailyRetryCount >= this.maxDailyRetryCalls) {
       return {
         success: false,
         limitReached: true,
@@ -509,35 +638,26 @@ export class AlarmService {
 
     const alarmId = alarm._id.toString();
     const retryCount = alarm.dailyRetryCount + 1;
-    const existingRetryJob = await this.alarmQueue.getJob(`${alarmId}-retry`);
-    if (existingRetryJob) {
-      await existingRetryJob.remove();
-    }
+    await this.removeJobs([
+      `${alarmId}-retry`,
+      `${alarmId}-retry-prewarm`,
+      `${alarmId}-retry-call`,
+    ]);
 
     const delay = normalizedRetryMinutes * 60 * 1000;
     const scheduledAt = new Date(Date.now() + delay);
 
-    const job = await this.alarmQueue.add(
-      'trigger',
-      {
+    await this.scheduleCallJobs({
+      baseJobId: `${alarmId}-retry`,
+      callAt: scheduledAt,
+      data: {
         alarmId,
         retry: true,
         callType: 'retry',
         retryCount,
         retryMinutes: normalizedRetryMinutes,
       },
-      {
-        jobId: `${alarmId}-retry`,
-        delay,
-        removeOnComplete: true,
-      },
-    );
-    const state = await job.getState();
-    console.log(
-      `[Alarm] retry scheduled → ${
-        job.id
-      } at ${scheduledAt.toISOString()} delay=${delay} state=${state}`,
-    );
+    });
 
     alarm.dailyRetryCount = retryCount;
     alarm.lastRetryScheduledAt = scheduledAt;
@@ -567,12 +687,11 @@ export class AlarmService {
     await alarm.save();
 
     if (dto.wakeStatus === 'awake') {
-      const existingRetryJob = await this.alarmQueue.getJob(
+      await this.removeJobs([
         `${dto.alarmId}-retry`,
-      );
-      if (existingRetryJob) {
-        await existingRetryJob.remove();
-      }
+        `${dto.alarmId}-retry-prewarm`,
+        `${dto.alarmId}-retry-call`,
+      ]);
       return {
         success: true,
         action: 'none',
@@ -581,7 +700,7 @@ export class AlarmService {
       };
     }
 
-    const retryMinutes = dto.retryMinutes ?? DEFAULT_RETRY_MINUTES;
+    const retryMinutes = dto.retryMinutes ?? this.defaultRetryMinutes;
     const retryResult = await this.scheduleRetryCallForAlarm(
       alarm,
       retryMinutes,
@@ -601,7 +720,7 @@ export class AlarmService {
       success: true,
       action: 'retry_limit_reached',
       wakeStatus: dto.wakeStatus,
-      retryLimit: MAX_DAILY_RETRY_CALLS,
+      retryLimit: this.maxDailyRetryCalls,
       message: retryResult.message,
       push: pushResult,
     };

@@ -82,10 +82,7 @@ export class AlarmController {
     description: '현재 알람 통화가 끝난 뒤 몇 분 후 다시 전화하도록 예약합니다.',
   })
   async retry(@Body() dto: RetryAlarmDto) {
-    return this.alarmService.scheduleRetryCall(
-      dto.alarmId,
-      dto.retryMinutes ?? 3,
-    );
+    return this.alarmService.scheduleRetryCall(dto.alarmId, dto.retryMinutes);
   }
 
   @Post('call-outcome')

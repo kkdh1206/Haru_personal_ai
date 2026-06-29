@@ -29,7 +29,7 @@ export class LivekitService {
 
   constructor(private readonly configService: ConfigService) {}
 
-  async readyAgent(
+  async prewarmAgent(
     roomName: string,
     prompt: string,
     voice: string,
@@ -39,7 +39,73 @@ export class LivekitService {
     callType: 'initial' | 'retry' = 'initial',
     retryCount = 0,
   ) {
-    // 1. 방 먼저 생성 후
+    await this.ensureRoom(roomName);
+
+    const participant = await this.listParticipantsIfRoomExists(roomName);
+    if (participant.length > 0) {
+      console.log('[Livekit] Haru already exists in room', roomName);
+      return;
+    }
+
+    await this.agentDispatch.createDispatch(roomName, 'Haru', {
+      metadata: JSON.stringify({
+        prompt,
+        voice,
+        user_id: userId,
+        time_zone: timeZone,
+        alarm_id: alarmId || null,
+        call_type: callType,
+        retry_count: retryCount,
+      }),
+    });
+  }
+
+  async ensureAgentReadyForTest(
+    roomName: string,
+    prompt: string,
+    voice: string,
+    userId: string,
+    timeZone: string,
+    alarmId?: string,
+    callType: 'initial' | 'retry' = 'initial',
+    retryCount = 0,
+  ) {
+    await this.prewarmAgent(
+      roomName,
+      prompt,
+      voice,
+      userId,
+      timeZone,
+      alarmId,
+      callType,
+      retryCount,
+    );
+    await this.waitForAgentParticipant(roomName);
+  }
+
+  async waitForAgentParticipant(
+    roomName: string,
+    timeoutMs = LivekitService.AGENT_WAIT_TIMEOUT_MS,
+  ) {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      const participants = await this.listParticipantsIfRoomExists(roomName);
+      if (participants.length > 0) {
+        return;
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, LivekitService.AGENT_WAIT_INTERVAL_MS),
+      );
+    }
+
+    throw new Error(
+      `[Livekit] Timed out waiting for agent to join room ${roomName}`,
+    );
+  }
+
+  async ensureRoom(roomName: string) {
     try {
       await this.roomService.createRoom({
         name: roomName,
@@ -52,28 +118,6 @@ export class LivekitService {
       }
       console.log('[Livekit] room already exists', roomName);
     }
-
-    // 2. 에이전트가 이미 방에 들어가 있는지 확인
-    const participant = await this.listParticipantsIfRoomExists(roomName);
-    if (participant.length > 0) {
-      console.log('[Livekit] Haru already exists in room', roomName);
-      return;
-    }
-
-    // 3. 없다면 새로운 에이전트 디스패치
-    await this.agentDispatch.createDispatch(roomName, 'Haru', {
-      metadata: JSON.stringify({
-        prompt,
-        voice,
-        user_id: userId,
-        time_zone: timeZone,
-        alarm_id: alarmId || null,
-        call_type: callType,
-        retry_count: retryCount,
-      }),
-    });
-
-    await this.waitForAgentParticipant(roomName);
   }
 
   // TODO: 배포 전에 지울 것 (테스트 용)
@@ -94,25 +138,6 @@ export class LivekitService {
 
     const token = await at.toJwt();
     return token;
-  }
-
-  private async waitForAgentParticipant(roomName: string) {
-    const deadline = Date.now() + LivekitService.AGENT_WAIT_TIMEOUT_MS;
-
-    while (Date.now() < deadline) {
-      const participants = await this.listParticipantsIfRoomExists(roomName);
-      if (participants.length > 0) {
-        return;
-      }
-
-      await new Promise((resolve) =>
-        setTimeout(resolve, LivekitService.AGENT_WAIT_INTERVAL_MS),
-      );
-    }
-
-    throw new Error(
-      `[Livekit] Timed out waiting for agent to join room ${roomName}`,
-    );
   }
 
   private async listParticipantsIfRoomExists(roomName: string) {

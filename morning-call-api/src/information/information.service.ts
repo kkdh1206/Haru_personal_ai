@@ -67,7 +67,7 @@ export class InformationService {
 
   // 날씨 데이터 가져오기
   async getCurrentWeather(location: string) {
-    const cacheKey = `weather:v2:${location}`;
+    const cacheKey = `weather:v3:${location}`;
 
     return this.getOrSetCache(cacheKey, async () => {
       // getOrSetCache가 데이터 오래된거면 아래 함수 fetcher()를 수행시킴
@@ -88,6 +88,12 @@ export class InformationService {
         // 정제된 형태로 가공
         const refined = {
           city: data.name,
+          country: data.sys?.country,
+          requested_location: location,
+          observed_at: data.dt
+            ? new Date(data.dt * 1000).toISOString()
+            : null,
+          fetched_at: new Date().toISOString(),
           temperature: data.main.temp,
           feels_like: data.main.feels_like,
           temp_min: data.main.temp_min,
@@ -109,19 +115,24 @@ export class InformationService {
         console.error(`Error fetching weather for ${location}`, e);
         return null;
       }
+    }, {
+      maxAgeMs: 1000 * 60 * 15,
+      ttlSeconds: 60 * 30,
     });
   }
 
   private async getOrSetCache<T>(
     key: string,
     fetcher: () => Promise<T>,
+    options: { maxAgeMs?: number; ttlSeconds?: number } = {},
   ): Promise<T> {
     const cached = await this.redisClient.get(key);
     if (cached) {
       const parsed = JSON.parse(cached);
       const now = Date.now();
-      if (now - parsed.fetchedAt < 1000 * 60 * 60 * 24) {
-        // 하루 기준으로 최신 데이터가 존재한다면 갱신하지 않음
+      const maxAgeMs = options.maxAgeMs ?? 1000 * 60 * 60 * 3;
+      if (now - parsed.fetchedAt < maxAgeMs) {
+        // 설정된 최신성 기준 안이면 갱신하지 않음
         return parsed.data;
       }
     }
@@ -131,7 +142,7 @@ export class InformationService {
       key,
       JSON.stringify({ fetchedAt: Date.now(), data }),
       'EX',
-      60 * 60 * 30, // 30시간 TTL
+      options.ttlSeconds ?? 60 * 60 * 4, // 기본 4시간 TTL
     );
     return data;
   }
