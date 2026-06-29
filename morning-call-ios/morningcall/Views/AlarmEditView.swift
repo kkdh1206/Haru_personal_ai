@@ -275,6 +275,8 @@ struct AlarmEditView: View {
         switch value {
         case "aggressive", "gentle":
             return value
+        case "tsundere":
+            return "gentle"
         case "normal":
             return "gentle"
         case "firm":

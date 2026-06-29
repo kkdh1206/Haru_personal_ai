@@ -29,7 +29,7 @@ struct TestCallView: View {
                     HStack {
                         Text("깨우기 강도")
                         Spacer()
-                        Text(wakeIntensity == "firm" ? "강하게" : "다정하게")
+                        Text(wakeIntensityLabel)
                             .foregroundColor(.gray)
                     }
                 }
@@ -46,6 +46,15 @@ struct TestCallView: View {
             }
             .navigationTitle("테스트 전화")
             .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private var wakeIntensityLabel: String {
+        switch wakeIntensity {
+        case "firm":
+            return "강하게"
+        default:
+            return "다정하게"
         }
     }
 

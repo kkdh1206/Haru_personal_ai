@@ -29,6 +29,7 @@ const DEFAULT_RETRY_LIMIT_MESSAGE =
 
 type AlarmCallType = 'initial' | 'retry';
 type AlarmJobAction = 'prewarm' | 'call';
+type WakeIntensity = 'gentle' | 'firm';
 
 @Injectable()
 export class AlarmService {
@@ -89,8 +90,7 @@ export class AlarmService {
   }
 
   private normalizeAlarmPayload(dto: Partial<AlarmDto | TestCallDto>) {
-    const wakeIntensity =
-      dto.wakeIntensity === 'firm' ? 'firm' : DEFAULT_WAKE_INTENSITY;
+    const wakeIntensity = this.normalizeWakeIntensity(dto.wakeIntensity);
     const role = dto.role === HARI_NAME ? HARI_NAME : HARU_NAME;
 
     return {
@@ -100,6 +100,10 @@ export class AlarmService {
       voice: role === HARI_NAME ? HARI_VOICE : HARU_VOICE,
       wakeIntensity,
     };
+  }
+
+  private normalizeWakeIntensity(value?: string): WakeIntensity {
+    return value === 'firm' ? value : DEFAULT_WAKE_INTENSITY;
   }
 
   private getLocalDateKey(timeZone: string) {
@@ -151,8 +155,9 @@ export class AlarmService {
     const alarmObject =
       typeof alarm.toObject === 'function' ? alarm.toObject() : alarm;
 
-    const wakeIntensity =
-      alarmObject.wakeIntensity === 'firm' ? 'firm' : DEFAULT_WAKE_INTENSITY;
+    const wakeIntensity = this.normalizeWakeIntensity(
+      alarmObject.wakeIntensity,
+    );
     const role = alarmObject.role === HARI_NAME ? HARI_NAME : HARU_NAME;
 
     return {

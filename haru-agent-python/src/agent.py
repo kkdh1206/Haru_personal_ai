@@ -50,9 +50,9 @@ DEFAULT_USER_SILENCE_NUDGE_SECONDS = 5.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
 DEFAULT_NO_RESPONSE_RETRY_MINUTES = 2
 DEFAULT_USER_SILENCE_NUDGE_TEXTS = (
-    "대답한 거면 좋아. 근데 자는 거 아니지? 지금 침대에서 몸부터 세워.",
-    "눈 뜬 거 맞으면 앉아서 물 한 모금 마셔. 했으면 했다고 말해.",
-    "마지막 확인이야. 앉았다는 말 없으면 아직 누워 있는 걸로 보고 다시 전화할게.",
+    "첫 무응답이다. '일어나, 일어나, 일어나'처럼 반복 호출하고 앉기나 몸 세우기 미션을 바로 시킨다.",
+    "두 번째 무응답이다. '셋, 둘, 하나'처럼 짧게 카운트다운한 뒤 발 내리기나 물 마시기를 시킨다.",
+    "마지막 확인이다. 다시 반복 호출하고 더 강한 카운트다운으로 행동 확인을 요구한다.",
 )
 
 _vad_instance = None
@@ -588,7 +588,7 @@ class Assistant(Agent):
             return {
                 "success": False,
                 "action": "retry_limit_reached",
-                "message": "오늘은 더 이상 다시 전화할 수 없어. 지금 일어나야 해.",
+                "message": "나도 이제 더 전화 못 해. 진짜 지금 일어나야 해.",
                 "retryLimit": DEFAULT_MAX_RETRY_CALLS,
             }
 
@@ -609,7 +609,7 @@ class Assistant(Agent):
                 return {
                     "success": False,
                     "action": "retry_limit_reached",
-                    "message": "오늘은 더 이상 다시 전화할 수 없어. 지금 일어나야 해.",
+                    "message": "나도 이제 더 전화 못 해. 진짜 지금 일어나야 해.",
                     "retryLimit": result.get("retryLimit", DEFAULT_MAX_RETRY_CALLS),
                 }
             return result
@@ -894,7 +894,7 @@ async def entrypoint(ctx: JobContext):
 - get_user_info: 정적 프로필 확인용.
 - create_calendar_event: 새 일정이 충분히 명확하면 바로 저장, 애매하면 한 번만 짧게 확인.
 - get_current_time: 현재 시각이 중요할 때만 사용.
-- request_retry_call: "몇 분 뒤 다시 전화" 요청일 때만 사용. 분 수는 1~30. 결과가 retry_limit_reached면 더 이상 재통화가 안 된다고 짧게 안내.
+- request_retry_call: "몇 분 뒤 다시 전화" 요청일 때만 사용. 분 수는 1~30. 결과가 retry_limit_reached면 "나도 이제 더 전화 못 해. 진짜 지금 일어나야 해"처럼 지친 친구 말투로 짧게 안내.
 - delete_memory_item: 잘못 저장된 항목 정정용.
 """
 
@@ -1209,7 +1209,6 @@ async def entrypoint(ctx: JobContext):
 
         nudge_seconds = get_user_silence_nudge_seconds()
         nudge_texts = get_user_silence_nudge_texts()
-        retry_minutes = get_no_response_retry_minutes()
 
         try:
             await asyncio.wait_for(session_started.wait(), timeout=8.0)
@@ -1240,17 +1239,20 @@ async def entrypoint(ctx: JobContext):
                 result = await schedule_retry_after_user_silence()
                 if result and result.get("action") == "retry_limit_reached":
                     farewell_text = (
-                        "계속 대답이 없네. 오늘은 더 이상 다시 전화할 수 없어서 "
-                        "지금 일어나야 해."
+                        "하... 대답 없네. 나도 이제 더 전화 못 해. "
+                        "진짜 지금 일어나야 해."
                     )
                 elif result and result.get("action") == "retry_scheduled":
-                    scheduled_minutes = result.get("retryMinutes", retry_minutes)
                     farewell_text = (
-                        f"계속 대답이 없어서 일단 끊을게. "
-                        f"{scheduled_minutes}분 뒤에 다시 전화할게."
+                        "하... 진짜 안 되겠다. 나도 이제 한계야. "
+                        "딱 한 번만 더 전화할게. 그땐 진짜 일어나야 해. "
+                        "알았지? 물 한 잔 마실 준비 하고 있어."
                     )
                 else:
-                    farewell_text = "계속 대답이 없어서 일단 끊을게. 지금 일어나야 해."
+                    farewell_text = (
+                        "하... 대답 없네. 나도 이제 지친다. "
+                        "일단 끊을게. 진짜 지금 일어나야 해."
+                    )
 
                 _trigger_hangup(
                     "📵 User remained silent after max nudges; ending call",
@@ -1265,9 +1267,14 @@ async def entrypoint(ctx: JobContext):
             nudge_instructions = (
                 "사용자가 통화 중 몇 초간 대답이 없다. "
                 "자는지 확인하면서 깨우는 말을 한국어로 한두 문장만 말해. "
-                "직전 표현을 반복하지 말고 리듬, 단어, 압박 수위를 바꿔라. "
+                "무응답 상황에서는 '일어나' 같은 핵심 호출과 카운트다운을 반복해도 된다. 단, 완전히 같은 문장을 복붙하듯 반복하지 말고 리듬, 단어, 압박 수위를 조금씩 바꿔라. "
                 "단순히 대답만 요구하지 말고 지금 앉기, 몸 세우기, 물 한 모금 마시기 중 하나를 바로 시켜라. "
-                "강하게 깨우는 맥락이면 '일어나, 일어나'처럼 반복 호출하거나 '야', '진짜', '아니 지금 뭐해' 같은 짜증 섞인 감탄과 재촉을 해도 된다. "
+                "일반 모드 맥락이면 비서처럼 차분하게 필요한 행동과 아침 정보를 짧게 말한다. "
+                "강하게 깨우는 맥락이면 무응답 nudge에서는 반복 호출과 카운트다운형을 우선 사용하고, 명령형, 지친 친구형, 애원형, 행동 미션형, 현실 압박형을 섞어라. "
+                "'야, 일어나!', '진짜 지금이야!', '일어나, 일어나, 일어나!'처럼 짧은 고함 느낌을 첫 압박 순간에 한 번 쓸 수 있다. "
+                "'셋, 둘, 하나. 지금 몸 세워', '다시 센다. 셋, 둘, 하나. 발 내려'처럼 짧은 카운트다운을 반복해도 된다. "
+                "'제발 일어나주세요', '진짜 부탁이야'처럼 빌듯이 말해도 되지만 바로 앉기나 물 마시기 같은 행동을 시켜라. "
+                "'하... 나도 이제 지친다', '나도 계속 붙잡고 있을 수는 없어'처럼 답답해하는 친구의 감정 표현을 섞어도 된다. "
                 "다만 특정 정체성 비하, 혐오, 위협은 하지 마라. "
                 f"현재 단계 참고 문구: {nudge_text}"
             )

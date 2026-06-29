@@ -162,6 +162,22 @@ describe('AlarmService scheduling', () => {
     );
   });
 
+  it('normalizes unsupported wake intensity values to gentle', async () => {
+    const { service } = makeService();
+
+    const alarm = await service.createAlarm('user-id', {
+      time: '09:00',
+      targetDate: '2026-06-29',
+      timeZone: 'Asia/Seoul',
+      wakeIntensity: 'tsundere',
+      isOn: true,
+      repeatDays: [],
+    } as any);
+
+    expect(alarm.wakeIntensity).toBe('gentle');
+    expect(alarm.personality).toBe('gentle');
+  });
+
   it('defaults retry calls to two minutes with a prewarm job first', async () => {
     const alarm = makeAlarm();
     const alarmModel = { findById: jest.fn().mockResolvedValue(alarm) };

@@ -287,7 +287,14 @@ private fun AlarmEditorDialog(
 ) {
     val initial = alarm?.time?.split(":")?.mapNotNull { it.toIntOrNull() } ?: listOf(7, 30)
     val timeState: TimePickerState = rememberTimePickerState(initialHour = initial.getOrElse(0) { 7 }, initialMinute = initial.getOrElse(1) { 30 }, is24Hour = true)
-    var style by remember { mutableStateOf(if (alarm?.wakeIntensity == "firm") "aggressive" else "gentle") }
+    var style by remember {
+        mutableStateOf(
+            when (alarm?.wakeIntensity) {
+                "firm" -> "aggressive"
+                else -> "gentle"
+            },
+        )
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("${listOf("일", "월", "화", "수", "목", "금", "토")[day]}요일 알람") },

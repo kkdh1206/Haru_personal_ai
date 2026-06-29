@@ -129,7 +129,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching {
                 val character = characterStore.current
-                val wakeIntensity = if (wakeStyle == "aggressive") "firm" else "gentle"
+                val wakeIntensity = when (wakeStyle) {
+                    "aggressive" -> "firm"
+                    else -> "gentle"
+                }
                 val saved = if (existing == null) {
                     api.createAlarm(
                         time = time,

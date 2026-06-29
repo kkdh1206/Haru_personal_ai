@@ -11,7 +11,10 @@ import androidx.core.telecom.CallControlScope
 import androidx.core.telecom.CallsManager
 import com.poapper.morningcall.notification.HaruNotifications
 import io.livekit.android.LiveKit
+import io.livekit.android.events.RoomEvent
+import io.livekit.android.events.collect
 import io.livekit.android.room.Room
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,6 +40,7 @@ object CallManager {
     private var livekitUrl: String? = null
     private var livekitToken: String? = null
     private var room: Room? = null
+    private var roomEventJob: Job? = null
     private var callControl: CallControlScope? = null
 
     fun prepareIncoming(
@@ -91,6 +95,8 @@ object CallManager {
     fun hangup(context: Context, cause: Int = DisconnectCause.LOCAL) {
         scope.launch {
             runCatching { callControl?.disconnect(DisconnectCause(cause)) }
+            roomEventJob?.cancel()
+            roomEventJob = null
             runCatching { room?.disconnect() }
             room = null
             callControl = null
@@ -118,6 +124,8 @@ object CallManager {
                         connectLiveKit(context)
                     },
                     onDisconnect = {
+                        roomEventJob?.cancel()
+                        roomEventJob = null
                         runCatching { room?.disconnect() }
                         room = null
                         callControl = null
@@ -140,10 +148,34 @@ object CallManager {
         val token = livekitToken ?: error("LiveKit token is missing.")
         val newRoom = LiveKit.create(context)
         room = newRoom
+        observeRoomEvents(context, newRoom)
         newRoom.connect(url, token)
         newRoom.localParticipant.setMicrophoneEnabled(true)
         callControl?.setActive()
         HaruNotifications.clearCall(context)
         _state.value = _state.value.copy(isRinging = false, isConnected = true, error = null)
+    }
+
+    private fun observeRoomEvents(context: Context, observedRoom: Room) {
+        roomEventJob?.cancel()
+        roomEventJob = scope.launch {
+            observedRoom.events.collect { event ->
+                when (event) {
+                    is RoomEvent.Disconnected -> {
+                        if (_state.value.isConnected || _state.value.isRinging) {
+                            hangup(context, DisconnectCause.REMOTE)
+                        }
+                    }
+
+                    is RoomEvent.ParticipantDisconnected -> {
+                        if (observedRoom.remoteParticipants.isEmpty()) {
+                            hangup(context, DisconnectCause.REMOTE)
+                        }
+                    }
+
+                    else -> Unit
+                }
+            }
+        }
     }
 }

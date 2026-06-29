@@ -383,7 +383,7 @@ struct AlarmTabView: View {
 
     private func saveWeekdayAlarm(day: Int, context: AlarmEditorContext, result: AlarmEditorResult) {
         let time = AlarmDateFormatter.time.string(from: result.time)
-        let wakeIntensity = result.wakeStyle == "aggressive" ? "firm" : "gentle"
+        let wakeIntensity = wakeIntensityValue(for: result.wakeStyle)
         let personality = result.wakeStyle
 
         if let existing = context.existingAlarm {
@@ -619,7 +619,21 @@ struct AlarmTabView: View {
         case "normal":
             return "보통"
         default:
-            return wakeIntensity == "firm" ? "강하게" : "부드럽게"
+            switch wakeIntensity {
+            case "firm":
+                return "강하게"
+            default:
+                return "부드럽게"
+            }
+        }
+    }
+
+    private func wakeIntensityValue(for wakeStyle: String) -> String {
+        switch wakeStyle {
+        case "aggressive":
+            return "firm"
+        default:
+            return "gentle"
         }
     }
 }

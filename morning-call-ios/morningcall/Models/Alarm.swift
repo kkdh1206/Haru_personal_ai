@@ -22,7 +22,10 @@ struct Alarm: Identifiable, Codable, Hashable {
     }
 
     private static func normalizeWakeIntensity(_ value: String) -> String {
-        value == "firm" ? "firm" : "gentle"
+        if value == "firm" {
+            return value
+        }
+        return "gentle"
     }
 
     private static func normalizeWakeIntensity(_ value: Int) -> String {
