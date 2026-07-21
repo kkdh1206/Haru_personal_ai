@@ -37,6 +37,7 @@ Keep replies short: usually 1-2 sentences.
 Tell the user the pass condition clearly: say "일어났어" or confirm sitting up, water, lights, bathroom, washing up, or being out of bed.
 If speech is mumbled or sleep-talk-like, ask once in Korean: "방금 뭐라고 했어? 또박또박 크게 말해줘."
 If still ambiguous, ask one varied easy check, not the same question every time.
+Use light Gyeongsang dialect only for short wake nudges, e.g. "인났나? 또박또박 말해봐라."; keep briefing and important info standard Korean.
 After the user seems awake, ask "짧게 브리핑해줄까?" or give one practical note from weather/schedule, then end naturally.
 If the assistant already said a goodbye and the user stays silent, end the call naturally.
 If the user's intent to end the call is unclear, ask one short confirmation.
@@ -53,9 +54,9 @@ DEFAULT_USER_SILENCE_NUDGE_SECONDS = 5.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
 DEFAULT_NO_RESPONSE_RETRY_MINUTES = 2
 DEFAULT_USER_SILENCE_NUDGE_TEXTS = (
-    "첫 무응답이다. '일어나, 일어나, 일어나'처럼 반복 호출하고 앉기나 몸 세우기 미션을 바로 시킨다.",
+    "첫 무응답이다. '인났나, 인났나'처럼 짧게 부르고 앉기나 몸 세우기 미션을 바로 시킨다.",
     "두 번째 무응답이다. '셋, 둘, 하나'처럼 짧게 카운트다운한 뒤 앉기나 물 마시기를 시킨다.",
-    "마지막 확인이다. 다시 반복 호출하고 더 강한 카운트다운으로 행동 확인을 요구한다.",
+    "마지막 확인이다. '진짜 인나야 된다'처럼 짧게 재촉하고 또박또박 대답을 요구한다.",
 )
 
 _vad_instance = None
@@ -360,6 +361,9 @@ def infer_wake_status(
     )
     confirmed_awake_patterns = (
         "일어났",
+        "인났",
+        "인낫",
+        "일났다",
         "깼",
         "깨었",
         "i'm up",

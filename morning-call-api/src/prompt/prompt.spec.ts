@@ -24,6 +24,8 @@ describe('buildMorningCallPrompt', () => {
     expect(prompt).toContain('사용자가 "일어났어"라고 또렷하게 말하면 깬 것으로 본다');
     expect(prompt).toContain('방금 뭐라고 했어? 또박또박 크게 말해줘.');
     expect(prompt).toContain('3+4, 5+6, 7x8, 12-5');
+    expect(prompt).toContain('경상도 사투리를 가볍게');
+    expect(prompt).toContain('인났나? 또박또박 말해봐라.');
     expect(prompt).toContain('짧게 브리핑해줄까?');
     expect(prompt).toContain('특정 정체성 비하, 혐오, 위협은 하지 않는다');
     expect(prompt).toContain('날씨는 제공된 정보만 말하고 지어내지 않는다');

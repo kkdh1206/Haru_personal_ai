@@ -7,6 +7,8 @@ def user_message(text: str) -> dict:
 
 def test_clear_wake_claim_marks_user_awake():
     assert infer_wake_status([user_message("일어났어")]) == ("awake", True)
+    assert infer_wake_status([user_message("인났어")]) == ("awake", True)
+    assert infer_wake_status([user_message("인났다")]) == ("awake", True)
     assert infer_wake_status([user_message("깼어")]) == ("awake", True)
 
 
