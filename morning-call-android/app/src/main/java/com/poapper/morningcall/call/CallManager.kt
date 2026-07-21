@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.telecom.CallAttributesCompat
 import androidx.core.telecom.CallControlScope
 import androidx.core.telecom.CallsManager
+import com.poapper.morningcall.alarm.LocalFallbackScheduler
 import com.poapper.morningcall.notification.HaruNotifications
 import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
@@ -52,6 +53,7 @@ object CallManager {
     ) {
         livekitUrl = url
         livekitToken = token
+        if (!alarmId.isNullOrBlank()) LocalFallbackScheduler.cancel(context.applicationContext, alarmId)
         _state.value = CallState(caller = caller, alarmId = alarmId, isRinging = true)
         addTelecomCall(context.applicationContext, caller, incoming = true)
     }
@@ -144,6 +146,7 @@ object CallManager {
 
     private suspend fun connectLiveKit(context: Context) {
         if (_state.value.isConnected) return
+        _state.value.alarmId?.let { LocalFallbackScheduler.cancel(context, it) }
         val url = livekitUrl ?: error("LiveKit URL is missing.")
         val token = livekitToken ?: error("LiveKit token is missing.")
         val newRoom = LiveKit.create(context)

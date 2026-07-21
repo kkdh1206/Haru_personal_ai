@@ -15,6 +15,7 @@ jest.mock('src/fcm/fcm.service', () => ({
 }));
 
 import { AlarmService } from './alarm.service';
+import { Settings } from 'luxon';
 
 describe('AlarmService scheduling', () => {
   const fixedNow = Date.parse('2026-06-27T23:00:00.000Z');
@@ -50,10 +51,12 @@ describe('AlarmService scheduling', () => {
         getState: jest.fn().mockResolvedValue('delayed'),
       })),
       getJob: jest.fn().mockResolvedValue(null),
+      getJobs: jest.fn().mockResolvedValue([]),
     };
     const alarmModel = {
       create: jest.fn().mockImplementation(async (dto) => makeAlarm(dto)),
       findById: jest.fn().mockResolvedValue(makeAlarm()),
+      findByIdAndUpdate: jest.fn().mockResolvedValue(makeAlarm()),
     };
     const livekit = {
       ensureRoom: jest.fn().mockResolvedValue(undefined),
@@ -90,7 +93,7 @@ describe('AlarmService scheduling', () => {
         const values = {
           'alarm.prewarmLeadSeconds': '20',
           'alarm.retryMinutes': '2',
-          'alarm.maxDailyRetryCalls': '3',
+          'alarm.maxDailyRetryCalls': '1',
           'alarm.callAgentCheckTimeoutMs': '1000',
         };
         return values[path];
@@ -122,12 +125,14 @@ describe('AlarmService scheduling', () => {
 
   beforeEach(() => {
     jest.spyOn(Date, 'now').mockReturnValue(fixedNow);
+    Settings.now = () => fixedNow;
     jest.spyOn(console, 'log').mockImplementation();
     jest.spyOn(console, 'warn').mockImplementation();
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
+    Settings.now = () => Date.now();
   });
 
   it('schedules one-time prewarm 20 seconds before the on-time call job', async () => {
@@ -147,7 +152,9 @@ describe('AlarmService scheduling', () => {
       'trigger',
       expect.objectContaining({ action: 'prewarm' }),
       expect.objectContaining({
-        jobId: 'alarm-id-once-prewarm',
+        jobId: `alarm-id-once-${Date.parse(
+          '2026-06-29T00:00:00.000Z',
+        )}-prewarm`,
         delay: Date.parse('2026-06-28T23:59:40.000Z') - fixedNow,
       }),
     );
@@ -156,7 +163,9 @@ describe('AlarmService scheduling', () => {
       'trigger',
       expect.objectContaining({ action: 'call' }),
       expect.objectContaining({
-        jobId: 'alarm-id-once-call',
+        jobId: `alarm-id-once-${Date.parse(
+          '2026-06-29T00:00:00.000Z',
+        )}-call`,
         delay: Date.parse('2026-06-29T00:00:00.000Z') - fixedNow,
       }),
     );
@@ -195,7 +204,7 @@ describe('AlarmService scheduling', () => {
         retryMinutes: 2,
       }),
       expect.objectContaining({
-        jobId: 'alarm-id-retry-prewarm',
+        jobId: `alarm-id-retry-${fixedNow + 120000}-1-prewarm`,
         delay: 100000,
       }),
     );
@@ -208,7 +217,7 @@ describe('AlarmService scheduling', () => {
         retryMinutes: 2,
       }),
       expect.objectContaining({
-        jobId: 'alarm-id-retry-call',
+        jobId: `alarm-id-retry-${fixedNow + 120000}-1-call`,
         delay: 120000,
       }),
     );
@@ -234,5 +243,279 @@ describe('AlarmService scheduling', () => {
       lkToken: 'lk-token',
       alarmId: 'alarm-id',
     });
+  });
+
+  it('reschedules a Thursday 08:00 repeat alarm for the next Thursday after the current Thursday time passed', async () => {
+    const now = Date.parse('2026-07-08T23:11:12.101Z');
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    Settings.now = () => now;
+    const { service, queue } = makeService();
+    const expectedCallAt = Date.parse('2026-07-15T23:00:00.000Z');
+
+    await service.createAlarm('user-id', {
+      time: '08:00',
+      targetDate: null,
+      timeZone: 'Asia/Seoul',
+      isOn: true,
+      repeatDays: [4],
+    } as any);
+
+    expect(queue.add).toHaveBeenCalledWith(
+      'trigger',
+      expect.objectContaining({ action: 'call', day: 4 }),
+      expect.objectContaining({
+        jobId: `alarm-id-4-${expectedCallAt}-call`,
+        delay: expectedCallAt - now,
+      }),
+    );
+    expect(
+      new Date(expectedCallAt).toISOString(),
+    ).toBe('2026-07-15T23:00:00.000Z');
+  });
+
+  it('keeps Wednesday and Thursday 08:00 alarms for the same user in the queue', async () => {
+    const now = Date.parse('2026-07-14T00:00:00.000Z');
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    Settings.now = () => now;
+    const alarmModel = {
+      create: jest
+        .fn()
+        .mockImplementationOnce(async (dto) =>
+          makeAlarm({ ...dto, _id: 'wed-id', repeatDays: [3] }),
+        )
+        .mockImplementationOnce(async (dto) =>
+          makeAlarm({ ...dto, _id: 'thu-id', repeatDays: [4] }),
+        ),
+      findById: jest.fn().mockResolvedValue(makeAlarm()),
+    };
+    const { service, queue } = makeService({ alarmModel });
+
+    await service.createAlarm('user-id', {
+      time: '08:00',
+      targetDate: null,
+      timeZone: 'Asia/Seoul',
+      isOn: true,
+      repeatDays: [3],
+    } as any);
+    await service.createAlarm('user-id', {
+      time: '08:00',
+      targetDate: null,
+      timeZone: 'Asia/Seoul',
+      isOn: true,
+      repeatDays: [4],
+    } as any);
+
+    const jobIds = queue.add.mock.calls.map((call) => call[2].jobId);
+    expect(jobIds).toEqual(
+      expect.arrayContaining([
+        `wed-id-3-${Date.parse('2026-07-14T23:00:00.000Z')}-prewarm`,
+        `wed-id-3-${Date.parse('2026-07-14T23:00:00.000Z')}-call`,
+        `thu-id-4-${Date.parse('2026-07-15T23:00:00.000Z')}-prewarm`,
+        `thu-id-4-${Date.parse('2026-07-15T23:00:00.000Z')}-call`,
+      ]),
+    );
+  });
+
+  it('does not remove jobs for another alarm from the same user when one alarm is updated', async () => {
+    const otherJobId = `other-id-3-${Date.parse(
+      '2026-07-14T23:00:00.000Z',
+    )}-call`;
+    const ownJobId = `alarm-id-4-${Date.parse(
+      '2026-07-15T23:00:00.000Z',
+    )}-call`;
+    const ownQueuedJob = {
+      id: ownJobId,
+      getState: jest.fn().mockResolvedValue('delayed'),
+      remove: jest.fn().mockResolvedValue(undefined),
+    };
+    const queue = {
+      add: jest.fn().mockImplementation(async (_name, _data, options) => ({
+        id: options.jobId,
+        getState: jest.fn().mockResolvedValue('delayed'),
+      })),
+      getJobs: jest.fn().mockResolvedValue([
+        { id: otherJobId },
+        { id: ownJobId },
+      ]),
+      getJob: jest
+        .fn()
+        .mockImplementation(async (jobId) =>
+          jobId === ownJobId ? ownQueuedJob : null,
+        ),
+    };
+    const alarmModel = {
+      findById: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(makeAlarm({ userId: 'user-id' })),
+      }),
+      findByIdAndUpdate: jest
+        .fn()
+        .mockResolvedValue(makeAlarm({ repeatDays: [4] })),
+    };
+    const { service } = makeService({ alarmModel, queue });
+
+    await service.updateAlarm('user-id', 'alarm-id', {
+      time: '08:00',
+      targetDate: null,
+      timeZone: 'Asia/Seoul',
+      isOn: true,
+      repeatDays: [4],
+    } as any);
+
+    expect(queue.getJob).not.toHaveBeenCalledWith(otherJobId);
+    expect(ownQueuedJob.remove).toHaveBeenCalled();
+  });
+
+  it('recovers every active alarm on application bootstrap', async () => {
+    const alarmModel = {
+      find: jest.fn().mockResolvedValue([
+        makeAlarm({ _id: 'wed-id', repeatDays: [3], targetDate: null }),
+        makeAlarm({ _id: 'thu-id', repeatDays: [4], targetDate: null }),
+      ]),
+    };
+    const { service, queue } = makeService({ alarmModel });
+
+    await service.onModuleInit();
+
+    expect(alarmModel.find).toHaveBeenCalledWith({ isOn: true });
+    expect(queue.add).toHaveBeenCalledTimes(4);
+    expect(queue.add.mock.calls.map((call) => call[2].jobId)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^wed-id-3-\d+-call$/),
+        expect.stringMatching(/^thu-id-4-\d+-call$/),
+      ]),
+    );
+  });
+
+  it('logs a collision when the same job ID already exists', async () => {
+    const expectedCallAt = Date.parse('2026-06-29T00:00:00.000Z');
+    const existingJob = {
+      id: `alarm-id-once-${expectedCallAt}-call`,
+      getState: jest.fn().mockResolvedValue('active'),
+    };
+    const queue = {
+      add: jest.fn().mockImplementation(async (_name, _data, options) => ({
+        id: options.jobId,
+        getState: jest.fn().mockResolvedValue(
+          options.jobId.endsWith('-call') ? 'active' : 'delayed',
+        ),
+      })),
+      getJob: jest
+        .fn()
+        .mockImplementation(async (jobId) =>
+          jobId === existingJob.id ? existingJob : null,
+        ),
+      getJobs: jest.fn().mockResolvedValue([]),
+    };
+    const { service } = makeService({ queue });
+
+    await service.createAlarm('user-id', {
+      time: '09:00',
+      targetDate: '2026-06-29',
+      timeZone: 'Asia/Seoul',
+      isOn: true,
+      repeatDays: [],
+    } as any);
+
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('[Alarm] job collision detected'),
+    );
+  });
+
+  it('treats an existing delayed job as an idempotent schedule', async () => {
+    const expectedCallAt = Date.parse('2026-06-29T00:00:00.000Z');
+    const existingJob = {
+      id: `alarm-id-once-${expectedCallAt}-call`,
+      getState: jest.fn().mockResolvedValue('delayed'),
+    };
+    const queue = {
+      add: jest.fn().mockImplementation(async (_name, _data, options) => ({
+        id: options.jobId,
+        getState: jest.fn().mockResolvedValue('delayed'),
+      })),
+      getJob: jest
+        .fn()
+        .mockImplementation(async (jobId) =>
+          jobId === existingJob.id ? existingJob : null,
+        ),
+      getJobs: jest.fn().mockResolvedValue([]),
+    };
+    const { service } = makeService({ queue });
+
+    await service.createAlarm('user-id', {
+      time: '09:00',
+      targetDate: '2026-06-29',
+      timeZone: 'Asia/Seoul',
+      isOn: true,
+      repeatDays: [],
+    } as any);
+
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('[Alarm] job already scheduled'),
+    );
+    expect(console.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('[Alarm] job collision detected'),
+    );
+    expect(queue.add).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables orphaned alarms and removes their queued jobs', async () => {
+    const orphanJobId = `alarm-id-4-${Date.parse(
+      '2026-07-15T23:00:00.000Z',
+    )}-call`;
+    const queuedJob = {
+      id: orphanJobId,
+      getState: jest.fn().mockResolvedValue('delayed'),
+      remove: jest.fn().mockResolvedValue(undefined),
+    };
+    const queue = {
+      add: jest.fn(),
+      getJobs: jest.fn().mockResolvedValue([queuedJob]),
+      getJob: jest
+        .fn()
+        .mockImplementation(async (jobId) =>
+          jobId === orphanJobId ? queuedJob : null,
+        ),
+    };
+    const alarmModel = {
+      findByIdAndUpdate: jest.fn().mockResolvedValue(makeAlarm()),
+    };
+    const { service } = makeService({ alarmModel, queue });
+
+    await service.disableOrphanedAlarm('alarm-id', 'missing user');
+
+    expect(alarmModel.findByIdAndUpdate).toHaveBeenCalledWith('alarm-id', {
+      isOn: false,
+    });
+    expect(queuedJob.remove).toHaveBeenCalled();
+  });
+
+  it('uses unique job IDs when retry jobs are scheduled more than once', async () => {
+    const alarm = makeAlarm();
+    const alarmModel = { findById: jest.fn().mockResolvedValue(alarm) };
+    const configService = {
+      getOrThrow: jest.fn().mockReturnValue('wss://livekit.test'),
+      get: jest.fn((path: string) => {
+        const values = {
+          'alarm.prewarmLeadSeconds': '20',
+          'alarm.retryMinutes': '2',
+          'alarm.maxDailyRetryCalls': '3',
+          'alarm.callAgentCheckTimeoutMs': '1000',
+        };
+        return values[path];
+      }),
+    };
+    const { service, queue } = makeService({ alarmModel, configService });
+
+    await service.scheduleRetryCall('alarm-id');
+    await service.scheduleRetryCall('alarm-id');
+
+    const retryJobIds = queue.add.mock.calls.map((call) => call[2].jobId);
+    expect(new Set(retryJobIds).size).toBe(retryJobIds.length);
+    expect(retryJobIds).toEqual(
+      expect.arrayContaining([
+        `alarm-id-retry-${fixedNow + 120000}-1-call`,
+        `alarm-id-retry-${fixedNow + 120000}-2-call`,
+      ]),
+    );
   });
 });

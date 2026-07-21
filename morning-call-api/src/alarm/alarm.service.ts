@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Alarm, AlarmDocument } from './schemas/alarm.schema';
 import { Model, Types } from 'mongoose';
@@ -22,17 +26,17 @@ const HARI_VOICE = 'Leda';
 const DEFAULT_WAKE_INTENSITY = 'gentle';
 const DEFAULT_PREWARM_LEAD_SECONDS = 20;
 const DEFAULT_RETRY_MINUTES = 2;
-const MAX_DAILY_RETRY_CALLS = 3;
+const MAX_DAILY_RETRY_CALLS = 1;
 const DEFAULT_CALL_AGENT_CHECK_TIMEOUT_MS = 1000;
 const DEFAULT_RETRY_LIMIT_MESSAGE =
-  '전화를 여러 번 드렸는데 연결이 잘 안 돼서 메시지를 남겨요. 오늘 하루도 무사히 잘 보내길 바랄게요.';
+  '전화는 여기까지 할게요. 이제 로컬 알람으로 한 번 더 깨워볼게요. 지금 바로 일어나 주세요.';
 
 type AlarmCallType = 'initial' | 'retry';
 type AlarmJobAction = 'prewarm' | 'call';
 type WakeIntensity = 'gentle' | 'firm';
 
 @Injectable()
-export class AlarmService {
+export class AlarmService implements OnModuleInit {
   private readonly livekitUrl: string;
   private readonly prewarmLeadMs: number;
   private readonly defaultRetryMinutes: number;
@@ -71,6 +75,10 @@ export class AlarmService {
 
   getMaxDailyRetryCalls() {
     return this.maxDailyRetryCalls;
+  }
+
+  async onModuleInit() {
+    await this.recoverActiveAlarms();
   }
 
   private getPositiveConfigNumber(path: string, defaultValue: number) {
@@ -215,6 +223,14 @@ export class AlarmService {
 
   /* ---------- BullMQ Job 등록 ---------- */
 
+  private async recoverActiveAlarms() {
+    const activeAlarms = await this.alarmModel.find({ isOn: true });
+    await Promise.all(activeAlarms.map((alarm) => this.scheduleAlarm(alarm)));
+    console.log(
+      `[Alarm] recovered active alarms → count=${activeAlarms.length}`,
+    );
+  }
+
   private async scheduleAlarm(alarm: AlarmDocument) {
     if (!alarm.isOn) return;
 
@@ -235,8 +251,9 @@ export class AlarmService {
         alarm.targetDate || undefined,
       );
       await this.scheduleCallJobs({
-        baseJobId: `${alarm._id}-once`,
+        baseJobId: `${alarm._id}-once-${next.getTime()}`,
         callAt: next,
+        alarm,
         data: {
           alarmId: alarm._id.toString(),
           oneTime: true,
@@ -251,12 +268,25 @@ export class AlarmService {
     return this.scheduleRepeatDay(alarm, day);
   }
 
+  async disableOrphanedAlarm(alarmId: string, reason = 'missing user') {
+    await this.alarmModel.findByIdAndUpdate(alarmId, { isOn: false });
+    await this.clearJobs(alarmId, reason);
+    console.warn(
+      `[Alarm] orphaned alarm disabled → ${JSON.stringify({
+        alarmId,
+        reason,
+      })}`,
+    );
+  }
+
   private async scheduleRepeatDay(alarm: AlarmDocument, day: number) {
     const [hour, minute] = alarm.time.split(':').map(Number);
     const next = this.nextDayOfWeek(day, hour, minute, alarm.timeZone);
     return this.scheduleCallJobs({
-      baseJobId: `${alarm._id}-${day}`,
+      baseJobId: `${alarm._id}-${day}-${next.getTime()}`,
       callAt: next,
+      alarm,
+      repeatDay: day,
       data: {
         alarmId: alarm._id.toString(),
         day,
@@ -269,50 +299,123 @@ export class AlarmService {
   private async scheduleCallJobs({
     baseJobId,
     callAt,
+    alarm,
+    repeatDay,
     data,
   }: {
     baseJobId: string;
     callAt: Date;
+    alarm: AlarmDocument;
+    repeatDay?: number;
     data: Record<string, any>;
   }) {
     const prewarmAt = new Date(callAt.getTime() - this.prewarmLeadMs);
     const prewarmDelay = Math.max(0, prewarmAt.getTime() - Date.now());
     const callDelay = Math.max(0, callAt.getTime() - Date.now());
 
-    const [prewarmJob, callJob] = await Promise.all([
-      this.alarmQueue.add(
-        'trigger',
-        {
+    await Promise.all([
+      this.addScheduledJob({
+        jobId: `${baseJobId}-prewarm`,
+        delay: prewarmDelay,
+        scheduledAt: prewarmAt,
+        alarm,
+        repeatDay,
+        data: {
           ...data,
           action: 'prewarm' as AlarmJobAction,
         },
-        {
-          jobId: `${baseJobId}-prewarm`,
-          delay: prewarmDelay,
-          removeOnComplete: true,
-        },
-      ),
-      this.alarmQueue.add(
-        'trigger',
-        {
+      }),
+      this.addScheduledJob({
+        jobId: `${baseJobId}-call`,
+        delay: callDelay,
+        scheduledAt: callAt,
+        alarm,
+        repeatDay,
+        data: {
           ...data,
           action: 'call' as AlarmJobAction,
         },
-        {
-          jobId: `${baseJobId}-call`,
-          delay: callDelay,
-          removeOnComplete: true,
-        },
-      ),
+      }),
     ]);
-    const prewarmState = await prewarmJob.getState();
-    const callState = await callJob.getState();
-    console.log(
-      `[Alarm] prewarm scheduled → ${prewarmJob.id} at ${prewarmAt.toISOString()} delay=${prewarmDelay} state=${prewarmState}`,
-    );
-    console.log(
-      `[Alarm] call scheduled → ${callJob.id} at ${callAt.toISOString()} delay=${callDelay} state=${callState}`,
-    );
+  }
+
+  private async addScheduledJob({
+    jobId,
+    delay,
+    scheduledAt,
+    alarm,
+    repeatDay,
+    data,
+  }: {
+    jobId: string;
+    delay: number;
+    scheduledAt: Date;
+    alarm: AlarmDocument;
+    repeatDay?: number;
+    data: Record<string, any>;
+  }) {
+    const existingJob = await this.alarmQueue.getJob(jobId);
+    const existingJobState = existingJob ? await existingJob.getState() : null;
+    const isAlreadyScheduled =
+      existingJob &&
+      ['delayed', 'waiting', 'waiting-children', 'paused'].includes(
+        existingJobState,
+      );
+
+    if (isAlreadyScheduled) {
+      const logPayload = {
+        alarmId: alarm._id.toString(),
+        userId: alarm.userId.toString(),
+        repeatDay,
+        action: data.action,
+        localScheduledAt: DateTime.fromJSDate(scheduledAt)
+          .setZone(alarm.timeZone || 'Asia/Seoul')
+          .toISO(),
+        utcScheduledAt: scheduledAt.toISOString(),
+        delay,
+        jobId,
+        returnedJobId: existingJob.id,
+        jobState: existingJobState,
+        existingJobState,
+      };
+      console.log(
+        `[Alarm] job already scheduled → ${JSON.stringify(logPayload)}`,
+      );
+      return existingJob;
+    }
+
+    const returnedJob = await this.alarmQueue.add('trigger', data, {
+      jobId,
+      delay,
+      removeOnComplete: true,
+      removeOnFail: { count: 1000 },
+    });
+    const jobState = await returnedJob.getState();
+    const logPayload = {
+      alarmId: alarm._id.toString(),
+      userId: alarm.userId.toString(),
+      repeatDay,
+      action: data.action,
+      localScheduledAt: DateTime.fromJSDate(scheduledAt)
+        .setZone(alarm.timeZone || 'Asia/Seoul')
+        .toISO(),
+      utcScheduledAt: scheduledAt.toISOString(),
+      delay,
+      jobId,
+      returnedJobId: returnedJob.id,
+      jobState,
+      existingJobState,
+    };
+
+    if (existingJobState) {
+      console.warn(
+        `[Alarm] job collision detected → ${JSON.stringify(logPayload)}`,
+      );
+      return returnedJob;
+    }
+
+    console.log(`[Alarm] job scheduled → ${JSON.stringify(logPayload)}`);
+    return returnedJob;
   }
 
   /* ---------- 헬퍼 ---------- */
@@ -356,7 +459,7 @@ export class AlarmService {
   }
 
   /** 등록돼 있던 지연·반복 job 전부 제거 */
-  private async clearJobs(alarmId: string) {
+  private async clearJobs(alarmId: string, removalReason = 'alarm rescheduled') {
     const jobIds = [
       `${alarmId}-once`,
       `${alarmId}-once-prewarm`,
@@ -369,10 +472,38 @@ export class AlarmService {
       ...Array.from({ length: 7 }, (_, day) => `${alarmId}-${day}-call`),
     ];
 
-    await this.removeJobs(jobIds);
+    const prefixes = [
+      `${alarmId}-once-`,
+      `${alarmId}-retry-`,
+      ...Array.from({ length: 7 }, (_, day) => `${alarmId}-${day}-`),
+    ];
+
+    const queuedJobs = await this.alarmQueue.getJobs(
+      [
+        'delayed',
+        'waiting',
+        'paused',
+        'prioritized',
+        'waiting-children',
+        'completed',
+        'failed',
+      ] as any,
+      0,
+      -1,
+      false,
+    );
+
+    queuedJobs.forEach((job) => {
+      const id = job.id?.toString();
+      if (id && prefixes.some((prefix) => id.startsWith(prefix))) {
+        jobIds.push(id);
+      }
+    });
+
+    await this.removeJobs(Array.from(new Set(jobIds)), removalReason);
   }
 
-  private async removeJobs(jobIds: string[]) {
+  private async removeJobs(jobIds: string[], removalReason = 'explicit remove') {
     await Promise.all(
       jobIds.map(async (jobId) => {
         const job = await this.alarmQueue.getJob(jobId);
@@ -381,8 +512,27 @@ export class AlarmService {
         }
 
         const state = await job.getState();
-        await job.remove();
-        console.log(`[Alarm] removed job → ${jobId} state=${state}`);
+        try {
+          await job.remove();
+          console.log(
+            `[Alarm] removed job → ${JSON.stringify({
+              alarmId: jobId.split('-')[0],
+              jobId,
+              previousState: state,
+              removalReason,
+            })}`,
+          );
+        } catch (error) {
+          console.warn(
+            `[Alarm] failed to remove job → ${JSON.stringify({
+              alarmId: jobId.split('-')[0],
+              jobId,
+              previousState: state,
+              removalReason,
+              error: error?.message,
+            })}`,
+          );
+        }
       }),
     );
   }
@@ -643,18 +793,15 @@ export class AlarmService {
 
     const alarmId = alarm._id.toString();
     const retryCount = alarm.dailyRetryCount + 1;
-    await this.removeJobs([
-      `${alarmId}-retry`,
-      `${alarmId}-retry-prewarm`,
-      `${alarmId}-retry-call`,
-    ]);
+    await this.clearRetryJobs(alarmId);
 
     const delay = normalizedRetryMinutes * 60 * 1000;
     const scheduledAt = new Date(Date.now() + delay);
 
     await this.scheduleCallJobs({
-      baseJobId: `${alarmId}-retry`,
+      baseJobId: `${alarmId}-retry-${scheduledAt.getTime()}-${retryCount}`,
       callAt: scheduledAt,
+      alarm,
       data: {
         alarmId,
         retry: true,
@@ -692,11 +839,7 @@ export class AlarmService {
     await alarm.save();
 
     if (dto.wakeStatus === 'awake') {
-      await this.removeJobs([
-        `${dto.alarmId}-retry`,
-        `${dto.alarmId}-retry-prewarm`,
-        `${dto.alarmId}-retry-call`,
-      ]);
+      await this.clearRetryJobs(dto.alarmId);
       return {
         success: true,
         action: 'none',
@@ -729,5 +872,35 @@ export class AlarmService {
       message: retryResult.message,
       push: pushResult,
     };
+  }
+
+  private async clearRetryJobs(alarmId: string) {
+    const legacyJobIds = [
+      `${alarmId}-retry`,
+      `${alarmId}-retry-prewarm`,
+      `${alarmId}-retry-call`,
+    ];
+    const queuedJobs = await this.alarmQueue.getJobs(
+      [
+        'delayed',
+        'waiting',
+        'paused',
+        'prioritized',
+        'waiting-children',
+        'completed',
+        'failed',
+      ] as any,
+      0,
+      -1,
+      false,
+    );
+    const retryJobIds = queuedJobs
+      .map((job) => job.id?.toString())
+      .filter((id) => id?.startsWith(`${alarmId}-retry-`));
+
+    await this.removeJobs(
+      Array.from(new Set([...legacyJobIds, ...retryJobIds])),
+      'retry rescheduled',
+    );
   }
 }

@@ -7,10 +7,10 @@ export class UpdateBehaviorProfileDto {
   @IsOptional()
   wakeStyle?: 'gentle' | 'aggressive';
 
-  @ApiProperty({ required: false, minimum: 0, maximum: 3 })
+  @ApiProperty({ required: false, minimum: 0, maximum: 1 })
   @IsInt()
   @Min(0)
-  @Max(3)
+  @Max(1)
   @IsOptional()
   retryLimit?: number;
 

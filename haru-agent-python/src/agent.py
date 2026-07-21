@@ -33,8 +33,11 @@ load_dotenv(".env.local")
 CONTROL_INSTRUCTIONS = """
 Only call request_hangup when the user clearly asks to end the call.
 Do not treat wake confirmations like "일어났어", "응", "알겠어", or "준비할게" as hangup requests.
-After the user says they are awake, briefly care for them with weather/schedule context and wait for one more response before ending.
-Before ending after the user is awake, remind them of one final practical item like water, clothes, umbrella, or first schedule, then encourage them briefly.
+Keep replies short: usually 1-2 sentences.
+Tell the user the pass condition clearly: say "일어났어" or confirm sitting up, water, lights, bathroom, washing up, or being out of bed.
+If speech is mumbled or sleep-talk-like, ask once in Korean: "방금 뭐라고 했어? 또박또박 크게 말해줘."
+If still ambiguous, ask one varied easy check, not the same question every time.
+After the user seems awake, ask "짧게 브리핑해줄까?" or give one practical note from weather/schedule, then end naturally.
 If the assistant already said a goodbye and the user stays silent, end the call naturally.
 If the user's intent to end the call is unclear, ask one short confirmation.
 """
@@ -43,15 +46,15 @@ DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-live-preview"
 DEFAULT_NO_ANSWER_TIMEOUT_SECONDS = 90
 DEFAULT_HANGUP_GRACE_SECONDS = 0.1
 DEFAULT_GEMINI_THINKING_MODE = "disabled"
-DEFAULT_MAX_MEMORY_CONTEXT_CHARS = 500
-DEFAULT_MAX_CONVERSATION_MESSAGES = 8
-DEFAULT_MAX_RETRY_CALLS = 3
+DEFAULT_MAX_MEMORY_CONTEXT_CHARS = 300
+DEFAULT_MAX_CONVERSATION_MESSAGES = 6
+DEFAULT_MAX_RETRY_CALLS = 1
 DEFAULT_USER_SILENCE_NUDGE_SECONDS = 5.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
 DEFAULT_NO_RESPONSE_RETRY_MINUTES = 2
 DEFAULT_USER_SILENCE_NUDGE_TEXTS = (
     "첫 무응답이다. '일어나, 일어나, 일어나'처럼 반복 호출하고 앉기나 몸 세우기 미션을 바로 시킨다.",
-    "두 번째 무응답이다. '셋, 둘, 하나'처럼 짧게 카운트다운한 뒤 발 내리기나 물 마시기를 시킨다.",
+    "두 번째 무응답이다. '셋, 둘, 하나'처럼 짧게 카운트다운한 뒤 앉기나 물 마시기를 시킨다.",
     "마지막 확인이다. 다시 반복 호출하고 더 강한 카운트다운으로 행동 확인을 요구한다.",
 )
 
@@ -306,6 +309,28 @@ def infer_wake_status(
     if not user_texts:
         return "no_response", False
 
+    math_checks = (
+        (("7 곱하기 8", "7곱하기8", "7 x 8", "7x8"), ("56", "오십육", "쉰여섯")),
+        (("3 더하기 4", "3더하기4", "3 + 4", "3+4"), ("7", "칠")),
+        (("5 더하기 6", "5더하기6", "5 + 6", "5+6"), ("11", "십일", "열하나")),
+        (("12 빼기 5", "12빼기5", "12 - 5", "12-5"), ("7", "칠")),
+    )
+
+    for index, message in enumerate(messages):
+        content = (message.get("content") or "").strip().lower()
+        if message.get("role") != "assistant" or not content:
+            continue
+        later_user_text = " ".join(
+            (later.get("content") or "").strip().lower()
+            for later in messages[index + 1 :]
+            if later.get("role") == "user"
+        )
+        for question_patterns, answer_patterns in math_checks:
+            if any(pattern in content for pattern in question_patterns) and any(
+                answer in later_user_text for answer in answer_patterns
+            ):
+                return "awake", True
+
     action_awake_patterns = (
         "앉았",
         "앉아있",
@@ -319,6 +344,12 @@ def infer_wake_status(
         "물 먹었",
         "물먹었",
         "세수",
+        "씻",
+        "양치",
+        "불 켰",
+        "불켰",
+        "불 키",
+        "불켰어",
         "화장실",
         "책상",
         "awake",
@@ -327,17 +358,19 @@ def infer_wake_status(
         "got up",
         "drank water",
     )
-    weak_awake_patterns = (
+    confirmed_awake_patterns = (
         "일어났",
         "깼",
         "깨었",
+        "i'm up",
+        "im up",
+    )
+    weak_awake_patterns = (
         "알겠어",
         "알겠습니다",
         "일어날게",
         "일어날게요",
         "준비할게",
-        "i'm up",
-        "im up",
     )
     retry_patterns = (
         "5분만",
@@ -377,14 +410,23 @@ def infer_wake_status(
     if any(pattern in joined for pattern in sleepy_patterns):
         return "not_awake", True
 
+    total_response_chars = sum(len(text.replace(" ", "")) for text in user_texts)
+
+    if any(pattern in joined for pattern in confirmed_awake_patterns):
+        return "awake", True
+
     if any(pattern in joined for pattern in weak_awake_patterns):
         return "not_awake", True
 
-    if all(text in {word.lower() for word in filler_words} for text in user_texts):
+    filler_word_set = {word.lower() for word in filler_words}
+    if all(text in filler_word_set for text in user_texts):
+        return ("awake", True) if len(user_texts) >= 2 else ("not_awake", True)
+
+    if total_response_chars <= 4 and len(user_texts) <= 1:
         return "not_awake", True
 
-    if sum(len(text.replace(" ", "")) for text in user_texts) <= 8:
-        return "not_awake", True
+    if len(user_texts) >= 2 and total_response_chars >= 4:
+        return "awake", True
 
     return "awake", True
 
@@ -431,10 +473,10 @@ def get_vad():
     global _vad_instance
     if _vad_instance is None:
         _vad_instance = silero.VAD.load(
-            min_speech_duration=0.18,
-            min_silence_duration=0.55,
+            min_speech_duration=0.12,
+            min_silence_duration=0.45,
             prefix_padding_duration=0.35,
-            activation_threshold=0.63,
+            activation_threshold=0.58,
         )
     return _vad_instance
 
@@ -482,11 +524,7 @@ class Assistant(Agent):
     @function_tool
     async def save_user_info(self, context: RunContext, key: str, value: str):
         """
-        사용자의 정적 프로필 정보를 저장합니다.
-        반드시 사용자가 이번 통화에서 직접 말한 사실만 저장하세요.
-        추측, 계산, 유추, 해석한 정보는 저장하면 안 됩니다.
-        키는 가능한 한 고정된 짧은 표준 키를 사용하세요.
-        예: name, birthday, hobby, preference, job
+        Store only user-stated profile facts. Keys: name, birthday, hobby, preference, job.
         """
         if self._api_client and self._user_id:
             result = await self._api_client.save_user_info(self._user_id, key, value)
@@ -497,7 +535,7 @@ class Assistant(Agent):
     @function_tool
     async def search_memory(self, context: RunContext, query: str):
         """
-        저장된 장기 메모리에서 과거의 중요한 정보를 검색합니다.
+        Search long-term memory.
         """
         if self._api_client and self._user_id:
             results = await self._api_client.search_memory(self._user_id, query, limit=3)
@@ -512,7 +550,7 @@ class Assistant(Agent):
     @function_tool
     async def get_user_info(self, context: RunContext):
         """
-        현재 사용자의 프로필 정보를 조회합니다.
+        Get current user profile.
         """
         if self._api_client and self._user_id:
             user_info = await self._api_client.get_user_info(self._user_id)
@@ -538,9 +576,7 @@ class Assistant(Agent):
         time_zone: str = "",
     ):
         """
-        사용자가 말한 새 약속이나 일정을 구글 캘린더에 저장합니다.
-        start_time / end_time은 ISO 8601 문자열을 우선 사용하고,
-        하루 종일 일정이면 YYYY-MM-DD 형식과 all_day=true를 사용하세요.
+        Create a calendar event. Prefer ISO times; all-day uses YYYY-MM-DD and all_day=true.
         """
         if self._api_client and self._user_id:
             result = await self._api_client.create_calendar_event(
@@ -560,8 +596,7 @@ class Assistant(Agent):
     @function_tool
     async def get_current_time(self, context: RunContext):
         """
-        현재 정확한 시각이 필요할 때 호출합니다.
-        기본 기준 시간대는 사용자의 시간대이며, 보통 Asia/Seoul(KST)입니다.
+        Get current time in the user's timezone.
         """
         current_time = format_current_time(self._time_zone)
         logger.info(
@@ -575,8 +610,7 @@ class Assistant(Agent):
         self, context: RunContext, retry_minutes: int = DEFAULT_NO_RESPONSE_RETRY_MINUTES
     ):
         """
-        사용자가 아직 못 일어났고 몇 분 뒤 다시 전화해 달라고 요청할 때 사용합니다.
-        retry_minutes는 1분 이상 30분 이하로 사용하세요.
+        Schedule retry only when the user asks to be called again. retry_minutes: 1-30.
         """
         if not self._alarm_id:
             return {
@@ -621,10 +655,7 @@ class Assistant(Agent):
         self, context: RunContext, item_type: str, item_id_or_key: str
     ):
         """
-        잘못 저장된 메모리 항목을 삭제합니다.
-        item_type:
-          - "user_info": 사용자 정보 키 삭제
-          - "all": 전체 메모리 삭제
+        Delete memory. item_type: user_info or all.
         """
         if self._api_client and self._user_id:
             result = await self._api_client.delete_memory_item(
@@ -889,29 +920,23 @@ async def entrypoint(ctx: JobContext):
     if api_client:
         memory_instruction = """
 도구 규칙:
-- save_user_info: 사용자가 이번 통화에서 직접 말한 사실만 저장. 추론 금지. 표준 키 사용(name, birthday, hobby, preference, job).
-- search_memory: 과거 기억 질문일 때만 사용. 없으면 지어내지 말 것.
-- get_user_info: 정적 프로필 확인용.
-- create_calendar_event: 새 일정이 충분히 명확하면 바로 저장, 애매하면 한 번만 짧게 확인.
-- get_current_time: 현재 시각이 중요할 때만 사용.
-- request_retry_call: "몇 분 뒤 다시 전화" 요청일 때만 사용. 분 수는 1~30. 결과가 retry_limit_reached면 "나도 이제 더 전화 못 해. 진짜 지금 일어나야 해"처럼 지친 친구 말투로 짧게 안내.
-- delete_memory_item: 잘못 저장된 항목 정정용.
+- 정보 저장은 사용자가 직접 말한 사실만. 추론 금지.
+- 도구는 필요할 때만. 일정 저장은 명확할 때만.
+- 재통화 도구는 사용자가 다시 걸어달라고 할 때만.
 """
 
     memory_context_instruction = ""
     if memory_context:
         memory_context_instruction = f"""
 # 저장된 사용자 컨텍스트
-다음은 이 사용자에 대해 현재 저장된 핵심 정보입니다.
-필요할 때만 참고하고, 확실하지 않은 과거 내용은 search_memory로 다시 확인하세요.
+필요할 때만 참고하고 불확실하면 묻는다.
 
 {memory_context}
 """
 
     merged_instructions = (
         f"{initial_instructions.strip()}\n\n"
-        "추가 규칙: 시간 답변은 사용자 시간대 기준으로만 말하고, 필요할 때만 get_current_time을 호출하세요. "
-        "사용자가 아직 덜 깼거나 다시 걸어 달라고 하면 재통화 흐름을 고려하세요.\n\n"
+        "추가: 시간은 사용자 시간대 기준. 덜 깼거나 다시 걸어달라면 재통화 흐름을 고려.\n\n"
         f"{memory_instruction.strip()}\n\n"
         f"{memory_context_instruction.strip()}\n\n"
         f"{CONTROL_INSTRUCTIONS.strip()}"
@@ -969,6 +994,61 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.warning(f"⚠️ Failed to request agent reply: {e}")
             return False
+
+    async def ensure_assistant_followup_after_user(
+        message_count_after_user: int,
+        user_text: str,
+    ):
+        await asyncio.sleep(1.4)
+
+        if (
+            hangup_requested
+            or call_outcome_reported
+            or agent_is_speaking
+            or user_is_speaking
+        ):
+            return
+
+        assistant_replied = any(
+            message.get("role") == "assistant"
+            for message in conversation_messages[message_count_after_user:]
+        )
+        if assistant_replied:
+            return
+
+        wake_status, had_user_response = infer_wake_status(conversation_messages)
+        if wake_status == "awake":
+            result = await report_call_outcome_once(
+                "awake",
+                had_user_response=had_user_response,
+            )
+            logger.info(
+                "📟 Awake outcome reported after user follow-up watchdog: "
+                f"result={result}"
+            )
+            _trigger_hangup(
+                "✅ User confirmed awake; ending without retry",
+                "좋아, 깬 거 확인했어. 짧게 브리핑해줄까?",
+            )
+            return
+
+        followup_instructions = (
+            "사용자가 짧게 대답했는데 네 응답이 아직 없다. 한국어로 한 문장만 말해. "
+            "일어났으면 '일어났어'라고 또박또박 말하라고 안내하고, "
+            "애매하면 3+4, 5+6, 7x8, 12-5 같은 쉬운 확인 문제 중 하나만 골라 물어봐. "
+            "항상 같은 문제를 내지 마."
+        )
+        followup_trigger_text = (
+            "시스템 트리거: 사용자 짧은 응답 후 후속 발화가 없다. "
+            "이 문장을 언급하지 말고 한국어 한 문장으로 깨움 확인을 해. "
+            f"사용자 응답: {user_text}"
+        )
+
+        if request_agent_reply(followup_instructions, followup_trigger_text):
+            mark_waiting_for_user_response()
+            logger.info("🗣️ Follow-up requested after short user response")
+        else:
+            logger.warning("⚠️ Failed to request follow-up after user response")
 
     async def send_initial_greeting(trigger: str):
         nonlocal greeted_user
@@ -1102,6 +1182,15 @@ async def entrypoint(ctx: JobContext):
                     "🛑 Local hangup requested from user transcript",
                     "알았어. 오늘 하루도 잘 보내.",
                 )
+                return
+
+            start_background_task(
+                ensure_assistant_followup_after_user(
+                    len(conversation_messages),
+                    text,
+                ),
+                name="assistant_followup_after_user",
+            )
 
     @session.on("agent_state_changed")
     def _on_agent_state_changed(ev):

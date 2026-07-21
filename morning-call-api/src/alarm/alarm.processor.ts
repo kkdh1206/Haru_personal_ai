@@ -52,6 +52,15 @@ export class AlarmProcessor extends WorkerHost implements OnModuleInit {
     if (!alarm) return;
     if (!retry && !alarm.isOn) return;
 
+    const alarmWithUser: any = await this.alarmService.getAlarmWithUser(alarmId);
+    if (!alarmWithUser?.user) {
+      await this.alarmService.disableOrphanedAlarm(
+        alarmId,
+        'job skipped because alarm user is missing',
+      );
+      return;
+    }
+
     const isLegacyJob = !action;
     const jobAction = action || 'call';
 

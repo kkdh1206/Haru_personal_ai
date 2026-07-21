@@ -98,7 +98,7 @@ export class ControlService {
 
       const retryMatch = message.match(/(\d+)\s*번/);
       if (retryMatch && /(전화하지마|재전화|retry)/.test(message)) {
-        patch.retryLimit = Math.max(0, Math.min(3, Number(retryMatch[1])));
+        patch.retryLimit = Math.max(0, Math.min(1, Number(retryMatch[1])));
       } else if (/재전화 줄이기/.test(message)) {
         patch.retryLimit = 1;
       }
@@ -107,7 +107,7 @@ export class ControlService {
         return {
           intent,
           success: false,
-          reply: '바꿀 설정을 짧게 말해 주세요. 예: 부드럽게 깨워줘, 3번 이상 전화하지마',
+          reply: '바꿀 설정을 짧게 말해 주세요. 부드럽게 깨워줘, 재전화하지마처럼 말할 수 있어요.',
         };
       }
 
