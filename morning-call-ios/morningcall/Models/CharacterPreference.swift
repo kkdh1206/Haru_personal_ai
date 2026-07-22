@@ -35,6 +35,10 @@ enum CharacterPreference: String, CaseIterable, Codable {
         }
     }
 
+    func localizedDisplayName(language: AppLanguage = AppLanguageStore.current) -> String {
+        AppLocalizer.string(displayName, language: language)
+    }
+
     var roleName: String {
         switch self {
         case .haru:
@@ -78,6 +82,10 @@ enum CharacterPreference: String, CaseIterable, Codable {
         case .hari:
             return "밝고 명랑한 에너지 톤"
         }
+    }
+
+    func localizedDescription(language: AppLanguage = AppLanguageStore.current) -> String {
+        AppLocalizer.string(description, language: language)
     }
 }
 

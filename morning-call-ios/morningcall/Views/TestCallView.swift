@@ -7,16 +7,17 @@ struct LiveKitInfo: Codable {
 
 struct TestCallView: View {
     @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var env: AppEnvironment
     @State private var wakeIntensity = "gentle"
 
     var body: some View {
         NavigationView {
             List {
-                Section("하루") {
+                Section(localized("하루")) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("친구처럼 챙겨주는 Haru")
+                        Text(localized("친구처럼 챙겨주는 Haru"))
                             .font(.headline)
-                        Text("테스트 통화에서도 Haru가 먼저 인사하고 깨워요.")
+                        Text(localized("테스트 통화에서도 Haru가 먼저 인사하고 깨워요."))
                             .font(.subheadline)
                             .foregroundColor(.gray)
                     }
@@ -27,7 +28,7 @@ struct TestCallView: View {
                     WakeIntensityView(selectedIntensity: $wakeIntensity)
                 } label: {
                     HStack {
-                        Text("깨우기 강도")
+                        Text(localized("깨우기 강도"))
                         Spacer()
                         Text(wakeIntensityLabel)
                             .foregroundColor(.gray)
@@ -39,12 +40,12 @@ struct TestCallView: View {
                         testCall()
                         dismiss()
                     } label: {
-                        Text("전화 걸기")
+                        Text(localized("전화 걸기"))
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
                 }
             }
-            .navigationTitle("테스트 전화")
+            .navigationTitle(localized("테스트 전화"))
             .navigationBarTitleDisplayMode(.inline)
         }
     }
@@ -52,10 +53,14 @@ struct TestCallView: View {
     private var wakeIntensityLabel: String {
         switch wakeIntensity {
         case "firm":
-            return "강하게"
+            return localized("강하게")
         default:
-            return "다정하게"
+            return localized("다정하게")
         }
+    }
+
+    private func localized(_ key: String) -> String {
+        AppLocalizer.string(key, language: env.appLanguage)
     }
 
     private func testCall() {

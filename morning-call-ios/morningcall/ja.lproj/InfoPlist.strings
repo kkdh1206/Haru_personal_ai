@@ -1,0 +1,6 @@
+"CFBundleDisplayName" = "Haru";
+"NSAlarmKitUsageDescription" = "インターネット接続がなく電話が届かない場合でも、起床アラームを鳴らすために使用します。";
+"NSCameraUsageDescription" = "カメラは、ユーザーが撮影機能を選択した場合にのみ使用します。";
+"NSLocationWhenInUseUsageDescription" = "現在地に基づいて天気と地域情報を設定するために使用します。";
+"NSMicrophoneUsageDescription" = "起床通話中に音声を送信するためにマイクを使用します。";
+"NSVoIPUsageDescription" = "アラーム時刻にHaruの朝の電話を受けるために必要です。";

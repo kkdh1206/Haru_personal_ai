@@ -18,12 +18,13 @@ struct BriefingView: View {
     @EnvironmentObject var env: AppEnvironment
 
     let now: Date = Date()
-    let formatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = .current          // 👉 시스템 로케일 따라감
-        f.dateFormat = "M월 d일 (E)" // 포맷만 지정
-        return f
-    }()
+
+    private var formatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = env.appLanguage.locale
+        formatter.dateFormat = env.appLanguage.briefingDateFormat
+        return formatter
+    }
     
     var body: some View {
         NavigationView {
@@ -37,7 +38,7 @@ struct BriefingView: View {
                             WeatherSection()
                             Spacer()
                         }
-                        Text("오늘의 일정")
+                        Text(localized("오늘의 일정"))
                             .font(.title)
                             .fontWeight(.bold)
                             .padding(.top, 24)
@@ -51,5 +52,9 @@ struct BriefingView: View {
             .listStyle(.plain)
             .navigationTitle(formatter.string(from: now))
         }
+    }
+
+    private func localized(_ key: String) -> String {
+        AppLocalizer.string(key, language: env.appLanguage)
     }
 }

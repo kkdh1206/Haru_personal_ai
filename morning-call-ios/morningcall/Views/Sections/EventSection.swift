@@ -36,7 +36,7 @@ struct EventSection: View {
                         HStack(spacing: 8) {
                             Image(systemName: "calendar.badge.clock")
                                 .foregroundStyle(.secondary)
-                            Text("오늘 일정이 없습니다")
+                            Text(localized("오늘 일정이 없습니다"))
                                 .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -50,7 +50,7 @@ struct EventSection: View {
                                         Text(ev.summary)
                                             .font(.headline)
                                             .lineLimit(1)
-                                        Text(ev.timeText)
+                                        Text(ev.localizedTimeText(language: env.appLanguage))
                                             .font(.subheadline)
                                             .foregroundStyle(.secondary)
                                     }
@@ -66,20 +66,9 @@ struct EventSection: View {
         .task { loadData() }
     }
 
-    private static let weekdayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = .autoupdatingCurrent     // 사용자 로케일 (ko면 "월/화/수…" 형태)
-        f.timeZone = .autoupdatingCurrent
-        f.dateFormat = "E"                  // 짧은 요일
-        return f
-    }()
-    private static let dayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = .autoupdatingCurrent
-        f.timeZone = .autoupdatingCurrent
-        f.dateFormat = "d"                  // 일(01 X, 1 O)
-        return f
-    }()
+    private func localized(_ key: String) -> String {
+        AppLocalizer.string(key, language: env.appLanguage)
+    }
 
     // MARK: - Networking
     private func loadData() {

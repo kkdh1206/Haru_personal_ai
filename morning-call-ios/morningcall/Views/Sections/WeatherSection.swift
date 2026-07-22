@@ -20,7 +20,7 @@ struct WeatherSection: View {
 //                .padding(.bottom, 16)
             if let w = weather {
                 VStack(alignment: .center, spacing: 4) {
-                    Text(env.user?.location ?? "서울특별시")
+                    Text(env.user?.location ?? AppLocalizer.string("서울특별시", language: env.appLanguage))
                         .font(.headline)
                         .padding(.top, 16)
                         .padding(.bottom, 8)

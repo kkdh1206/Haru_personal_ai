@@ -8,19 +8,19 @@ enum AlarmDateFormatter {
         return formatter
     }()
 
-    static let heroDate: DateFormatter = {
+    static func heroDate(language: AppLanguage) -> DateFormatter {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ko_KR")
-        formatter.dateFormat = "M월 d일 EEEE"
+        formatter.locale = language.locale
+        formatter.dateFormat = language.heroDateFormat
         return formatter
-    }()
+    }
 
-    static let monthDay: DateFormatter = {
+    static func monthDay(language: AppLanguage) -> DateFormatter {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ko_KR")
-        formatter.dateFormat = "M월 d일"
+        formatter.locale = language.locale
+        formatter.dateFormat = language.monthDayFormat
         return formatter
-    }()
+    }
 
     static let storage: DateFormatter = {
         let formatter = DateFormatter()
@@ -53,6 +53,8 @@ private struct CountdownToken: Identifiable {
 }
 
 struct AlarmTabView: View {
+    @EnvironmentObject var env: AppEnvironment
+
     @State private var alarms: [Alarm] = []
     @State private var isLoading = false
     @State private var editorContext: AlarmEditorContext?
@@ -62,18 +64,16 @@ struct AlarmTabView: View {
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private let weekdayOrder = [1, 2, 3, 4, 5, 6, 0]
-    private let weekdayLabels = [
-        0: "일",
-        1: "월",
-        2: "화",
-        3: "수",
-        4: "목",
-        5: "금",
-        6: "토",
-    ]
-
     private var recurringAlarms: [Alarm] {
         alarms.filter { ($0.targetDate ?? "").isEmpty }
+    }
+
+    private var language: AppLanguage {
+        env.appLanguage
+    }
+
+    private var weekdayLabels: [Int: String] {
+        language.weekdayShortLabels
     }
 
     private var currentDayPeriod: HaruDayPeriod {
@@ -180,12 +180,12 @@ struct AlarmTabView: View {
     private var heroSection: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 14) {
-                Text(AlarmDateFormatter.heroDate.string(from: now))
+                Text(AlarmDateFormatter.heroDate(language: language).string(from: now))
                     .font(.system(.headline, design: .rounded).weight(.medium))
                     .foregroundStyle(Color.black.opacity(0.55))
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("다음 모닝콜까지")
+                    Text(localized("다음 모닝콜까지"))
                         .font(.system(.title3, design: .rounded).weight(.semibold))
                         .foregroundStyle(Color.black.opacity(0.78))
 
@@ -196,11 +196,11 @@ struct AlarmTabView: View {
                             .font(.system(.headline, design: .rounded).weight(.medium))
                             .foregroundStyle(Color.black.opacity(0.58))
                     } else {
-                        Text("알람 없음")
+                        Text(localized("알람 없음"))
                             .font(.system(size: 42, weight: .bold, design: .rounded))
                             .foregroundStyle(Color.black.opacity(0.92))
 
-                        Text("알람을 추가해서 아침 루틴을 준비해보세요.")
+                        Text(localized("알람을 추가해서 아침 루틴을 준비해보세요."))
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(Color.black.opacity(0.58))
                     }
@@ -300,13 +300,12 @@ struct AlarmTabView: View {
     }
 
     private func makeWeekdayContext(for day: Int, existingAlarm: Alarm?) -> AlarmEditorContext {
-        let weekdayName = weekdayLabels[day] ?? ""
         let time = defaultDate(from: existingAlarm?.time ?? nextAlarmSummary?.timeText ?? "07:30")
         return AlarmEditorContext(
             mode: .weekday(day),
             existingAlarm: existingAlarm,
-            title: "\(weekdayName)요일 알람",
-            subtitle: "반복 알람은 빠르게 수정하는 게 중요해요.",
+            title: weekdayAlarmTitle(for: day),
+            subtitle: AppLocalizer.string("반복 알람은 빠르게 수정하는 게 중요해요.", language: language),
             defaultTime: time,
             isException: false
         )
@@ -571,7 +570,7 @@ struct AlarmTabView: View {
         let totalSeconds = max(Int(ceil(interval)), 0)
 
         if totalSeconds == 0 {
-            return "곧"
+            return AppLocalizer.string("곧", language: language)
         }
 
         let days = totalSeconds / (24 * 60 * 60)
@@ -581,51 +580,109 @@ struct AlarmTabView: View {
 
         if days > 0 {
             return hours > 0
-                ? "\(days)일 \(hours)시간 \(minutes)분 \(seconds)초"
-                : "\(days)일 \(minutes)분 \(seconds)초"
+                ? countdownText(days: days, hours: hours, minutes: minutes, seconds: seconds)
+                : countdownText(days: days, minutes: minutes, seconds: seconds)
         }
 
         if hours > 0 {
-            return "\(hours)시간 \(minutes)분 \(seconds)초"
+            return countdownText(hours: hours, minutes: minutes, seconds: seconds)
         }
 
         return minutes > 0
-            ? "\(minutes)분 \(seconds)초"
-            : "\(seconds)초"
+            ? countdownText(minutes: minutes, seconds: seconds)
+            : countdownText(seconds: seconds)
     }
 
     private func alarmSupportingText(for date: Date, timeText: String, remaining: TimeInterval) -> String {
         if remaining > 24 * 60 * 60 {
-            return "내일은 알람이 없어요."
+            return AppLocalizer.string("내일은 알람이 없어요.", language: language)
         }
 
         let calendar = Calendar.current
         let dayText: String
         if calendar.isDateInToday(date) {
-            dayText = "오늘"
+            dayText = AppLocalizer.string("오늘", language: language)
         } else if calendar.isDateInTomorrow(date) {
-            dayText = "내일"
+            dayText = AppLocalizer.string("내일", language: language)
         } else {
-            dayText = AlarmDateFormatter.monthDay.string(from: date)
+            dayText = AlarmDateFormatter.monthDay(language: language).string(from: date)
         }
 
-        return "\(dayText) \(timeText)에 깨워드릴게요."
+        return String(
+            format: AppLocalizer.string("alarm_supporting_text_format", language: language),
+            dayText,
+            timeText
+        )
     }
 
     private func wakeStyleLabel(for personality: String, wakeIntensity: String) -> String {
         switch personality {
         case "aggressive":
-            return "강하게"
+            return AppLocalizer.string("강하게", language: language)
         case "normal":
-            return "보통"
+            return AppLocalizer.string("보통", language: language)
         default:
             switch wakeIntensity {
             case "firm":
-                return "강하게"
+                return AppLocalizer.string("강하게", language: language)
             default:
-                return "부드럽게"
+                return AppLocalizer.string("부드럽게", language: language)
             }
         }
+    }
+
+    private func weekdayAlarmTitle(for day: Int) -> String {
+        String(
+            format: AppLocalizer.string("weekday_alarm_title_format", language: language),
+            weekdayLabels[day] ?? ""
+        )
+    }
+
+    private func countdownText(days: Int, hours: Int, minutes: Int, seconds: Int) -> String {
+        String(
+            format: AppLocalizer.string("countdown_days_hours_minutes_seconds_format", language: language),
+            days,
+            hours,
+            minutes,
+            seconds
+        )
+    }
+
+    private func countdownText(days: Int, minutes: Int, seconds: Int) -> String {
+        String(
+            format: AppLocalizer.string("countdown_days_minutes_seconds_format", language: language),
+            days,
+            minutes,
+            seconds
+        )
+    }
+
+    private func countdownText(hours: Int, minutes: Int, seconds: Int) -> String {
+        String(
+            format: AppLocalizer.string("countdown_hours_minutes_seconds_format", language: language),
+            hours,
+            minutes,
+            seconds
+        )
+    }
+
+    private func countdownText(minutes: Int, seconds: Int) -> String {
+        String(
+            format: AppLocalizer.string("countdown_minutes_seconds_format", language: language),
+            minutes,
+            seconds
+        )
+    }
+
+    private func countdownText(seconds: Int) -> String {
+        String(
+            format: AppLocalizer.string("countdown_seconds_format", language: language),
+            seconds
+        )
+    }
+
+    private func localized(_ key: String) -> String {
+        AppLocalizer.string(key, language: language)
     }
 
     private func wakeIntensityValue(for wakeStyle: String) -> String {

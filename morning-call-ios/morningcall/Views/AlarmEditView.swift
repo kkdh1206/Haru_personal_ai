@@ -85,6 +85,7 @@ fileprivate enum AlarmPresentationStore {
 
 struct AlarmEditView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var env: AppEnvironment
 
     private let context: AlarmEditorContext
     private let onSave: (AlarmEditorResult) -> Void
@@ -126,7 +127,7 @@ struct AlarmEditView: View {
                             onDelete()
                             dismiss()
                         } label: {
-                            Text(context.isException ? "예외 알람 삭제" : "이 요일 알람 삭제")
+                            Text(localized(context.isException ? "예외 알람 삭제" : "이 요일 알람 삭제"))
                                 .font(.system(.body, design: .rounded).weight(.semibold))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 16)
@@ -148,11 +149,11 @@ struct AlarmEditView: View {
             .tint(.black)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("취소") { dismiss() }
+                    Button(localized("취소")) { dismiss() }
                         .foregroundStyle(.black)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("저장") {
+                    Button(localized("저장")) {
                         let settings = AlarmPresentationSettings(
                             wakeStyle: wakeStyle,
                             snoozeMinutes: snoozeMinutes,
@@ -180,7 +181,7 @@ struct AlarmEditView: View {
 
     private var timeSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("시간 변경")
+            Text(localized("시간 변경"))
                 .font(.system(.headline, design: .rounded).weight(.semibold))
                 .foregroundStyle(.black)
 
@@ -202,7 +203,7 @@ struct AlarmEditView: View {
 
     private var wakeStyleSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("깨우기 방식")
+            Text(localized("깨우기 방식"))
                 .font(.system(.headline, design: .rounded).weight(.semibold))
                 .foregroundStyle(.black)
 
@@ -229,10 +230,10 @@ struct AlarmEditView: View {
         } label: {
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
+                    Text(localized(title))
                         .font(.system(.body, design: .rounded).weight(.semibold))
                         .foregroundStyle(.black)
-                    Text(detail)
+                    Text(localized(detail))
                         .font(.system(.footnote, design: .rounded))
                         .foregroundStyle(Color.black.opacity(0.58))
                         .multilineTextAlignment(.leading)
@@ -269,6 +270,10 @@ struct AlarmEditView: View {
 
     private var displayTime: String {
         AlarmDateFormatter.time.string(from: time)
+    }
+
+    private func localized(_ key: String) -> String {
+        AppLocalizer.string(key, language: env.appLanguage)
     }
 
     private static func normalizeWakeStyle(_ value: String) -> String {

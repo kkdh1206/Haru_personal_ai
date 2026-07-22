@@ -10,6 +10,13 @@ import Foundation
 class AppEnvironment: ObservableObject {
     @Published var user: User?
     @Published var onboardingStep: OnboardingStep = .loading
+    @Published var appLanguage: AppLanguage = AppLanguageStore.current
+
+    func updateAppLanguage(_ language: AppLanguage) {
+        guard appLanguage != language else { return }
+        AppLanguageStore.current = language
+        appLanguage = language
+    }
 }
 
 enum OnboardingStep {

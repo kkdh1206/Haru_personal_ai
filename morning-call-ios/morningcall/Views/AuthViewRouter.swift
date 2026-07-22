@@ -55,6 +55,7 @@ struct RootView: View {
             guard phase == .active, viewModel.isLoggedIn, env.onboardingStep == .completed else { return }
             CurrentLocationManager.shared.refreshAndSaveIfAuthorized(env: env)
         }
+        .environment(\.locale, env.appLanguage.locale)
         .environmentObject(viewModel)
     }
     

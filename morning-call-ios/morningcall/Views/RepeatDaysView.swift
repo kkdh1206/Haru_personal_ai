@@ -9,17 +9,13 @@ import SwiftUI
 
 
 struct RepeatDaysView: View {
+    @EnvironmentObject var env: AppEnvironment
+
     @Binding var selectedDays: Set<Int>
 
-    let days = [
-        (0, "일요일마다"),
-        (1, "월요일마다"),
-        (2, "화요일마다"),
-        (3, "수요일마다"),
-        (4, "목요일마다"),
-        (5, "금요일마다"),
-        (6, "토요일마다"),
-    ]
+    private var days: [(Int, String)] {
+        env.appLanguage.repeatDayLabels
+    }
 
     var body: some View {
         List {
@@ -43,7 +39,11 @@ struct RepeatDaysView: View {
                 .foregroundColor(.primary)
             }
         }
-        .navigationTitle("반복")
+        .navigationTitle(localized("반복"))
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func localized(_ key: String) -> String {
+        AppLocalizer.string(key, language: env.appLanguage)
     }
 }

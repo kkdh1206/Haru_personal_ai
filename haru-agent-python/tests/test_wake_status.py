@@ -1,4 +1,4 @@
-from agent import infer_wake_status
+from agent import build_farewell_reply_request, infer_wake_status
 
 
 def user_message(text: str) -> dict:
@@ -14,6 +14,7 @@ def test_clear_wake_claim_marks_user_awake():
 
 def test_future_or_acknowledgement_claim_is_not_awake_yet():
     assert infer_wake_status([user_message("알겠어")]) == ("not_awake", True)
+    assert infer_wake_status([user_message("알았어")]) == ("not_awake", True)
     assert infer_wake_status([user_message("일어날게")]) == ("not_awake", True)
 
 
@@ -64,3 +65,11 @@ def test_filler_or_mumbled_short_responses_stay_not_awake():
         "not_awake",
         True,
     )
+
+
+def test_farewell_reply_request_includes_hangup_intent():
+    instructions, trigger_text = build_farewell_reply_request("알았어. 좋은 하루 보내.")
+
+    assert "이제 끊을게" in instructions
+    assert "알았어. 좋은 하루 보내." in instructions
+    assert "마무리 멘트" in trigger_text

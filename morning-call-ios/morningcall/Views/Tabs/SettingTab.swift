@@ -23,6 +23,7 @@ struct SettingView: View {
     @EnvironmentObject var env: AppEnvironment
 
     @State private var userName: String = ""
+    @State private var selectedAppLanguage: AppLanguage = AppLanguageStore.current
     @State private var selectedLanguage: String = "한국어"
     @State private var selectedCharacter: CharacterPreference = CharacterPreferenceStore.current
     @State private var isCalendarConnected = false
@@ -42,6 +43,7 @@ struct SettingView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 profileSection
+                appLanguageSection
                 callSection
                 characterSection
                 calendarSection
@@ -52,27 +54,27 @@ struct SettingView: View {
             .padding(.bottom, 36)
         }
         .background(Color(red: 0.97, green: 0.96, blue: 0.93).ignoresSafeArea())
-        .navigationTitle("설정")
+        .navigationTitle(localized("설정"))
         .navigationBarTitleDisplayMode(.inline)
         .tint(.black)
         .task {
             loadInitialSettings()
             loadCalendarStatus()
         }
-        .alert("계정 탈퇴", isPresented: $showDeleteAccountAlert) {
-            Button("취소", role: .cancel) {}
-            Button("탈퇴", role: .destructive) {
+        .alert(localized("계정 탈퇴"), isPresented: $showDeleteAccountAlert) {
+            Button(localized("취소"), role: .cancel) {}
+            Button(localized("탈퇴"), role: .destructive) {
                 deleteAccount()
             }
         } message: {
-            Text("계정과 알람이 삭제됩니다. 이 작업은 되돌릴 수 없어요.")
+            Text(localized("계정과 알람이 삭제됩니다. 이 작업은 되돌릴 수 없어요."))
         }
         .preferredColorScheme(.light)
     }
 
     private var profileSection: some View {
         settingsCard(title: "프로필") {
-            TextField("이름", text: $userName)
+            TextField(localized("이름"), text: $userName)
                 .font(.system(.body, design: .rounded).weight(.semibold))
                 .foregroundStyle(.black)
                 .textInputAutocapitalization(.never)
@@ -93,15 +95,15 @@ struct SettingView: View {
                     .font(.system(size: 19, weight: .semibold))
                     .foregroundStyle(Color.black.opacity(0.7))
 
-                Text("선택 언어")
+                Text(localized("선택 언어"))
                     .font(.system(.body, design: .rounded).weight(.semibold))
                     .foregroundStyle(.black)
 
                 Spacer()
 
-                Picker("언어", selection: $selectedLanguage) {
+                Picker(localized("언어"), selection: $selectedLanguage) {
                     ForEach(languageOptions, id: \.code) { lang in
-                        Text(lang.label)
+                        Text(localized(lang.label))
                             .tag(lang.code)
                     }
                 }
@@ -120,6 +122,40 @@ struct SettingView: View {
         }
     }
 
+    private var appLanguageSection: some View {
+        settingsCard(title: "앱 내부 언어") {
+            HStack(spacing: 12) {
+                Image(systemName: "translate")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(Color.black.opacity(0.7))
+
+                Text(localized("화면 표시 언어"))
+                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.black)
+
+                Spacer()
+
+                Picker(localized("언어"), selection: $selectedAppLanguage) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(language.nativeLabel)
+                            .tag(language)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .tint(.black)
+            }
+            .padding(18)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.white.opacity(0.78))
+            )
+            .onChange(of: selectedAppLanguage) { language in
+                env.updateAppLanguage(language)
+            }
+        }
+    }
+
     private var characterSection: some View {
         settingsCard(title: "통화 시 캐릭터") {
             VStack(spacing: 12) {
@@ -134,10 +170,10 @@ struct SettingView: View {
                                 .frame(width: 44, height: 44)
 
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(character.displayName)
+                                Text(character.localizedDisplayName(language: env.appLanguage))
                                     .font(.system(.body, design: .rounded).weight(.semibold))
                                     .foregroundStyle(.black)
-                                Text(character.description)
+                                Text(character.localizedDescription(language: env.appLanguage))
                                     .font(.system(.footnote, design: .rounded))
                                     .foregroundStyle(Color.black.opacity(0.58))
                                     .multilineTextAlignment(.leading)
@@ -174,10 +210,10 @@ struct SettingView: View {
                         .foregroundStyle(isCalendarConnected ? Color(red: 0.2, green: 0.55, blue: 0.32) : Color.black.opacity(0.68))
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(isCalendarConnected ? "연동됨" : "연동 안 됨")
+                        Text(localized(isCalendarConnected ? "연동됨" : "연동 안 됨"))
                             .font(.system(.body, design: .rounded).weight(.semibold))
                             .foregroundStyle(.black)
-                        Text(isCalendarConnected ? "Google Calendar가 연결되어 있어요." : "일정 추가를 사용하려면 캘린더를 연결해 주세요.")
+                        Text(localized(isCalendarConnected ? "Google Calendar가 연결되어 있어요." : "일정 추가를 사용하려면 캘린더를 연결해 주세요."))
                             .font(.system(.footnote, design: .rounded))
                             .foregroundStyle(Color.black.opacity(0.58))
                     }
@@ -193,7 +229,7 @@ struct SettingView: View {
                     Button {
                         disconnectCalendar()
                     } label: {
-                        Text(isCalendarDisconnecting ? "해제 중..." : "캘린더 연동 해제")
+                        Text(localized(isCalendarDisconnecting ? "해제 중..." : "캘린더 연동 해제"))
                             .font(.system(.body, design: .rounded).weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
@@ -216,7 +252,7 @@ struct SettingView: View {
                                 Image(systemName: "link")
                                     .font(.system(size: 17, weight: .semibold))
                             }
-                            Text(isCalendarConnecting ? "연동 중..." : "캘린더 연동하기")
+                            Text(localized(isCalendarConnecting ? "연동 중..." : "캘린더 연동하기"))
                                 .font(.system(.body, design: .rounded).weight(.semibold))
                         }
                         .frame(maxWidth: .infinity)
@@ -235,7 +271,7 @@ struct SettingView: View {
 
     private var logoutSection: some View {
         VStack(spacing: 12) {
-            Button("로그아웃") {
+            Button(localized("로그아웃")) {
                 authVM.signOut()
             }
             .font(.system(.body, design: .rounded).weight(.semibold))
@@ -247,7 +283,7 @@ struct SettingView: View {
                     .fill(Color.white.opacity(0.82))
             )
 
-            Button(isDeletingAccount ? "탈퇴 중..." : "계정 탈퇴") {
+            Button(localized(isDeletingAccount ? "탈퇴 중..." : "계정 탈퇴")) {
                 showDeleteAccountAlert = true
             }
             .disabled(isDeletingAccount)
@@ -267,7 +303,7 @@ struct SettingView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(title)
+            Text(AppLocalizer.string(title, language: env.appLanguage))
                 .font(.system(.headline, design: .rounded).weight(.semibold))
                 .foregroundStyle(.black)
 
@@ -285,6 +321,10 @@ struct SettingView: View {
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
                     .stroke(Color.white.opacity(0.55), lineWidth: 1)
             )
+    }
+
+    private func localized(_ key: String) -> String {
+        AppLocalizer.string(key, language: env.appLanguage)
     }
     
     // MARK: - 설정 관련 helper
@@ -321,6 +361,7 @@ struct SettingView: View {
     
     private func loadInitialSettings() {
         self.userName = env.user?.name ?? ""
+        self.selectedAppLanguage = env.appLanguage
         self.selectedLanguage = normalizedLanguage(env.user?.language)
         self.selectedCharacter = CharacterPreferenceStore.current
     }

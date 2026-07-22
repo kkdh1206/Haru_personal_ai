@@ -21,15 +21,19 @@ struct Event: Identifiable, Hashable, Decodable {
 
     /// 표시용 텍스트
     var timeText: String {
+        localizedTimeText(language: AppLanguageStore.current)
+    }
+
+    func localizedTimeText(language: AppLanguage) -> String {
         guard let s = startDate, let e = endDate else { return "" }
-        if isAllDay { return "종일" }
+        if isAllDay { return AppLocalizer.string("종일", language: language) }
 
         // 같은 날이면 시간만, 아니면 날짜+시간 범위
         let cal = Calendar.autoupdatingCurrent
         if cal.isDate(s, inSameDayAs: e) {
-            return "\(Self.hm.string(from: s))–\(Self.hm.string(from: e))"
+            return "\(Self.hm(language: language).string(from: s))–\(Self.hm(language: language).string(from: e))"
         } else {
-            return Self.intervalFormatter.string(from: s, to: e)
+            return Self.intervalFormatter(language: language).string(from: s, to: e)
         }
     }
 
@@ -70,19 +74,19 @@ struct Event: Identifiable, Hashable, Decodable {
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
-    private static let hm: DateFormatter = {
+    private static func hm(language: AppLanguage) -> DateFormatter {
         let f = DateFormatter()
-        f.locale = .autoupdatingCurrent
+        f.locale = language.locale
         f.timeZone = .autoupdatingCurrent
         f.dateFormat = "HH:mm"
         return f
-    }()
-    private static let intervalFormatter: DateIntervalFormatter = {
+    }
+    private static func intervalFormatter(language: AppLanguage) -> DateIntervalFormatter {
         let f = DateIntervalFormatter()
-        f.locale = .autoupdatingCurrent
+        f.locale = language.locale
         f.timeZone = .autoupdatingCurrent
         f.dateStyle = .short
         f.timeStyle = .short
         return f
-    }()
+    }
 }
