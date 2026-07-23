@@ -21,6 +21,7 @@ class AppEnvironment: ObservableObject {
 
 enum OnboardingStep {
     case loading
+    case featureIntro
     case enterName
     case requestLocation
     case completed

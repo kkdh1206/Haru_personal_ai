@@ -429,15 +429,18 @@ struct SettingView: View {
                 switch result {
                 case .success:
                     guard let currentUser = Auth.auth().currentUser else {
+                        FeatureIntroStore.resetForCurrentUser()
                         authVM.signOut()
                         return
                     }
 
+                    let deletedUserID = currentUser.uid
                     currentUser.delete { error in
                         if let error {
                             print("❌ Firebase 계정 삭제 실패: \(error)")
                         }
                         DispatchQueue.main.async {
+                            FeatureIntroStore.reset(forUserID: deletedUserID)
                             authVM.signOut()
                         }
                     }

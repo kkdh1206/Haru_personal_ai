@@ -32,6 +32,8 @@ struct RootView: View {
                 case .loading:
                     LoadingView()
                         .onAppear(perform: checkAuth)
+                case .featureIntro:
+                    FeatureIntroView()
                 case .enterName:
                     EnterNameView()
                 case .requestLocation:
@@ -72,12 +74,11 @@ struct RootView: View {
                         language: user.language
                     )
                     let trimmedName = user.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let trimmedLocation = user.location?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
                     if trimmedName.isEmpty {
                         env.onboardingStep = .enterName
-                    } else if trimmedLocation.isEmpty {
-                        env.onboardingStep = .requestLocation
+                    } else if FeatureIntroStore.shouldShow(for: user) {
+                        env.onboardingStep = .featureIntro
                     } else {
                         env.onboardingStep = .completed
                     }

@@ -11,6 +11,8 @@ struct EnterNameView: View {
     @EnvironmentObject var env: AppEnvironment
     @State private var name = ""
     @State private var showNameError = false
+    @State private var showSaveError = false
+    @State private var isSaving = false
 
     var body: some View {
         ZStack {
@@ -18,7 +20,7 @@ struct EnterNameView: View {
 
             GeometryReader { proxy in
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("1 / 2")
+                    Text("프로필")
                         .font(.system(.headline, design: .rounded).weight(.semibold))
                         .foregroundStyle(Color.black.opacity(0.56))
                         .lineLimit(1)
@@ -44,9 +46,19 @@ struct EnterNameView: View {
                             .background(Color.white.opacity(0.88), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                             .foregroundStyle(Color.black.opacity(0.90))
                             .submitLabel(.done)
+                            .disabled(isSaving)
+                            .onSubmit {
+                                goNext()
+                            }
 
                         if showNameError {
                             Text("이름을 입력해야 다음으로 넘어갈 수 있어요.")
+                                .font(.system(.footnote, design: .rounded).weight(.semibold))
+                                .foregroundStyle(Color.red.opacity(0.82))
+                        }
+
+                        if showSaveError {
+                            Text("프로필 저장에 실패했어요. 다시 시도해 주세요.")
                                 .font(.system(.footnote, design: .rounded).weight(.semibold))
                                 .foregroundStyle(Color.red.opacity(0.82))
                         }
@@ -55,9 +67,12 @@ struct EnterNameView: View {
 
                     Spacer(minLength: 24)
 
-                    Button("다음") {
+                    Button {
                         goNext()
+                    } label: {
+                        Text(LocalizedStringKey(isSaving ? "저장 중..." : "다음"))
                     }
+                    .disabled(isSaving)
                     .buttonStyle(PrimaryButtonStyle())
                     .padding(.bottom, proxy.safeAreaInsets.bottom + 44)
                 }
@@ -65,6 +80,9 @@ struct EnterNameView: View {
                 .padding(.top, proxy.safeAreaInsets.top + 44)
                 .frame(width: proxy.size.width, height: proxy.size.height)
             }
+        }
+        .onAppear {
+            name = env.user?.name ?? ""
         }
         .preferredColorScheme(.light)
     }
@@ -86,7 +104,29 @@ struct EnterNameView: View {
         }
 
         showNameError = false
-        env.user?.name = trimmed
-        env.onboardingStep = .requestLocation
+        showSaveError = false
+        isSaving = true
+
+        APIClient.request(path: "/user", method: .PUT, body: [
+            "name": trimmed,
+            "location": env.user?.location ?? "",
+            "language": env.user?.language ?? "한국어"
+        ]) { (result: Result<UserInfo, Error>) in
+            DispatchQueue.main.async {
+                isSaving = false
+
+                switch result {
+                case .success(let user):
+                    env.user?.name = user.name ?? trimmed
+                    env.user?.location = user.location ?? env.user?.location
+                    env.user?.language = user.language ?? env.user?.language
+
+                    env.onboardingStep = .featureIntro
+                case .failure(let error):
+                    showSaveError = true
+                    print("❌ 프로필 저장 실패: \(error)")
+                }
+            }
+        }
     }
 }

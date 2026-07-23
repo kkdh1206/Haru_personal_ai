@@ -115,3 +115,21 @@
 "해제" = "Dismiss";
 "정지" = "Stop";
 "일어날 시간이에요." = "It's time to wake up.";
+
+"시작하기 전에" = "Before You Start";
+"Haru가 안정적으로 아침 전화를 드릴 수 있도록 몇 가지만 알려드릴게요." = "A few things to know so Haru can reliably call you in the morning.";
+"앱 언어를 바꿀 수 있어요" = "Change the app language";
+"설정에서 한국어, 영어, 일본어로 화면 언어를 선택할 수 있어요." = "Choose Korean, English, or Japanese for the app UI in Settings.";
+"목소리와 캐릭터를 고를 수 있어요" = "Choose a voice and character";
+"기상 전화에 어울리는 목소리와 캐릭터를 설정할 수 있어요." = "Pick the voice and character that fit your wake-up calls.";
+"방해금지 모드에서는 전화가 안 올 수 있어요" = "Do Not Disturb may block calls";
+"알람 시간 전 집중 모드와 방해금지 설정을 확인해 주세요." = "Check Focus and Do Not Disturb before your alarm time.";
+"인터넷이 안 되면 기본 알람이 울려요" = "If internet is unavailable, a default alarm rings";
+"전화 연결이 어려운 상황에서는 일반 iPhone 알람으로 깨워드려요." = "When calls cannot connect, a regular iPhone alarm will wake you.";
+"마이크 권한 허용하고 시작하기" = "Allow Microphone and Start";
+"권한 확인 중..." = "Checking Permission...";
+"시작하기" = "Start";
+"계속하기" = "Continue";
+"마이크 권한은 통화 전에 설정에서 다시 허용할 수 있어요." = "You can allow microphone access again in Settings before calls.";
+"저장 중..." = "Saving...";
+"프로필 저장에 실패했어요. 다시 시도해 주세요." = "Failed to save your profile. Please try again.";
