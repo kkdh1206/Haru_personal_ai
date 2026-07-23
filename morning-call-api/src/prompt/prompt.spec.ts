@@ -20,13 +20,15 @@ describe('buildMorningCallPrompt', () => {
     });
 
     expect(prompt).toContain('한 번에 1~2문장만 말한다');
+    expect(prompt).toContain('이름 뒤에 "님", "씨" 같은 호칭을 붙이지 않는다');
     expect(prompt).toContain('일어났어"라고 또박또박');
     expect(prompt).toContain('사용자가 "일어났어"라고 또렷하게 말하면 깬 것으로 본다');
-    expect(prompt).toContain('방금 뭐라고 했어? 또박또박 크게 말해줘.');
+    expect(prompt).toContain('방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘.');
+    expect(prompt).toContain('산수 문제로 바로 넘어가지 말고');
     expect(prompt).toContain('3+4, 5+6, 7x8, 12-5');
     expect(prompt).toContain('경상도 사투리를 가볍게');
     expect(prompt).toContain('인났나? 또박또박 말해봐라.');
-    expect(prompt).toContain('짧게 브리핑해줄까?');
+    expect(prompt).toContain('바로 끊지 말고 먼저 "짧게 브리핑해줄까?"');
     expect(prompt).toContain('특정 정체성 비하, 혐오, 위협은 하지 않는다');
     expect(prompt).toContain('날씨는 제공된 정보만 말하고 지어내지 않는다');
     expect(prompt).toContain('압박 카드');

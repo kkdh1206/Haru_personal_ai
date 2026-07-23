@@ -35,11 +35,12 @@ CONTROL_INSTRUCTIONS = """
 Only call request_hangup when the user clearly asks to end the call.
 Do not treat wake confirmations like "일어났어", "응", "알겠어", "알았어", or "준비할게" as hangup requests.
 Keep replies short: usually 1-2 sentences.
+When using the user's name, use the stored name as-is. Do not add honorific suffixes like "님" or "씨".
 Tell the user the pass condition clearly: say "일어났어" or confirm sitting up, water, lights, bathroom, washing up, or being out of bed.
-If speech is mumbled or sleep-talk-like, ask once in Korean: "방금 뭐라고 했어? 또박또박 크게 말해줘."
-If still ambiguous, ask one varied easy check, not the same question every time.
+If speech is unclear, mumbled, or sleep-talk-like, first ask what they said in Korean: "방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘."
+If the user sounds present but the content is still ambiguous, ask one varied easy check, not the same question every time.
 Use light Gyeongsang dialect only for short wake nudges, e.g. "인났나? 또박또박 말해봐라."; keep briefing and important info standard Korean.
-After the user seems awake, ask "짧게 브리핑해줄까?" or give one practical note from weather/schedule, then end naturally.
+After the user seems awake, ask "짧게 브리핑해줄까?" before ending unless you already gave a practical weather/schedule note.
 If the assistant already said a goodbye and the user stays silent, end the call naturally.
 If the user's intent to end the call is unclear, ask one short confirmation.
 """
@@ -797,6 +798,7 @@ async def entrypoint(ctx: JobContext):
     greeted_user = False
     call_outcome_reported = False
     participant_joined = False
+    wake_confirmed = False
     session: AgentSession
     session_started = asyncio.Event()
     greeting_lock = asyncio.Lock()
@@ -1040,6 +1042,13 @@ async def entrypoint(ctx: JobContext):
         if not callable(send_client_event):
             return False
 
+        current_generation = getattr(rt_session, "_current_generation", None)
+        generation_done = bool(getattr(current_generation, "_done", True))
+        start_new_generation = getattr(rt_session, "_start_new_generation", None)
+        if generation_done and callable(start_new_generation):
+            start_new_generation()
+            logger.info("🧩 Created realtime generation before synthetic text trigger")
+
         send_client_event(
             genai_types.LiveClientContent(
                 turns=[
@@ -1081,6 +1090,8 @@ async def entrypoint(ctx: JobContext):
         message_count_after_user: int,
         user_text: str,
     ):
+        nonlocal wake_confirmed
+
         await asyncio.sleep(1.4)
 
         if (
@@ -1098,27 +1109,33 @@ async def entrypoint(ctx: JobContext):
         if assistant_replied:
             return
 
-        wake_status, had_user_response = infer_wake_status(conversation_messages)
+        wake_status, _ = infer_wake_status(conversation_messages)
         if wake_status == "awake":
-            result = await report_call_outcome_once(
-                "awake",
-                had_user_response=had_user_response,
+            wake_confirmed = True
+            briefing_instructions = (
+                "사용자가 깬 것으로 확인됐다. 통화를 바로 끊지 말고 한국어로 한 문장만 말해. "
+                "저장된 이름을 부를 때는 이름 그대로만 쓰고 '님'이나 '씨'를 붙이지 마. "
+                "'깬 거 확인했어. 짧게 브리핑해줄까?'처럼 브리핑을 원하는지 물어봐. "
+                "이미 날씨나 첫 일정을 알려준 흐름이면 아주 짧은 실용 정보 하나만 말하고 마무리해."
             )
-            logger.info(
-                "📟 Awake outcome reported after user follow-up watchdog: "
-                f"result={result}"
+            briefing_trigger_text = (
+                "시스템 트리거: 사용자가 깬 것으로 확인됐다. 이 문장을 언급하지 말고 "
+                "한국어 한 문장으로 브리핑을 원하는지 물어봐. "
+                f"사용자 응답: {user_text}"
             )
-            _trigger_hangup(
-                "✅ User confirmed awake; ending without retry",
-                "좋아, 깬 거 확인했어. 이제 끊을게. 오늘 하루 잘 보내.",
-            )
+            if request_agent_reply(briefing_instructions, briefing_trigger_text):
+                mark_waiting_for_user_response()
+                logger.info("🗣️ Briefing question requested after wake confirmation")
+            else:
+                logger.warning("⚠️ Failed to request briefing question after wake confirmation")
             return
 
         followup_instructions = (
             "사용자가 짧게 대답했는데 네 응답이 아직 없다. 한국어로 한 문장만 말해. "
-            "일어났으면 '일어났어'라고 또박또박 말하라고 안내하고, "
-            "애매하면 3+4, 5+6, 7x8, 12-5 같은 쉬운 확인 문제 중 하나만 골라 물어봐. "
-            "항상 같은 문제를 내지 마."
+            "저장된 이름을 부를 때는 이름 그대로만 쓰고 '님'이나 '씨'를 붙이지 마. "
+            "발화가 뭉개졌거나 못 알아들은 느낌이면 먼저 '방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘.'라고 물어봐. "
+            "대답 내용은 들렸지만 깼는지 애매하면 앉았는지, 물 마셨는지, 불 켰는지 확인해. "
+            "그래도 애매하면 3+4, 5+6, 7x8, 12-5 같은 쉬운 확인 문제 중 하나만 골라 물어봐. 항상 같은 문제를 내지 마."
         )
         followup_trigger_text = (
             "시스템 트리거: 사용자 짧은 응답 후 후속 발화가 없다. "
@@ -1262,7 +1279,7 @@ async def entrypoint(ctx: JobContext):
 
     @session.on("conversation_item_added")
     def _on_conversation_item_added(ev):
-        nonlocal assistant_said_goodbye
+        nonlocal assistant_said_goodbye, wake_confirmed
 
         item = getattr(ev, "item", None)
         if not isinstance(item, ChatMessage):
@@ -1281,6 +1298,9 @@ async def entrypoint(ctx: JobContext):
         else:
             assistant_said_goodbye = False
             clear_waiting_for_user_response(reset_silence_nudges=True)
+            wake_status, _ = infer_wake_status(conversation_messages)
+            if wake_status == "awake":
+                wake_confirmed = True
             logger.info(f"👤 User said: {text}")
             if not hangup_requested and is_explicit_hangup_request(text):
                 _trigger_hangup(
@@ -1442,6 +1462,17 @@ async def entrypoint(ctx: JobContext):
 
             if assistant_said_goodbye:
                 _trigger_hangup("👋 Ending call after goodbye and user silence")
+                return
+
+            if wake_confirmed:
+                await report_call_outcome_once(
+                    "awake",
+                    had_user_response=True,
+                )
+                _trigger_hangup(
+                    "✅ User confirmed awake; ending after briefing silence",
+                    "좋아, 깬 거 확인했어. 이제 끊을게. 오늘 하루 잘 보내.",
+                )
                 return
 
             if silence_nudge_count >= max_nudges:
