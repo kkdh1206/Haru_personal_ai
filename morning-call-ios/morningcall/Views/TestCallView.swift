@@ -74,8 +74,14 @@ struct TestCallView: View {
                 switch result {
                 case .success(let updated):
                     print("방 생성 성공: \(updated)")
-                    CallManager.shared.prepareIncoming(url: updated.lkUrl, token: updated.lkToken, alarmId: "-")
-                    CallManager.shared.startOutgoing(handle: character.roleName)
+                    Task {
+                        await CallManager.shared.prepareIncoming(
+                            url: updated.lkUrl,
+                            token: updated.lkToken,
+                            alarmId: "-"
+                        )
+                        await CallManager.shared.startOutgoing(handle: character.roleName)
+                    }
                 case .failure(let error):
                     print("방 생성 실패: \(error)")
                 }

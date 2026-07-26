@@ -3,7 +3,7 @@ import { DateTime } from 'luxon';
 import { AlarmService } from 'src/alarm/alarm.service';
 import { CalendarService } from 'src/calendar/calendar.service';
 import { InformationService } from 'src/information/information.service';
-import { buildMorningCallPrompt } from './prompt';
+import { buildMorningCallPrompt, buildTestCallPrompt } from './prompt';
 
 @Injectable()
 export class PromptService {
@@ -96,7 +96,10 @@ export class PromptService {
     return Number(value).toFixed(1).replace(/\.0$/, '');
   }
 
-  private formatWeatherObservedAt(value?: string | null, timeZone = 'Asia/Seoul') {
+  private formatWeatherObservedAt(
+    value?: string | null,
+    timeZone = 'Asia/Seoul',
+  ) {
     if (!value) {
       return '';
     }
@@ -148,6 +151,7 @@ export class PromptService {
       name: user.name,
       assistantName: alarm.role || '하루',
       language: user.language,
+      speechStyle: user.speechStyle,
       timeZone,
       wakeIntensity: alarm.wakeIntensity,
       callType,
@@ -167,47 +171,14 @@ export class PromptService {
 
   async getTestCallPrompt(
     user,
-    wakeIntensity = 'gentle',
-    assistantName = '하루',
+    _wakeIntensity = 'gentle',
+    assistantName = '하리',
   ) {
-    const timeZone = user.timeZone || 'Asia/Seoul';
-    const now = DateTime.now().setZone(timeZone);
-    const todayLabel = now.toFormat('yyyy년 MM월 dd일 cccc');
-    const currentTimeLabel = now.toFormat('yyyy년 MM월 dd일 cccc HH:mm');
-    const currentIsoTime =
-      now.toISO() || now.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
-
-    // 1. 구글 캘린더 일정 조회
-    const schedules = this.normalizeSchedules(
-      await this.calendarService.getTodayEvents(user._id),
-      timeZone,
-    );
-
-    // 2. 날씨 가져오기
-    const weather = await this.informationService.getCurrentWeather(
-      user.location || 'Seoul',
-    );
-    const weatherInfo = this.formatWeatherInfo(weather, timeZone);
-
-    // 3. 일정, 날씨를 바탕으로 프롬프트 구성
-    const prompt = buildMorningCallPrompt({
-      name: user.name,
+    return buildTestCallPrompt({
+      name: user.name || '사용자',
       assistantName,
-      language: user.language,
-      timeZone,
-      wakeIntensity,
-      callType: 'initial',
-      retryCount: 0,
-      retryCallsRemaining: this.getMaxDailyRetryCalls(),
-      lastWakeStatus: null,
-      customMessage: user.customMessage,
-      todayLabel,
-      currentTimeLabel,
-      currentIsoTime,
-      schedule: schedules,
-      weather: weatherInfo,
+      language: user.language || '한국어',
+      speechStyle: user.speechStyle,
     });
-
-    return prompt;
   }
 }

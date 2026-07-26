@@ -51,7 +51,7 @@ enum CharacterPreference: String, CaseIterable, Codable {
     var voiceName: String {
         switch self {
         case .haru:
-            return "Charon"
+            return "Achird"
         case .hari:
             return "Leda"
         }
@@ -98,7 +98,7 @@ enum CharacterPreferenceStore {
                 let raw = UserDefaults.standard.string(forKey: key),
                 let value = CharacterPreference(rawValue: raw)
             else {
-                return .haru
+                return .hari
             }
             return value
         }

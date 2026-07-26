@@ -17,6 +17,7 @@ from livekit.agents import (
     RoomInputOptions,
     RoomOutputOptions,
     RunContext,
+    SpeechCreatedEvent,
     WorkerOptions,
     cli,
     metrics,
@@ -33,16 +34,28 @@ load_dotenv(".env.local")
 
 CONTROL_INSTRUCTIONS = """
 Only call request_hangup when the user clearly asks to end the call.
-Do not treat wake confirmations like "일어났어", "응", "알겠어", "알았어", or "준비할게" as hangup requests.
+Do not treat wake confirmations or future commitments like "일어났어", "起きたよ", "I'm up", "알겠어", "わかった", or "I'll get up" as hangup requests.
 Keep replies short: usually 1-2 sentences.
 When using the user's name, use the stored name as-is. Do not add honorific suffixes like "님" or "씨".
-Tell the user the pass condition clearly: say "일어났어" or confirm sitting up, water, lights, bathroom, washing up, or being out of bed.
-If speech is unclear, mumbled, or sleep-talk-like, first ask what they said in Korean: "방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘."
+Tell the user the pass condition in the configured conversation language: "일어났어", "起きたよ", or "I'm up", or confirm a concrete action.
+If speech is unclear, mumbled, or sleep-talk-like, ask once in the configured conversation language: "방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘.", "今なんて言った? もう一回はっきり言って。", or "Sorry, what did you say? Say that one more time clearly."
 If the user sounds present but the content is still ambiguous, ask one varied easy check, not the same question every time.
-Use light Gyeongsang dialect only for short wake nudges, e.g. "인났나? 또박또박 말해봐라."; keep briefing and important info standard Korean.
-After the user seems awake, ask "짧게 브리핑해줄까?" before ending unless you already gave a practical weather/schedule note.
+Treat the configured speech style as a light accent, not the main content of every reply.
+For Korean, use at most one short Gyeongsang expression in a wake nudge and keep sentence endings natural and conversational.
+Keep clarification questions, briefings, weather, schedules, and farewells in natural standard conversational language.
+After the user seems awake, ask whether they want a quick briefing in the configured conversation language before ending, unless you already gave a practical weather or schedule note.
 If the assistant already said a goodbye and the user stays silent, end the call naturally.
 If the user's intent to end the call is unclear, ask one short confirmation.
+"""
+
+TEST_CONTROL_INSTRUCTIONS = """
+This is a short onboarding call-delivery test.
+- Use no tools or function calls.
+- Say one short opening and ask whether the user can hear the call clearly.
+- After one user reply, say one short final line confirming what you heard and that you will hang up.
+- Finish the entire final line. The application will end the call immediately after your speech finishes.
+- Do not ask another question or continue the conversation after the final line.
+- Do not load or discuss memory, weather, calendar events, wake status, or retry calls.
 """
 
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-live-preview"
@@ -51,12 +64,17 @@ DEFAULT_HANGUP_GRACE_SECONDS = 0.1
 DEFAULT_GEMINI_THINKING_MODE = "disabled"
 DEFAULT_MAX_MEMORY_CONTEXT_CHARS = 300
 DEFAULT_MAX_CONVERSATION_MESSAGES = 6
-DEFAULT_MAX_RETRY_CALLS = 1
+DEFAULT_MAX_RETRY_CALLS = 2
 DEFAULT_USER_SILENCE_NUDGE_SECONDS = 5.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
 DEFAULT_NO_RESPONSE_RETRY_MINUTES = 2
 DEFAULT_FAREWELL_PLAYOUT_TIMEOUT_SECONDS = 8.0
+DEFAULT_TEST_FAREWELL_PLAYOUT_TIMEOUT_SECONDS = 20.0
+DEFAULT_TEST_HANGUP_DELAY_SECONDS = 0.25
+DEFAULT_SHUTDOWN_STEP_TIMEOUT_SECONDS = 2.0
 DEFAULT_HANGUP_FAREWELL_TEXT = "알았어. 이제 끊을게. 오늘 하루 잘 보내."
+CALL_END_TOPIC = "haru.call.control"
+CALL_END_MESSAGE = '{"type":"call.end","reason":"completed"}'
 DEFAULT_USER_SILENCE_NUDGE_TEXTS = (
     "첫 무응답이다. '인났나, 인났나'처럼 짧게 부르고 앉기나 몸 세우기 미션을 바로 시킨다.",
     "두 번째 무응답이다. '셋, 둘, 하나'처럼 짧게 카운트다운한 뒤 앉기나 물 마시기를 시킨다.",
@@ -266,16 +284,220 @@ def normalize_farewell_text(farewell_text: str | None = None) -> str:
     return cleaned or DEFAULT_HANGUP_FAREWELL_TEXT
 
 
-def build_farewell_reply_request(farewell_text: str | None = None) -> tuple[str, str]:
+def get_realtime_language_code(language: str | None) -> str:
+    normalized = (language or "").strip().lower()
+    if (
+        "japanese" in normalized
+        or "일본" in normalized
+        or "日本" in normalized
+        or normalized.startswith("ja")
+    ):
+        return "ja-JP"
+    if "english" in normalized or "영어" in normalized or normalized.startswith("en"):
+        return "en-US"
+    return "ko-KR"
+
+
+def resolve_realtime_language_code(
+    job_language: str | None,
+    configured_fallback: str | None,
+) -> str:
+    if job_language and job_language.strip():
+        return get_realtime_language_code(job_language)
+    return (configured_fallback or "").strip() or "ko-KR"
+
+
+def get_conversation_phrases(language: str | None) -> dict[str, str]:
+    language_code = get_realtime_language_code(language)
+    if language_code == "ja-JP":
+        return {
+            "initial_opening": "おはよ、起きる時間だよ。そろそろ起きよ?",
+            "retry_opening": "もう一回電話したよ。今度こそ起きよ?",
+            "briefing": "起きたの確認できたよ。今日の予定、サクッと聞く?",
+            "clarification": "今なんて言った? もう一回はっきり言って。",
+            "wake_check": "もう起きた? 座ったか、水を飲んだか教えて。",
+            "hangup": "わかった。じゃあ電話切るね。今日もいい一日にしてね。",
+            "awake_farewell": (
+                "よし、起きたの確認できたよ。じゃあ電話切るね。今日もいってらっしゃい。"
+            ),
+            "retry_limit_farewell": (
+                "返事ないね。これ以上は電話できないから、今度こそ起きてね。"
+            ),
+            "retry_scheduled_farewell": (
+                "もう一回だけ電話するね。そのときはちゃんと起きよ。"
+                "今のうちに水を飲む準備してね。"
+            ),
+            "silence_farewell": (
+                "返事ないね。いったん電話切るけど、今度こそ起きてね。"
+            ),
+        }
+    if language_code == "en-US":
+        return {
+            "initial_opening": "Hey, rise and shine. It's time to get up.",
+            "retry_opening": "Hey, I'm calling back. Let's get up this time.",
+            "briefing": "Okay, you're up. Want a quick briefing?",
+            "clarification": (
+                "Sorry, what did you say? Say that one more time clearly."
+            ),
+            "wake_check": (
+                "Are you up now? Tell me if you sat up or drank some water."
+            ),
+            "hangup": "Got it. I'll hang up now. Have a good one.",
+            "awake_farewell": ("Okay, you're up. I'll hang up now. Have a great day."),
+            "retry_limit_farewell": (
+                "I'm not hearing you, and I can't call again. "
+                "You really need to get up now."
+            ),
+            "retry_scheduled_farewell": (
+                "I'll call you one more time. Be ready to get up when I do, "
+                "and get some water ready."
+            ),
+            "silence_farewell": (
+                "I'm not hearing you, so I'll hang up for now. "
+                "Come on, you really need to get up."
+            ),
+        }
+    return {
+        "initial_opening": "인났나? 이제 일어날 시간이야.",
+        "retry_opening": "다시 전화했어. 이제는 진짜 일어나야 해.",
+        "briefing": "깬 거 확인했어. 짧게 브리핑해줄까?",
+        "clarification": "방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘.",
+        "wake_check": "이제 일어났어? 앉았는지 물 마셨는지 말해줘.",
+        "hangup": "알았어. 이제 끊을게. 오늘 하루도 잘 보내.",
+        "awake_farewell": "좋아, 깬 거 확인했어. 이제 끊을게. 오늘 하루 잘 보내.",
+        "retry_limit_farewell": (
+            "하... 대답 없네. 나도 이제 더 전화 못 해. 진짜 지금 일어나야 해."
+        ),
+        "retry_scheduled_farewell": (
+            "하... 진짜 안 되겠다. 딱 한 번만 더 전화할게. "
+            "그땐 진짜 일어나야 해. 물 한 잔 마실 준비 하고 있어."
+        ),
+        "silence_farewell": ("하... 대답 없네. 일단 끊을게. 진짜 지금 일어나야 해."),
+    }
+
+
+def get_silence_nudge_reference(language: str | None, index: int) -> str:
+    language_code = get_realtime_language_code(language)
+    if language_code == "ja-JP":
+        references = (
+            "ねえ、起きてる? まず体を起こして。",
+            "3、2、1。今すぐ座って、水を一口飲んで。",
+            "今度こそ起きよ。はっきり返事して。",
+        )
+    elif language_code == "en-US":
+        references = (
+            "Hey, are you awake? Sit up for me.",
+            "Three, two, one. Sit up now and take a sip of water.",
+            "Come on, time to get up. Answer me clearly.",
+        )
+    else:
+        references = get_user_silence_nudge_texts()
+
+    return references[index % len(references)]
+
+
+def classify_test_audio_confirmation(text: str) -> str:
+    normalized = " ".join((text or "").strip().lower().split())
+    if not normalized:
+        return "unclear"
+
+    negative_patterns = (
+        "안 들려",
+        "안들려",
+        "잘 안 들",
+        "잘안들",
+        "못 들",
+        "못들",
+        "소리가 안",
+        "聞こえない",
+        "聞こえにくい",
+        "聞き取れない",
+        "잘 모르겠",
+        "can't hear",
+        "cannot hear",
+        "can not hear",
+        "don't hear",
+        "do not hear",
+        "not hear",
+        "no sound",
+        "too quiet",
+    )
+    if any(pattern in normalized for pattern in negative_patterns):
+        return "negative"
+
+    acknowledgement = normalized.strip(" .,!?~。、\uff01\uff1f")
+    if acknowledgement in {
+        "응",
+        "어",
+        "네",
+        "예",
+        "넵",
+        "はい",
+        "うん",
+        "大丈夫",
+        "yes",
+        "yeah",
+        "yep",
+        "sure",
+    }:
+        return "positive"
+
+    positive_patterns = (
+        "잘 들려",
+        "잘들려",
+        "잘 들린",
+        "들려",
+        "들린다",
+        "괜찮아",
+        "聞こえる",
+        "聞こえてる",
+        "聞こえた",
+        "i can hear",
+        "hear you",
+        "loud and clear",
+        "sounds good",
+    )
+    if any(pattern in normalized for pattern in positive_patterns):
+        return "positive"
+
+    return "unclear"
+
+
+def get_test_call_farewell(
+    confirmation: str,
+    conversation_language: str | None,
+) -> str:
+    language_code = get_realtime_language_code(conversation_language)
+    if confirmation == "positive":
+        if language_code == "ja-JP":
+            return "よかった、ちゃんと聞こえてるね。じゃあ、電話切るね。"
+        if language_code == "en-US":
+            return "Great, glad you can hear me. I'll hang up now."
+        return "좋아, 잘 들리는 거 확인했어. 그럼 전화 끊을게."
+
+    if language_code == "ja-JP":
+        return (
+            "わかった。音量と接続を確認して、もう一度テストしてね。いったん電話切るね。"
+        )
+    if language_code == "en-US":
+        return "Okay. Check your volume and connection, then try the test again. I'll hang up now."
+    return "알겠어. 볼륨과 연결을 확인하고 다시 테스트해 줘. 일단 전화 끊을게."
+
+
+def build_farewell_reply_request(
+    farewell_text: str | None = None,
+    conversation_language: str = "한국어",
+) -> tuple[str, str]:
     normalized_farewell = normalize_farewell_text(farewell_text)
     instructions = (
-        "이제 통화를 종료해야 한다. 다른 질문을 하지 말고, 한국어로 한 문장만 말해. "
-        "'이제 끊을게'라는 뜻이 분명히 들어가야 하고 자연스럽게 마무리해. "
+        f"이제 통화를 종료해야 한다. 다른 질문을 하지 말고, {conversation_language}로 한 문장만 말해. "
+        "아래 참고 문구의 언어와 의미를 유지하고 자연스러운 구어체로 말해. "
+        "통화를 지금 종료한다는 뜻이 분명히 들어가야 해. "
         f"사용할 마무리 멘트: {normalized_farewell}"
     )
     trigger_text = (
         "시스템 트리거: 통화 종료 전 마무리 멘트를 말해야 한다. "
-        "이 문장을 언급하지 말고 한국어 한 문장으로만 말해. "
+        f"이 문장을 언급하지 말고 {conversation_language} 한 문장으로만 말해. "
         f"마무리 멘트: {normalized_farewell}"
     )
     return instructions, trigger_text
@@ -391,6 +613,11 @@ def infer_wake_status(
         "out of bed",
         "got up",
         "drank water",
+        "起き上がった",
+        "ベッドから出た",
+        "水飲んだ",
+        "顔洗った",
+        "電気つけた",
     )
     confirmed_awake_patterns = (
         "일어났",
@@ -401,6 +628,9 @@ def infer_wake_status(
         "깨었",
         "i'm up",
         "im up",
+        "起きた",
+        "起きてる",
+        "目覚めた",
     )
     weak_awake_patterns = (
         "알겠어",
@@ -409,6 +639,10 @@ def infer_wake_status(
         "일어날게",
         "일어날게요",
         "준비할게",
+        "i'll get up",
+        "i will get up",
+        "起きるよ",
+        "わかった",
     )
     retry_patterns = (
         "5분만",
@@ -422,6 +656,10 @@ def infer_wake_status(
         "call me again",
         "later",
         "few more minutes",
+        "あと5分",
+        "あと五分",
+        "もう少し",
+        "また電話",
     )
     sleepy_patterns = (
         "졸려",
@@ -435,8 +673,25 @@ def infer_wake_status(
         "mmm",
         "uh",
         "um",
+        "眠い",
+        "疲れた",
+        "まだ寝る",
     )
-    filler_words = {"응", "어", "음", "으응", "네", "웅", "어어", "음음"}
+    filler_words = {
+        "응",
+        "어",
+        "음",
+        "으응",
+        "네",
+        "웅",
+        "어어",
+        "음음",
+        "yeah",
+        "yep",
+        "うん",
+        "ん",
+        "はい",
+    }
 
     joined = " ".join(user_texts)
     if any(pattern in joined for pattern in retry_patterns):
@@ -485,6 +740,10 @@ def is_explicit_hangup_request(text: str) -> bool:
         "hang up",
         "end the call",
         "stop the call",
+        "電話切って",
+        "通話を終了",
+        "もう切って",
+        "終わりにして",
     )
     return any(pattern in normalized for pattern in hangup_patterns)
 
@@ -497,12 +756,16 @@ def is_assistant_goodbye(text: str) -> bool:
     goodbye_patterns = (
         "좋은 하루",
         "잘 보내",
-        "안녕",
+        "잘 가",
         "끊을게",
         "이제 끊",
         "마무리할게",
         "bye",
         "goodbye",
+        "hang up",
+        "またね",
+        "じゃあね",
+        "電話切るね",
     )
     return any(pattern in normalized for pattern in goodbye_patterns)
 
@@ -532,9 +795,15 @@ class Assistant(Agent):
         time_zone: str = "Asia/Seoul",
         call_type: str = "initial",
         retry_count: int = 0,
+        conversation_language: str = "한국어",
         on_call_outcome_reported=None,
+        enable_tools: bool = True,
     ):
         super().__init__(instructions=instructions)
+        if not enable_tools:
+            # LiveKit also discovers decorated tools after applying the tools argument.
+            self._tools = []
+            self._chat_ctx = self._chat_ctx.copy(tools=[])
         self._on_hangup = on_hangup
         self._api_client = api_client
         self._user_id = user_id
@@ -543,6 +812,7 @@ class Assistant(Agent):
         self._time_zone = time_zone or "Asia/Seoul"
         self._call_type = call_type
         self._retry_count = retry_count
+        self._conversation_language = conversation_language
         self._on_call_outcome_reported = on_call_outcome_reported
 
     @function_tool
@@ -550,12 +820,21 @@ class Assistant(Agent):
         self,
         context: RunContext,
         reason: str = "user requested to end",
-        farewell: str = DEFAULT_HANGUP_FAREWELL_TEXT,
+        farewell: str = "",
     ):
+        try:
+            await context.wait_for_playout()
+        except Exception as e:
+            logger.warning(f"Failed to wait for active speech before hangup: {e}")
+
         if callable(self._on_hangup):
+            resolved_farewell = (
+                farewell.strip()
+                or get_conversation_phrases(self._conversation_language)["hangup"]
+            )
             self._on_hangup(
                 f"🛑 LLM requested hangup via tool - reason: {reason}",
-                farewell,
+                resolved_farewell,
             )
         return {"status": "ok"}
 
@@ -664,7 +943,9 @@ class Assistant(Agent):
             return {
                 "success": False,
                 "action": "retry_limit_reached",
-                "message": "나도 이제 더 전화 못 해. 진짜 지금 일어나야 해.",
+                "message": get_conversation_phrases(self._conversation_language)[
+                    "retry_limit_farewell"
+                ],
                 "retryLimit": DEFAULT_MAX_RETRY_CALLS,
             }
 
@@ -685,7 +966,9 @@ class Assistant(Agent):
                 return {
                     "success": False,
                     "action": "retry_limit_reached",
-                    "message": "나도 이제 더 전화 못 해. 진짜 지금 일어나야 해.",
+                    "message": get_conversation_phrases(self._conversation_language)[
+                        "retry_limit_farewell"
+                    ],
                     "retryLimit": result.get("retryLimit", DEFAULT_MAX_RETRY_CALLS),
                 }
             return result
@@ -713,11 +996,23 @@ async def safe_hangup(
     session: AgentSession,
     delay_seconds: float | None = None,
     speech_handle=None,
+    *,
+    speech_playout_timeout_seconds: float | None = None,
+    send_call_end_signal: bool = False,
+    shutdown_step_timeout_seconds: float | None = None,
 ):
     if speech_handle is not None:
         try:
             logger.info("🔊 Waiting for farewell playback to finish...")
-            await speech_handle.wait_for_playout()
+            if speech_playout_timeout_seconds is None:
+                await speech_handle.wait_for_playout()
+            else:
+                await asyncio.wait_for(
+                    speech_handle.wait_for_playout(),
+                    timeout=speech_playout_timeout_seconds,
+                )
+        except TimeoutError:
+            logger.warning("⚠️ Farewell playout timed out; forcing call shutdown")
         except Exception as e:
             logger.warning(f"Error while waiting for speech playout: {e}")
 
@@ -727,16 +1022,59 @@ async def safe_hangup(
     logger.info(f"⏳ Waiting {grace_seconds:.1f}s before closing connection...")
     await asyncio.sleep(grace_seconds)
 
+    if send_call_end_signal:
+        try:
+            await asyncio.wait_for(
+                ctx.room.local_participant.publish_data(
+                    CALL_END_MESSAGE,
+                    reliable=True,
+                    topic=CALL_END_TOPIC,
+                ),
+                timeout=DEFAULT_SHUTDOWN_STEP_TIMEOUT_SECONDS,
+            )
+            logger.info("📴 Sent call-end signal to the client")
+            await asyncio.sleep(0.15)
+        except TimeoutError:
+            logger.warning("⚠️ Call-end signal timed out; continuing shutdown")
+        except Exception as e:
+            logger.warning(f"Error while sending call-end signal: {e}")
+
+    async def close_session():
+        try:
+            if shutdown_step_timeout_seconds is None:
+                await session.aclose()
+            else:
+                await asyncio.wait_for(
+                    session.aclose(),
+                    timeout=shutdown_step_timeout_seconds,
+                )
+        except TimeoutError:
+            logger.warning("⚠️ Agent session shutdown timed out")
+        except Exception as e:
+            logger.warning(f"Error while stopping session: {e}")
+
+    async def disconnect_room():
+        try:
+            if shutdown_step_timeout_seconds is None:
+                await ctx.room.disconnect()
+            else:
+                await asyncio.wait_for(
+                    ctx.room.disconnect(),
+                    timeout=shutdown_step_timeout_seconds,
+                )
+        except TimeoutError:
+            logger.warning("⚠️ Room disconnect timed out")
+        except Exception as e:
+            logger.warning(f"Error while disconnecting room: {e}")
+
+    if send_call_end_signal:
+        await disconnect_room()
+        await close_session()
+    else:
+        await close_session()
+        await disconnect_room()
     try:
-        await session.aclose()
-    except Exception as e:
-        logger.warning(f"Error while stopping session: {e}")
-    try:
-        await ctx.room.disconnect()
-    except Exception as e:
-        logger.warning(f"Error while disconnecting room: {e}")
-    try:
-        ctx.shutdown()
+        ctx.shutdown(reason="call completed")
     except Exception as e:
         logger.warning(f"Error while shutting down: {e}")
 
@@ -753,6 +1091,9 @@ async def entrypoint(ctx: JobContext):
 
     initial_instructions = job_meta.get("prompt", "")
     agent_voice = job_meta.get("voice", "Leda")
+    job_language = job_meta.get("language")
+    conversation_language = job_language or "한국어"
+    conversation_phrases = get_conversation_phrases(conversation_language)
     user_id = job_meta.get("user_id", ctx.room.name)
     time_zone = job_meta.get("time_zone", "Asia/Seoul")
     alarm_id = job_meta.get("alarm_id")
@@ -763,14 +1104,15 @@ async def entrypoint(ctx: JobContext):
     logger.info(
         f"🧠 User ID: {user_id}, Conversation ID: {conversation_id}, "
         f"Time zone: {time_zone}, Alarm ID: {alarm_id}, "
-        f"Call type: {call_type}, Retry count: {retry_count}"
+        f"Call type: {call_type}, Retry count: {retry_count}, "
+        f"Language: {conversation_language}"
     )
 
     backend_url = os.getenv("HARU_API_URL")
     api_client = None
     memory_context = ""
 
-    if backend_url:
+    if backend_url and call_type != "test":
         try:
             api_client = BackendApiClient(backend_url)
             memory_data = await api_client.get_memory_context(user_id)
@@ -786,6 +1128,8 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.error(f"❌ Failed to initialize API client: {e}")
             api_client = None
+    elif call_type == "test":
+        logger.info("🧪 Test call: skipping memory bootstrap and backend tools")
     else:
         logger.warning("⚠️ HARU_API_URL not set - memory features disabled")
 
@@ -808,6 +1152,11 @@ async def entrypoint(ctx: JobContext):
     user_is_speaking = False
     silence_nudge_count = 0
     assistant_said_goodbye = False
+    test_reply_hangup_scheduled = False
+    test_user_replied_at: float | None = None
+    test_waiting_for_final_speech = False
+    test_final_speech_handle = None
+    test_final_speech_handle_ready = asyncio.Event()
     agent_speech_started_event = asyncio.Event()
     agent_speech_finished_event = asyncio.Event()
     agent_speech_finished_event.set()
@@ -830,7 +1179,13 @@ async def entrypoint(ctx: JobContext):
         if reset_silence_nudges:
             silence_nudge_count = 0
 
-    def _trigger_hangup(message: str, farewell_text: str | None = None):
+    def _trigger_hangup(
+        message: str,
+        farewell_text: str | None = None,
+        *,
+        exact_farewell: bool = False,
+        delay_seconds: float | None = None,
+    ):
         nonlocal hangup_requested, session
         if hangup_requested:
             return
@@ -844,8 +1199,20 @@ async def entrypoint(ctx: JobContext):
             except Exception as e:
                 logger.warning(f"Error while interrupting active response: {e}")
 
-            if farewell_text and session_started.is_set():
-                instructions, trigger_text = build_farewell_reply_request(farewell_text)
+            if farewell_text and exact_farewell:
+                try:
+                    speech_handle = session.say(
+                        farewell_text.strip(),
+                        allow_interruptions=False,
+                        add_to_chat_ctx=False,
+                    )
+                except Exception as e:
+                    logger.warning(f"Error while starting exact farewell speech: {e}")
+            elif farewell_text and session_started.is_set():
+                instructions, trigger_text = build_farewell_reply_request(
+                    farewell_text,
+                    conversation_language,
+                )
                 agent_speech_started_event.clear()
                 agent_speech_finished_event.clear()
                 if request_agent_reply(instructions, trigger_text):
@@ -877,7 +1244,23 @@ async def entrypoint(ctx: JobContext):
                 except Exception as e:
                     logger.warning(f"Error while starting farewell speech: {e}")
 
-            await safe_hangup(ctx, session, speech_handle=speech_handle)
+            await safe_hangup(
+                ctx,
+                session,
+                delay_seconds=delay_seconds,
+                speech_handle=speech_handle,
+                speech_playout_timeout_seconds=(
+                    DEFAULT_TEST_FAREWELL_PLAYOUT_TIMEOUT_SECONDS
+                    if call_type == "test" and exact_farewell
+                    else None
+                ),
+                send_call_end_signal=call_type == "test",
+                shutdown_step_timeout_seconds=(
+                    DEFAULT_SHUTDOWN_STEP_TIMEOUT_SECONDS
+                    if call_type == "test"
+                    else None
+                ),
+            )
 
         start_background_task(_hangup_sequence(), name="safe_hangup")
 
@@ -936,8 +1319,12 @@ async def entrypoint(ctx: JobContext):
     realtime_model_kwargs = {
         "model": get_gemini_model(),
         "api_key": os.getenv("GEMINI_API_KEY") or NOT_GIVEN,
+        "vertexai": False,
         "voice": agent_voice,
-        "language": os.getenv("GEMINI_LANGUAGE", "ko-KR"),
+        "language": resolve_realtime_language_code(
+            job_language,
+            os.getenv("GEMINI_LANGUAGE"),
+        ),
         "thinking_config": get_gemini_thinking_config(),
         "proactivity": True if env_bool("GEMINI_PROACTIVITY", False) else NOT_GIVEN,
         "enable_affective_dialog": (
@@ -1003,13 +1390,18 @@ async def entrypoint(ctx: JobContext):
 {memory_context}
 """
 
-    merged_instructions = (
-        f"{initial_instructions.strip()}\n\n"
-        "추가: 시간은 사용자 시간대 기준. 덜 깼거나 다시 걸어달라면 재통화 흐름을 고려.\n\n"
-        f"{memory_instruction.strip()}\n\n"
-        f"{memory_context_instruction.strip()}\n\n"
-        f"{CONTROL_INSTRUCTIONS.strip()}"
-    )
+    if call_type == "test":
+        merged_instructions = (
+            f"{initial_instructions.strip()}\n\n{TEST_CONTROL_INSTRUCTIONS.strip()}"
+        )
+    else:
+        merged_instructions = (
+            f"{initial_instructions.strip()}\n\n"
+            "추가: 시간은 사용자 시간대 기준. 덜 깼거나 다시 걸어달라면 재통화 흐름을 고려.\n\n"
+            f"{memory_instruction.strip()}\n\n"
+            f"{memory_context_instruction.strip()}\n\n"
+            f"{CONTROL_INSTRUCTIONS.strip()}"
+        )
 
     usage_collector = metrics.UsageCollector()
 
@@ -1067,7 +1459,12 @@ async def entrypoint(ctx: JobContext):
         rt_session = getattr(activity, "_rt_session", None) if activity else None
         return getattr(rt_session, "_active_session", None) is not None
 
-    def request_agent_reply(instructions: str, fallback_trigger_text: str) -> bool:
+    def request_agent_reply(
+        instructions: str,
+        fallback_trigger_text: str,
+        *,
+        allow_interruptions: bool = True,
+    ) -> bool:
         supports_generate_reply = (
             realtime_model.capabilities.mutable_chat_context
             and realtime_model.capabilities.mutable_instructions
@@ -1077,7 +1474,7 @@ async def entrypoint(ctx: JobContext):
             if supports_generate_reply:
                 session.generate_reply(
                     instructions=instructions,
-                    allow_interruptions=True,
+                    allow_interruptions=allow_interruptions,
                 )
                 return True
 
@@ -1113,33 +1510,39 @@ async def entrypoint(ctx: JobContext):
         if wake_status == "awake":
             wake_confirmed = True
             briefing_instructions = (
-                "사용자가 깬 것으로 확인됐다. 통화를 바로 끊지 말고 한국어로 한 문장만 말해. "
+                f"사용자가 깬 것으로 확인됐다. 통화를 바로 끊지 말고 {conversation_language}로 한 문장만 말해. "
                 "저장된 이름을 부를 때는 이름 그대로만 쓰고 '님'이나 '씨'를 붙이지 마. "
-                "'깬 거 확인했어. 짧게 브리핑해줄까?'처럼 브리핑을 원하는지 물어봐. "
-                "이미 날씨나 첫 일정을 알려준 흐름이면 아주 짧은 실용 정보 하나만 말하고 마무리해."
+                f"다음 문장을 자연스럽게 말해: {conversation_phrases['briefing']} "
+                "이미 날씨나 첫 일정을 알려준 흐름이면 아주 짧은 실용 정보 하나만 말하고 마무리해. "
+                "자연스러운 표준 구어체로 말해."
             )
             briefing_trigger_text = (
                 "시스템 트리거: 사용자가 깬 것으로 확인됐다. 이 문장을 언급하지 말고 "
-                "한국어 한 문장으로 브리핑을 원하는지 물어봐. "
+                f"{conversation_language}로 다음 문장을 자연스럽게 말해: "
+                f"{conversation_phrases['briefing']} "
                 f"사용자 응답: {user_text}"
             )
             if request_agent_reply(briefing_instructions, briefing_trigger_text):
                 mark_waiting_for_user_response()
                 logger.info("🗣️ Briefing question requested after wake confirmation")
             else:
-                logger.warning("⚠️ Failed to request briefing question after wake confirmation")
+                logger.warning(
+                    "⚠️ Failed to request briefing question after wake confirmation"
+                )
             return
 
         followup_instructions = (
-            "사용자가 짧게 대답했는데 네 응답이 아직 없다. 한국어로 한 문장만 말해. "
+            f"사용자가 짧게 대답했는데 네 응답이 아직 없다. {conversation_language}로 한 문장만 말해. "
             "저장된 이름을 부를 때는 이름 그대로만 쓰고 '님'이나 '씨'를 붙이지 마. "
-            "발화가 뭉개졌거나 못 알아들은 느낌이면 먼저 '방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘.'라고 물어봐. "
+            f"발화가 뭉개졌거나 못 알아들은 느낌이면 먼저 다음처럼 물어봐: {conversation_phrases['clarification']} "
             "대답 내용은 들렸지만 깼는지 애매하면 앉았는지, 물 마셨는지, 불 켰는지 확인해. "
-            "그래도 애매하면 3+4, 5+6, 7x8, 12-5 같은 쉬운 확인 문제 중 하나만 골라 물어봐. 항상 같은 문제를 내지 마."
+            f"이 경우 다음 문장을 참고해: {conversation_phrases['wake_check']} "
+            "그래도 애매하면 3+4, 5+6, 7x8, 12-5 같은 쉬운 확인 문제 중 하나만 골라 물어봐. "
+            "항상 같은 문제를 내지 말고 자연스러운 구어체로 말해."
         )
         followup_trigger_text = (
             "시스템 트리거: 사용자 짧은 응답 후 후속 발화가 없다. "
-            "이 문장을 언급하지 말고 한국어 한 문장으로 깨움 확인을 해. "
+            f"이 문장을 언급하지 말고 {conversation_language}의 자연스러운 한 문장으로 깨움 확인을 해. "
             f"사용자 응답: {user_text}"
         )
 
@@ -1174,7 +1577,18 @@ async def entrypoint(ctx: JobContext):
                 )
 
             await asyncio.sleep(0.25)
-            if call_type == "retry":
+            if call_type == "test":
+                initial_greeting_instructions = (
+                    "이번 통화는 온보딩 수신 테스트다. 저장된 대화 언어와 캐릭터 말투로 "
+                    "앞으로 아침마다 깨워주겠다고 말하고, 전화와 목소리가 잘 들리는지 "
+                    "한두 문장으로만 확인해."
+                )
+                initial_greeting_trigger_text = (
+                    "시스템 트리거: 온보딩 테스트 전화가 연결됐다. 이 문장을 언급하지 말고, "
+                    "저장된 대화 언어로 앞으로 아침마다 깨워주겠다는 말과 함께 "
+                    "전화가 잘 도착했고 목소리가 잘 들리는지 짧게 물어봐."
+                )
+            elif call_type == "retry":
                 initial_greeting_instructions = (
                     "이번 통화는 재통화다. 사용자가 아직 못 일어났거나 다시 전화해 달라고 "
                     "요청했던 상황이다. 첫 통화처럼 새로 인사하지 말고, 다시 연락한 이유를 "
@@ -1182,8 +1596,8 @@ async def entrypoint(ctx: JobContext):
                 )
                 initial_greeting_trigger_text = (
                     "시스템 트리거: 이번은 재통화다. 이 문장을 언급하지 말고, "
-                    "한국어로 '다시 전화했어', '이제는 진짜 일어나야 해' 같은 느낌의 "
-                    "짧고 자연스러운 기상 멘트로 바로 시작해."
+                    f"{conversation_language}로 다음 문장을 참고해 짧고 자연스럽게 시작해: "
+                    f"{conversation_phrases['retry_opening']}"
                 )
             else:
                 initial_greeting_instructions = (
@@ -1192,7 +1606,8 @@ async def entrypoint(ctx: JobContext):
                 )
                 initial_greeting_trigger_text = (
                     "시스템 트리거: 사용자가 방금 전화를 받았다. 이 문장을 언급하지 말고, "
-                    "지금 바로 한국어로 짧고 자연스럽게 아침 인사와 기상 멘트를 시작해."
+                    f"지금 바로 {conversation_language}로 다음 문장을 참고해 짧고 자연스럽게 시작해: "
+                    f"{conversation_phrases['initial_opening']}"
                 )
             for attempt in range(1, 4):
                 agent_speech_started_event.clear()
@@ -1243,7 +1658,12 @@ async def entrypoint(ctx: JobContext):
                     f"result={outcome_result}"
                 )
 
-            if api_client and conversation_messages and not shutdown_saved:
+            if (
+                api_client
+                and conversation_messages
+                and not shutdown_saved
+                and call_type != "test"
+            ):
                 transcript = build_transcript(conversation_messages)
                 ended_at = now_iso()
                 usage_metadata = get_usage_metadata()
@@ -1277,9 +1697,32 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(finalize_shutdown)
 
+    @session.on("speech_created")
+    def _on_speech_created(ev: SpeechCreatedEvent):
+        nonlocal test_final_speech_handle
+
+        if (
+            call_type != "test"
+            or not test_waiting_for_final_speech
+            or ev.source != "generate_reply"
+            or ev.user_initiated
+        ):
+            return
+
+        try:
+            ev.speech_handle.allow_interruptions = False
+        except RuntimeError as e:
+            logger.warning(f"⚠️ Test final-reply speech was already interrupted: {e}")
+
+        test_final_speech_handle = ev.speech_handle
+        test_final_speech_handle_ready.set()
+        logger.info("🔊 Captured non-interruptible test final-reply speech handle")
+
     @session.on("conversation_item_added")
     def _on_conversation_item_added(ev):
         nonlocal assistant_said_goodbye, wake_confirmed
+        nonlocal test_reply_hangup_scheduled, test_user_replied_at
+        nonlocal test_waiting_for_final_speech, test_final_speech_handle
 
         item = getattr(ev, "item", None)
         if not isinstance(item, ChatMessage):
@@ -1298,15 +1741,166 @@ async def entrypoint(ctx: JobContext):
         else:
             assistant_said_goodbye = False
             clear_waiting_for_user_response(reset_silence_nudges=True)
-            wake_status, _ = infer_wake_status(conversation_messages)
-            if wake_status == "awake":
-                wake_confirmed = True
+            if call_type == "test":
+                agent_speech_started_event.clear()
+                agent_speech_finished_event.clear()
+                test_user_replied_at = asyncio.get_running_loop().time()
+            else:
+                wake_status, _ = infer_wake_status(conversation_messages)
+                if wake_status == "awake":
+                    wake_confirmed = True
             logger.info(f"👤 User said: {text}")
             if not hangup_requested and is_explicit_hangup_request(text):
                 _trigger_hangup(
                     "🛑 Local hangup requested from user transcript",
-                    "알았어. 이제 끊을게. 오늘 하루도 잘 보내.",
+                    None if call_type == "test" else conversation_phrases["hangup"],
                 )
+                return
+
+            if call_type == "test":
+                if not test_reply_hangup_scheduled:
+                    test_reply_hangup_scheduled = True
+                    confirmation = classify_test_audio_confirmation(text)
+                    if not test_waiting_for_final_speech:
+                        test_waiting_for_final_speech = True
+                        test_final_speech_handle = None
+                        test_final_speech_handle_ready.clear()
+
+                    async def finish_test_call_after_reply():
+                        nonlocal test_waiting_for_final_speech
+
+                        try:
+                            await asyncio.wait_for(
+                                test_final_speech_handle_ready.wait(),
+                                timeout=5.0,
+                            )
+                            speech_handle = test_final_speech_handle
+                            if speech_handle is None:
+                                raise RuntimeError(
+                                    "test final speech handle was not captured"
+                                )
+                            await asyncio.wait_for(
+                                speech_handle.wait_for_playout(),
+                                timeout=30.0,
+                            )
+                            if speech_handle.interrupted:
+                                raise RuntimeError("test final speech was interrupted")
+                            logger.info("🔊 Test final reply fully played out")
+                        except TimeoutError:
+                            logger.warning(
+                                "⚠️ Test final reply playout timed out; using fallback"
+                            )
+                            await play_test_fallback_reply(
+                                confirmation,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"⚠️ Test final reply failed; using fallback: {e}"
+                            )
+                            await play_test_fallback_reply(
+                                confirmation,
+                            )
+                        finally:
+                            test_waiting_for_final_speech = False
+
+                        _trigger_hangup(
+                            f"🧪 Test audio confirmation completed: {confirmation}",
+                            delay_seconds=DEFAULT_TEST_HANGUP_DELAY_SECONDS,
+                        )
+
+                    async def play_test_fallback_reply(confirmation: str):
+                        farewell = get_test_call_farewell(
+                            confirmation,
+                            conversation_language,
+                        )
+                        fallback_instructions = (
+                            "온보딩 테스트 전화를 지금 마무리한다. 다른 말은 절대 하지 말고 "
+                            f"다음 문장을 처음부터 끝까지 정확히 한 번 말해: {farewell}"
+                        )
+                        fallback_trigger_text = (
+                            "시스템 트리거: 아래 문장을 단어 하나도 생략하거나 바꾸지 말고 "
+                            f"처음부터 끝까지 정확히 한 번만 말해.\n{farewell}"
+                        )
+
+                        for attempt in range(1, 3):
+                            try:
+                                await session.interrupt(force=True)
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to clear interrupted test reply: {e}"
+                                )
+
+                            speech_created_fut = (
+                                asyncio.get_running_loop().create_future()
+                            )
+
+                            def capture_fallback_speech(
+                                ev: SpeechCreatedEvent,
+                                speech_future=speech_created_fut,
+                            ):
+                                if (
+                                    ev.source != "generate_reply"
+                                    or speech_future.done()
+                                ):
+                                    return
+
+                                try:
+                                    ev.speech_handle.allow_interruptions = False
+                                except RuntimeError as e:
+                                    logger.warning(
+                                        "⚠️ Test fallback speech was already "
+                                        f"interrupted: {e}"
+                                    )
+                                speech_future.set_result(ev.speech_handle)
+
+                            session.on(
+                                "speech_created",
+                                capture_fallback_speech,
+                            )
+                            try:
+                                if not request_agent_reply(
+                                    fallback_instructions,
+                                    fallback_trigger_text,
+                                    allow_interruptions=False,
+                                ):
+                                    raise RuntimeError(
+                                        "test fallback generation was not requested"
+                                    )
+
+                                fallback_handle = await asyncio.wait_for(
+                                    speech_created_fut,
+                                    timeout=5.0,
+                                )
+                                await asyncio.wait_for(
+                                    fallback_handle.wait_for_playout(),
+                                    timeout=30.0,
+                                )
+                                if fallback_handle.interrupted:
+                                    raise RuntimeError(
+                                        "test fallback speech was interrupted"
+                                    )
+                                logger.info(
+                                    "🔊 Test fallback reply fully played out "
+                                    f"(attempt {attempt})"
+                                )
+                                return
+                            except Exception as e:
+                                logger.warning(
+                                    "⚠️ Test fallback reply failed "
+                                    f"(attempt {attempt}): {e}"
+                                )
+                            finally:
+                                session.off(
+                                    "speech_created",
+                                    capture_fallback_speech,
+                                )
+
+                            await asyncio.sleep(0.25)
+
+                    start_background_task(
+                        finish_test_call_after_reply(),
+                        name="finish_test_call_after_reply",
+                    )
                 return
 
             start_background_task(
@@ -1338,12 +1932,17 @@ async def entrypoint(ctx: JobContext):
 
     @session.on("user_state_changed")
     def _on_user_state_changed(ev):
-        nonlocal user_is_speaking
+        nonlocal user_is_speaking, test_waiting_for_final_speech
+        nonlocal test_final_speech_handle
 
         new_state = getattr(ev, "new_state", None)
         user_is_speaking = new_state == "speaking"
         if user_is_speaking:
             clear_waiting_for_user_response(reset_silence_nudges=True)
+            if call_type == "test" and greeted_user and not test_reply_hangup_scheduled:
+                test_waiting_for_final_speech = True
+                test_final_speech_handle = None
+                test_final_speech_handle_ready.clear()
 
     @ctx.room.on("participant_connected")
     def _on_participant_connected(p):
@@ -1395,7 +1994,9 @@ async def entrypoint(ctx: JobContext):
         time_zone=time_zone,
         call_type=call_type,
         retry_count=retry_count,
+        conversation_language=conversation_language,
         on_call_outcome_reported=_mark_call_outcome_reported,
+        enable_tools=call_type != "test",
     )
 
     try:
@@ -1435,7 +2036,6 @@ async def entrypoint(ctx: JobContext):
             return
 
         nudge_seconds = get_user_silence_nudge_seconds()
-        nudge_texts = get_user_silence_nudge_texts()
 
         try:
             await asyncio.wait_for(session_started.wait(), timeout=8.0)
@@ -1471,28 +2071,18 @@ async def entrypoint(ctx: JobContext):
                 )
                 _trigger_hangup(
                     "✅ User confirmed awake; ending after briefing silence",
-                    "좋아, 깬 거 확인했어. 이제 끊을게. 오늘 하루 잘 보내.",
+                    conversation_phrases["awake_farewell"],
                 )
                 return
 
             if silence_nudge_count >= max_nudges:
                 result = await schedule_retry_after_user_silence()
                 if result and result.get("action") == "retry_limit_reached":
-                    farewell_text = (
-                        "하... 대답 없네. 나도 이제 더 전화 못 해. "
-                        "진짜 지금 일어나야 해."
-                    )
+                    farewell_text = conversation_phrases["retry_limit_farewell"]
                 elif result and result.get("action") == "retry_scheduled":
-                    farewell_text = (
-                        "하... 진짜 안 되겠다. 나도 이제 한계야. "
-                        "딱 한 번만 더 전화할게. 그땐 진짜 일어나야 해. "
-                        "알았지? 물 한 잔 마실 준비 하고 있어."
-                    )
+                    farewell_text = conversation_phrases["retry_scheduled_farewell"]
                 else:
-                    farewell_text = (
-                        "하... 대답 없네. 나도 이제 지친다. "
-                        "일단 끊을게. 진짜 지금 일어나야 해."
-                    )
+                    farewell_text = conversation_phrases["silence_farewell"]
 
                 _trigger_hangup(
                     "📵 User remained silent after max nudges; ending call",
@@ -1500,27 +2090,27 @@ async def entrypoint(ctx: JobContext):
                 )
                 return
 
-            nudge_text = nudge_texts[silence_nudge_count % len(nudge_texts)]
+            nudge_text = get_silence_nudge_reference(
+                conversation_language,
+                silence_nudge_count,
+            )
             silence_nudge_count += 1
             waiting_for_user_response_since = None
 
             nudge_instructions = (
                 "사용자가 통화 중 몇 초간 대답이 없다. "
-                "자는지 확인하면서 깨우는 말을 한국어로 한두 문장만 말해. "
-                "무응답 상황에서는 '일어나' 같은 핵심 호출과 카운트다운을 반복해도 된다. 단, 완전히 같은 문장을 복붙하듯 반복하지 말고 리듬, 단어, 압박 수위를 조금씩 바꿔라. "
-                "단순히 대답만 요구하지 말고 지금 앉기, 몸 세우기, 물 한 모금 마시기 중 하나를 바로 시켜라. "
-                "일반 모드 맥락이면 비서처럼 차분하게 필요한 행동과 아침 정보를 짧게 말한다. "
-                "강하게 깨우는 맥락이면 무응답 nudge에서는 반복 호출과 카운트다운형을 우선 사용하고, 명령형, 지친 친구형, 애원형, 행동 미션형, 현실 압박형을 섞어라. "
-                "'야, 일어나!', '진짜 지금이야!', '일어나, 일어나, 일어나!'처럼 짧은 고함 느낌을 첫 압박 순간에 한 번 쓸 수 있다. "
-                "'셋, 둘, 하나. 지금 몸 세워', '다시 센다. 셋, 둘, 하나. 발 내려'처럼 짧은 카운트다운을 반복해도 된다. "
-                "'제발 일어나주세요', '진짜 부탁이야'처럼 빌듯이 말해도 되지만 바로 앉기나 물 마시기 같은 행동을 시켜라. "
-                "'하... 나도 이제 지친다', '나도 계속 붙잡고 있을 수는 없어'처럼 답답해하는 친구의 감정 표현을 섞어도 된다. "
-                "다만 특정 정체성 비하, 혐오, 위협은 하지 마라. "
+                f"자는지 확인하면서 깨우는 말을 {conversation_language}로 한두 문장만 말해. "
+                "현재 단계의 참고 문장을 같은 언어와 비슷한 강도로 자연스럽게 변형해. "
+                "초기 지침의 말투는 짧은 깨움 표현 하나에만 가볍게 반영하고, 문장 전체를 억지로 바꾸지 마. "
+                "완전히 같은 문장을 반복하지 말고 리듬과 단어를 조금씩 바꿔. "
+                "단순히 대답만 요구하지 말고 앉기, 몸 세우기, 물 한 모금 마시기 중 하나를 바로 시켜. "
+                "일반 모드는 차분하게, 강한 모드는 짧은 명령이나 카운트다운으로 재촉하되 비하, 혐오, 위협은 하지 마. "
                 f"현재 단계 참고 문구: {nudge_text}"
             )
             nudge_trigger_text = (
                 f"시스템 트리거: 사용자가 통화 중 {nudge_seconds:.0f}초간 대답이 없다. "
-                "이 문장을 언급하지 말고, 한국어로 짧고 다르게 깨워라. 앉기나 물 마시기 같은 행동을 하나 시켜라. "
+                f"이 문장을 언급하지 말고, {conversation_language}로 짧고 자연스럽게 깨워라. "
+                "앉기나 물 마시기 같은 행동을 하나 시켜라. "
                 f"참고 문구: {nudge_text}"
             )
 
@@ -1548,9 +2138,43 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"📟 No-answer outcome reported: {result}")
         _trigger_hangup("📵 No participant joined before timeout")
 
+    async def test_call_silence_watchdog():
+        try:
+            await asyncio.wait_for(session_started.wait(), timeout=8.0)
+        except TimeoutError:
+            return
+
+        while not hangup_requested:
+            now = asyncio.get_running_loop().time()
+            if (
+                participant_joined
+                and waiting_for_user_response_since is not None
+                and not agent_is_speaking
+                and not user_is_speaking
+            ):
+                elapsed = now - waiting_for_user_response_since
+                if elapsed >= 8.0:
+                    _trigger_hangup("🧪 Test call ended after user silence")
+                    return
+            if (
+                test_user_replied_at is not None
+                and not test_reply_hangup_scheduled
+                and not agent_is_speaking
+                and now - test_user_replied_at >= 8.0
+            ):
+                _trigger_hangup("🧪 Test call ended after reply timeout")
+                return
+            await asyncio.sleep(0.5)
+
     if alarm_id:
         start_background_task(user_silence_watchdog(), name="user_silence_watchdog")
         start_background_task(no_answer_watchdog(), name="no_answer_watchdog")
+    elif call_type == "test":
+        start_background_task(
+            test_call_silence_watchdog(),
+            name="test_call_silence_watchdog",
+        )
+        start_background_task(no_answer_watchdog(), name="test_no_answer_watchdog")
 
 
 if __name__ == "__main__":

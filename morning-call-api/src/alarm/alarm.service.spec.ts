@@ -26,7 +26,7 @@ describe('AlarmService scheduling', () => {
       userId: 'user-id',
       role: '하루',
       wakeIntensity: 'firm',
-      voice: 'Charon',
+      voice: 'Achird',
       time: '09:00',
       targetDate: '2026-06-29',
       timeZone: 'Asia/Seoul',
@@ -61,8 +61,10 @@ describe('AlarmService scheduling', () => {
     const livekit = {
       ensureRoom: jest.fn().mockResolvedValue(undefined),
       prewarmAgent: jest.fn().mockResolvedValue(undefined),
+      ensureAgentReadyForTest: jest.fn().mockResolvedValue(undefined),
       waitForAgentParticipant: jest.fn().mockResolvedValue(undefined),
       generateLivkitToken: jest.fn().mockResolvedValue('lk-token'),
+      deleteRoom: jest.fn().mockResolvedValue(undefined),
     };
     const promptService = {
       getPrompt: jest.fn().mockResolvedValue('prompt'),
@@ -73,6 +75,12 @@ describe('AlarmService scheduling', () => {
         deviceToken: 'device-token',
         deviceType: 'android',
       }),
+      reserveDailyCallSlot: jest.fn().mockResolvedValue({
+        allowed: true,
+        count: 1,
+        limit: 3,
+      }),
+      releaseDailyCallSlot: jest.fn().mockResolvedValue(undefined),
       findOne: jest.fn().mockResolvedValue({ name: '사용자' }),
     };
     const fcmService = {
@@ -163,9 +171,7 @@ describe('AlarmService scheduling', () => {
       'trigger',
       expect.objectContaining({ action: 'call' }),
       expect.objectContaining({
-        jobId: `alarm-id-once-${Date.parse(
-          '2026-06-29T00:00:00.000Z',
-        )}-call`,
+        jobId: `alarm-id-once-${Date.parse('2026-06-29T00:00:00.000Z')}-call`,
         delay: Date.parse('2026-06-29T00:00:00.000Z') - fixedNow,
       }),
     );
@@ -185,6 +191,31 @@ describe('AlarmService scheduling', () => {
 
     expect(alarm.wakeIntensity).toBe('gentle');
     expect(alarm.personality).toBe('gentle');
+  });
+
+  it('defaults new alarms to Hari while preserving explicit Haru selection', async () => {
+    const { service } = makeService();
+    const baseAlarm = {
+      time: '09:00',
+      targetDate: '2026-06-29',
+      timeZone: 'Asia/Seoul',
+      isOn: true,
+      repeatDays: [],
+    };
+
+    const defaultAlarm = await service.createAlarm('user-id', baseAlarm as any);
+    const haruAlarm = await service.createAlarm('user-id', {
+      ...baseAlarm,
+      role: '하루',
+      voice: 'Achird',
+    } as any);
+
+    expect(defaultAlarm).toEqual(
+      expect.objectContaining({ role: '하리', voice: 'Leda' }),
+    );
+    expect(haruAlarm).toEqual(
+      expect.objectContaining({ role: '하루', voice: 'Achird' }),
+    );
   });
 
   it('defaults retry calls to two minutes with a prewarm job first', async () => {
@@ -245,6 +276,226 @@ describe('AlarmService scheduling', () => {
     });
   });
 
+  it('blocks the fourth regular or retry call for a user on the same day', async () => {
+    const userService = {
+      getUserDeviceToken: jest.fn().mockResolvedValue({
+        deviceToken: 'device-token',
+        deviceType: 'android',
+      }),
+      reserveDailyCallSlot: jest.fn().mockResolvedValue({
+        allowed: false,
+        count: 3,
+        limit: 3,
+      }),
+      releaseDailyCallSlot: jest.fn(),
+    };
+    const { service, livekit, fcmService } = makeService({ userService });
+
+    await expect(
+      service.call(makeAlarm(), { callType: 'retry', retryCount: 2 }),
+    ).resolves.toEqual({
+      sent: false,
+      reason: 'daily_call_limit',
+      dailyCallLimit: 3,
+    });
+
+    expect(livekit.ensureRoom).not.toHaveBeenCalled();
+    expect(fcmService.sendCallPush).not.toHaveBeenCalled();
+    expect(userService.releaseDailyCallSlot).not.toHaveBeenCalled();
+  });
+
+  it('reports the remaining regular and retry calls for the user local date', async () => {
+    const userService = {
+      findOne: jest.fn().mockResolvedValue({
+        timeZone: 'Asia/Seoul',
+        dailyCallTrackingDate: '2026-06-28',
+        dailyCallCount: 2,
+      }),
+    };
+    const { service } = makeService({ userService });
+
+    await expect(service.getDailyCallUsage('user-id')).resolves.toEqual({
+      date: '2026-06-28',
+      used: 2,
+      limit: 3,
+      remaining: 1,
+    });
+  });
+
+  it('reports a fresh call allowance when the tracked date is stale', async () => {
+    const userService = {
+      findOne: jest.fn().mockResolvedValue({
+        timeZone: 'Asia/Seoul',
+        dailyCallTrackingDate: '2026-06-27',
+        dailyCallCount: 3,
+      }),
+    };
+    const { service } = makeService({ userService });
+
+    await expect(service.getDailyCallUsage('user-id')).resolves.toEqual({
+      date: '2026-06-28',
+      used: 0,
+      limit: 3,
+      remaining: 3,
+    });
+  });
+
+  it('releases the daily call slot when push delivery fails', async () => {
+    const fcmService = {
+      sendCallPush: jest.fn().mockResolvedValue({
+        sent: [],
+        failed: [{ status: 400, response: { reason: 'BadDeviceToken' } }],
+      }),
+      sendWakeFollowupPush: jest.fn(),
+    };
+    const { service, userService } = makeService({ fcmService });
+
+    await expect(service.call(makeAlarm())).rejects.toThrow(
+      'Push failed for alarm alarm-id',
+    );
+    expect(userService.releaseDailyCallSlot).toHaveBeenCalledWith(
+      'user-id',
+      '2026-06-28',
+    );
+  });
+
+  it('schedules one onboarding test push after agent preparation without retry data', async () => {
+    const { service, queue, livekit } = makeService();
+    const user = {
+      _id: 'user-id',
+      name: '사용자',
+      timeZone: 'Asia/Seoul',
+      language: '日本語',
+    };
+
+    const result = await service.scheduleOnboardingTestCall(user, {
+      wakeIntensity: 'gentle',
+      role: '하루',
+      delaySeconds: 10,
+    });
+
+    expect(livekit.ensureAgentReadyForTest).toHaveBeenCalledWith(
+      `${user._id}_onboarding_test_${fixedNow}`,
+      'test prompt',
+      'Achird',
+      user._id,
+      'Asia/Seoul',
+      undefined,
+      'test',
+      0,
+      '日本語',
+    );
+    expect(queue.add).toHaveBeenCalledWith(
+      'onboarding-test-call',
+      {
+        action: 'onboarding-test-call',
+        userId: user._id,
+        roomName: `${user._id}_onboarding_test_${fixedNow}`,
+        role: '하루',
+      },
+      expect.objectContaining({
+        delay: 10000,
+        removeOnComplete: true,
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        scheduledAt: new Date(fixedNow + 10000).toISOString(),
+        callType: 'test',
+        retryEnabled: false,
+        jobId: `user-id-onboarding-test-${fixedNow + 10000}`,
+        roomName: `user-id_onboarding_test_${fixedNow}`,
+      }),
+    );
+  });
+
+  it('cancels queued onboarding tests and deletes their LiveKit rooms', async () => {
+    const queuedJob = {
+      id: 'user-id-onboarding-test-job',
+      data: {
+        action: 'onboarding-test-call',
+        userId: 'user-id',
+        roomName: 'user-id_onboarding_test_room',
+      },
+      remove: jest.fn().mockResolvedValue(undefined),
+    };
+    const queue = {
+      add: jest.fn(),
+      getJob: jest.fn().mockResolvedValue(queuedJob),
+      getJobs: jest.fn().mockResolvedValue([queuedJob]),
+    };
+    const livekit = {
+      ensureRoom: jest.fn(),
+      prewarmAgent: jest.fn(),
+      ensureAgentReadyForTest: jest.fn(),
+      waitForAgentParticipant: jest.fn(),
+      generateLivkitToken: jest.fn(),
+      deleteRoom: jest.fn().mockResolvedValue(undefined),
+    };
+    const { service } = makeService({ queue, livekit });
+
+    const result = await service.cancelOnboardingTestCall('user-id', {
+      jobId: queuedJob.id,
+      roomName: queuedJob.data.roomName,
+    });
+
+    expect(queuedJob.remove).toHaveBeenCalledTimes(1);
+    expect(livekit.deleteRoom).toHaveBeenCalledWith(
+      'user-id_onboarding_test_room',
+    );
+    expect(result).toEqual({
+      cancelled: true,
+      removedJobs: 1,
+      deletedRooms: 1,
+    });
+  });
+
+  it('sends an onboarding test push once without scheduling a retry', async () => {
+    const { service, queue, fcmService } = makeService();
+
+    const result = await service.sendOnboardingTestCall(
+      'user-id',
+      'test-room',
+      '하루',
+    );
+
+    expect(fcmService.sendCallPush).toHaveBeenCalledWith('device-token', {
+      caller: '하루',
+      lkUrl: 'wss://livekit.test',
+      lkToken: 'lk-token',
+      alarmId: 'onboarding-test',
+    });
+    expect(queue.add).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      sent: true,
+      callType: 'test',
+      retryEnabled: false,
+    });
+  });
+
+  it('uses the APNs environment stored with the current iOS token', async () => {
+    const userService = {
+      getUserDeviceToken: jest.fn().mockResolvedValue({
+        deviceToken: 'sandbox-voip-token',
+        deviceType: 'ios',
+        apnsEnvironment: 'sandbox',
+      }),
+    };
+    const { service, apnsService } = makeService({ userService });
+
+    await service.sendOnboardingTestCall('user-id', 'test-room', '하리');
+
+    expect(apnsService.sendVoipPush).toHaveBeenCalledWith(
+      'sandbox-voip-token',
+      {
+        caller: '하리',
+        livekitToken: 'lk-token',
+        alarmId: 'onboarding-test',
+      },
+      'sandbox',
+    );
+  });
+
   it('reschedules a Thursday 08:00 repeat alarm for the next Thursday after the current Thursday time passed', async () => {
     const now = Date.parse('2026-07-08T23:11:12.101Z');
     jest.spyOn(Date, 'now').mockReturnValue(now);
@@ -268,9 +519,9 @@ describe('AlarmService scheduling', () => {
         delay: expectedCallAt - now,
       }),
     );
-    expect(
-      new Date(expectedCallAt).toISOString(),
-    ).toBe('2026-07-15T23:00:00.000Z');
+    expect(new Date(expectedCallAt).toISOString()).toBe(
+      '2026-07-15T23:00:00.000Z',
+    );
   });
 
   it('keeps Wednesday and Thursday 08:00 alarms for the same user in the queue', async () => {
@@ -333,10 +584,9 @@ describe('AlarmService scheduling', () => {
         id: options.jobId,
         getState: jest.fn().mockResolvedValue('delayed'),
       })),
-      getJobs: jest.fn().mockResolvedValue([
-        { id: otherJobId },
-        { id: ownJobId },
-      ]),
+      getJobs: jest
+        .fn()
+        .mockResolvedValue([{ id: otherJobId }, { id: ownJobId }]),
       getJob: jest
         .fn()
         .mockImplementation(async (jobId) =>
@@ -367,10 +617,12 @@ describe('AlarmService scheduling', () => {
 
   it('recovers every active alarm on application bootstrap', async () => {
     const alarmModel = {
-      find: jest.fn().mockResolvedValue([
-        makeAlarm({ _id: 'wed-id', repeatDays: [3], targetDate: null }),
-        makeAlarm({ _id: 'thu-id', repeatDays: [4], targetDate: null }),
-      ]),
+      find: jest
+        .fn()
+        .mockResolvedValue([
+          makeAlarm({ _id: 'wed-id', repeatDays: [3], targetDate: null }),
+          makeAlarm({ _id: 'thu-id', repeatDays: [4], targetDate: null }),
+        ]),
     };
     const { service, queue } = makeService({ alarmModel });
 
@@ -395,9 +647,11 @@ describe('AlarmService scheduling', () => {
     const queue = {
       add: jest.fn().mockImplementation(async (_name, _data, options) => ({
         id: options.jobId,
-        getState: jest.fn().mockResolvedValue(
-          options.jobId.endsWith('-call') ? 'active' : 'delayed',
-        ),
+        getState: jest
+          .fn()
+          .mockResolvedValue(
+            options.jobId.endsWith('-call') ? 'active' : 'delayed',
+          ),
       })),
       getJob: jest
         .fn()

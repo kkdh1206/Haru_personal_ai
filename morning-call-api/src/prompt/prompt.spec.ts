@@ -1,4 +1,5 @@
-import { buildMorningCallPrompt } from './prompt';
+import { buildMorningCallPrompt, buildTestCallPrompt } from './prompt';
+import { resolveSpeechStyle } from './speech-style';
 
 describe('buildMorningCallPrompt', () => {
   it('adds firm wake instructions for repeated calls and action confirmation', () => {
@@ -21,14 +22,22 @@ describe('buildMorningCallPrompt', () => {
 
     expect(prompt).toContain('한 번에 1~2문장만 말한다');
     expect(prompt).toContain('이름 뒤에 "님", "씨" 같은 호칭을 붙이지 않는다');
-    expect(prompt).toContain('일어났어"라고 또박또박');
-    expect(prompt).toContain('사용자가 "일어났어"라고 또렷하게 말하면 깬 것으로 본다');
-    expect(prompt).toContain('방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘.');
+    expect(prompt).toContain('사용자가 끝내고 싶으면 "일어났어"라고 또박또박');
+    expect(prompt).toContain(
+      '사용자가 "일어났어"라고 또렷하게 말하면 깬 것으로 본다',
+    );
+    expect(prompt).toContain(
+      '방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘."라고 한 번 묻는다',
+    );
     expect(prompt).toContain('산수 문제로 바로 넘어가지 말고');
     expect(prompt).toContain('3+4, 5+6, 7x8, 12-5');
-    expect(prompt).toContain('경상도 사투리를 가볍게');
-    expect(prompt).toContain('인났나? 또박또박 말해봐라.');
-    expect(prompt).toContain('바로 끊지 말고 먼저 "짧게 브리핑해줄까?"');
+    expect(prompt).toContain('ko-gyeongsang');
+    expect(prompt).toContain('경상도 사투리는 짧은 깨움이나 재촉에만');
+    expect(prompt).toContain('인났나?');
+    expect(prompt).toContain('바로 끊지 말고 먼저 "짧게 브리핑해줄까?"라고');
+    expect(prompt).toContain('한 발화에 사투리 표현은 최대 하나');
+    expect(prompt).not.toContain('뭐 하노');
+    expect(prompt).not.toContain('일어날 시간이다');
     expect(prompt).toContain('특정 정체성 비하, 혐오, 위협은 하지 않는다');
     expect(prompt).toContain('날씨는 제공된 정보만 말하고 지어내지 않는다');
     expect(prompt).toContain('압박 카드');
@@ -39,7 +48,9 @@ describe('buildMorningCallPrompt', () => {
     expect(prompt).toContain('현실 압박형');
     expect(prompt).not.toContain('딱 한 번만 더 전화할게');
     expect(prompt).not.toContain('예:');
-    expect(prompt).not.toContain('포기하는 말투는 실제 포기가 아니라 마지막 압박 연출');
+    expect(prompt).not.toContain(
+      '포기하는 말투는 실제 포기가 아니라 마지막 압박 연출',
+    );
     expect(prompt).not.toContain('남은 재통화 가능 횟수는 3회');
     expect(prompt).not.toContain('남은 재통화 가능 횟수: 3');
   });
@@ -159,5 +170,103 @@ describe('buildMorningCallPrompt', () => {
     expect(prompt).toContain('날씨/일정은 지금 일어나야 하는 이유 하나와 연결');
     expect(prompt).toContain('06월 28일 09:00 팀 미팅');
     expect(prompt).toContain('06월 28일 14:00 외출 약속 @ 강남');
+  });
+});
+
+describe('speech styles', () => {
+  const baseOptions = {
+    name: 'Mina',
+    assistantName: '하리',
+    timeZone: 'Asia/Seoul',
+    wakeIntensity: 'gentle',
+    callType: 'initial' as const,
+    retryCount: 0,
+    retryCallsRemaining: 2,
+    todayLabel: '2026-07-24',
+    currentTimeLabel: '2026-07-24 07:30',
+    currentIsoTime: '2026-07-24T07:30:00+09:00',
+    weather: '맑음',
+    schedule: [],
+    customMessage: '',
+  };
+
+  it('uses Osaka dialect for Japanese calls', () => {
+    const prompt = buildMorningCallPrompt({
+      ...baseOptions,
+      language: '日本語',
+    });
+
+    expect(prompt).toContain('ja-osaka');
+    expect(prompt).toContain('大阪弁');
+    expect(prompt).toContain('今なんて言った？もう一回はっきり言って');
+    expect(prompt).toContain('今日の予定、サクッと聞く？');
+    expect(prompt).toContain('大阪弁は短い起こし文句やリアクションに一つだけ');
+    expect(prompt).not.toContain('ko-gyeongsang');
+    expect(prompt).not.toContain('방금 뭐라고 했어?');
+  });
+
+  it('uses California style for English calls', () => {
+    const prompt = buildMorningCallPrompt({
+      ...baseOptions,
+      language: 'English',
+    });
+
+    expect(prompt).toContain('en-california');
+    expect(prompt).toContain('California-style English');
+    expect(prompt).toContain(
+      'Sorry, what did you say? Say that one more time clearly.',
+    );
+    expect(prompt).toContain("Okay, you're up. Want a quick briefing?");
+    expect(prompt).toContain(
+      'Use California-style wording only as a light touch',
+    );
+    expect(prompt).not.toContain('ko-gyeongsang');
+    expect(prompt).not.toContain('방금 뭐라고 했어?');
+  });
+
+  it('falls back to the language default when a saved style is incompatible', () => {
+    expect(resolveSpeechStyle('日本語', 'ko-gyeongsang').code).toBe('ja-osaka');
+    expect(resolveSpeechStyle('English', 'ja-osaka').code).toBe(
+      'en-california',
+    );
+  });
+});
+
+describe('buildTestCallPrompt', () => {
+  it('keeps onboarding calls short and explicitly disables tools and retries', () => {
+    const prompt = buildTestCallPrompt({
+      name: '민수',
+      assistantName: '하리',
+      language: '한국어',
+    });
+
+    expect(prompt).toContain('앞으로 내가 아침에 깨워줄게');
+    expect(prompt).toContain('사용자의 대답을 한 번만 듣는다');
+    expect(prompt).toContain('그럼 전화 끊을게');
+    expect(prompt).toContain('직접 끝까지 말한다');
+    expect(prompt).toContain('곧바로 통화를 끝낸다');
+    expect(prompt).toContain('임의로 대화를 이어가지 않는다');
+    expect(prompt).toContain('어떤 함수나 도구도 호출하지 않는다');
+    expect(prompt).toContain('재통화는 다루지 않는다');
+    expect(prompt).toContain('ko-gyeongsang');
+    expect(prompt.length).toBeLessThan(700);
+  });
+
+  it('uses the language-specific style in onboarding calls', () => {
+    const japanesePrompt = buildTestCallPrompt({
+      name: 'ミナ',
+      assistantName: 'ハリ',
+      language: '日本語',
+    });
+    const englishPrompt = buildTestCallPrompt({
+      name: 'Mina',
+      assistantName: 'Hari',
+      language: 'English',
+    });
+
+    expect(japanesePrompt).toContain('ja-osaka');
+    expect(japanesePrompt).toContain('大阪弁');
+    expect(englishPrompt).toContain('en-california');
+    expect(englishPrompt).toContain('California-style English');
   });
 });

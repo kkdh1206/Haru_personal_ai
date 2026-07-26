@@ -11,6 +11,7 @@ struct User: Codable, Identifiable {
     var location: String?
     var interest: String?
     var language: String?
+    var speechStyle: String?
 }
 
 struct LKInfo: Codable {

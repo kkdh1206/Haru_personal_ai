@@ -46,8 +46,6 @@ class GoogleSignInHelper: ObservableObject {
 
                 let accessToken = result.user.accessToken.tokenString
                 let refreshToken = result.user.refreshToken.tokenString
-                print("✅ Access Token: \(accessToken)")
-                print("✅ Refresh Token: \(refreshToken)")
                 registerCalendarTokenToAPI(
                     accessToken: accessToken,
                     refreshToken: refreshToken,

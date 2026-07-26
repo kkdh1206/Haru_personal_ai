@@ -43,16 +43,45 @@ export class AlarmProcessor extends WorkerHost implements OnModuleInit {
       retryMinutes?: number;
       callType?: 'initial' | 'retry';
       retryCount?: number;
-      action?: 'prewarm' | 'call';
+      action?: 'prewarm' | 'call' | 'onboarding-test-call';
+      userId?: string;
+      roomName?: string;
+      role?: string;
+      cancelled?: boolean;
     }>,
   ): Promise<void> {
-    const { alarmId, oneTime, day, retry, callType, retryCount, action } =
-      job.data;
+    const {
+      alarmId,
+      oneTime,
+      day,
+      retry,
+      callType,
+      retryCount,
+      action,
+      userId,
+      roomName,
+      role,
+      cancelled,
+    } = job.data;
+
+    if (action === 'onboarding-test-call') {
+      if (cancelled) {
+        return;
+      }
+      if (!userId || !roomName) {
+        throw new Error('Invalid onboarding test call job');
+      }
+      await this.alarmService.sendOnboardingTestCall(userId, roomName, role);
+      return;
+    }
+
     const alarm = await this.alarmModel.findById(alarmId);
     if (!alarm) return;
     if (!retry && !alarm.isOn) return;
 
-    const alarmWithUser: any = await this.alarmService.getAlarmWithUser(alarmId);
+    const alarmWithUser: any = await this.alarmService.getAlarmWithUser(
+      alarmId,
+    );
     if (!alarmWithUser?.user) {
       await this.alarmService.disableOrphanedAlarm(
         alarmId,
@@ -65,7 +94,9 @@ export class AlarmProcessor extends WorkerHost implements OnModuleInit {
     const jobAction = action || 'call';
 
     console.log(
-      `🔔 Alarm ${jobAction}${retry ? ' [retry]' : ''} → ${alarmId} (${alarm.time})`,
+      `🔔 Alarm ${jobAction}${retry ? ' [retry]' : ''} → ${alarmId} (${
+        alarm.time
+      })`,
     );
 
     try {

@@ -19,10 +19,13 @@ class AppEnvironment: ObservableObject {
     }
 }
 
-enum OnboardingStep {
+enum OnboardingStep: String {
     case loading
     case featureIntro
     case enterName
     case requestLocation
+    case alarmSetup
+    case calendarIntro
+    case testCallSetup
     case completed
 }

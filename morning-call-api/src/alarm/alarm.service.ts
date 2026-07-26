@@ -18,15 +18,18 @@ import { TestCallDto } from './dto/test-call.dto';
 import { ConfigService } from '@nestjs/config';
 import { ReportCallOutcomeDto } from './dto/report-call-outcome.dto';
 import { FcmService } from 'src/fcm/fcm.service';
+import { resolveSpeechStyle } from 'src/prompt/speech-style';
+import { CancelOnboardingTestCallDto } from './dto/cancel-onboarding-test-call.dto';
 
 const HARU_NAME = '하루';
 const HARI_NAME = '하리';
-const HARU_VOICE = 'Charon';
+const HARU_VOICE = 'Achird';
 const HARI_VOICE = 'Leda';
 const DEFAULT_WAKE_INTENSITY = 'gentle';
 const DEFAULT_PREWARM_LEAD_SECONDS = 20;
 const DEFAULT_RETRY_MINUTES = 2;
-const MAX_DAILY_RETRY_CALLS = 1;
+const MAX_DAILY_RETRY_CALLS = 2;
+const MAX_DAILY_CALLS = 3;
 const DEFAULT_CALL_AGENT_CHECK_TIMEOUT_MS = 1000;
 const DEFAULT_RETRY_LIMIT_MESSAGE =
   '전화는 여기까지 할게요. 이제 로컬 알람으로 한 번 더 깨워볼게요. 지금 바로 일어나 주세요.';
@@ -99,7 +102,7 @@ export class AlarmService implements OnModuleInit {
 
   private normalizeAlarmPayload(dto: Partial<AlarmDto | TestCallDto>) {
     const wakeIntensity = this.normalizeWakeIntensity(dto.wakeIntensity);
-    const role = dto.role === HARI_NAME ? HARI_NAME : HARU_NAME;
+    const role = dto.role === HARU_NAME ? HARU_NAME : HARI_NAME;
 
     return {
       ...dto,
@@ -123,21 +126,24 @@ export class AlarmService implements OnModuleInit {
   private fallbackPrompt(
     language?: string,
     name?: string,
-    assistantName = HARU_NAME,
+    assistantName = HARI_NAME,
+    speechStyle?: string | null,
   ) {
     const displayName = name?.trim() || '사용자';
+    const resolvedSpeechStyle = resolveSpeechStyle(language, speechStyle);
+    const styleInstruction = `\nSpeech style (${resolvedSpeechStyle.code}):\n${resolvedSpeechStyle.prompt}`;
     if (language?.toLowerCase().includes('english')) {
-      return `You are ${assistantName}. Wake ${displayName} up in short, natural English. Start with a wake-up line.`;
+      return `You are ${assistantName}. Wake ${displayName} up in short, natural English. Start with a wake-up line.${styleInstruction}`;
     }
     if (
       language?.toLowerCase().includes('japanese') ||
       language?.includes('日本') ||
       language?.includes('일본')
     ) {
-      return `あなたは${assistantName}です。${displayName}を短く自然な日本語で起こしてください。最初は起床を促す一言から始めます。`;
+      return `あなたは${assistantName}です。${displayName}を短く自然な日本語で起こしてください。最初は起床を促す一言から始めます。${styleInstruction}`;
     }
 
-    return `${assistantName}다. ${displayName}를 짧고 자연스럽게 깨워라. 첫 문장은 일어날 시간이라는 말로 시작한다.`;
+    return `${assistantName}다. ${displayName}를 짧고 자연스럽게 깨워라. 첫 문장은 일어날 시간이라는 말로 시작한다.${styleInstruction}`;
   }
 
   private async resetDailyRetryStateIfNeeded(alarm: AlarmDocument) {
@@ -166,7 +172,7 @@ export class AlarmService implements OnModuleInit {
     const wakeIntensity = this.normalizeWakeIntensity(
       alarmObject.wakeIntensity,
     );
-    const role = alarmObject.role === HARI_NAME ? HARI_NAME : HARU_NAME;
+    const role = alarmObject.role === HARU_NAME ? HARU_NAME : HARI_NAME;
 
     return {
       ...alarmObject,
@@ -178,6 +184,27 @@ export class AlarmService implements OnModuleInit {
   }
 
   /* ---------- CRUD ---------- */
+
+  async getDailyCallUsage(userId: string) {
+    const user = await this.userService.findOne(userId as any);
+    if (!user) {
+      throw new UnauthorizedException('Unauthorized');
+    }
+
+    const date = this.getLocalDateKey(user.timeZone || 'Asia/Seoul');
+    const trackedCount =
+      user.dailyCallTrackingDate === date
+        ? Number(user.dailyCallCount || 0)
+        : 0;
+    const used = Math.min(Math.max(trackedCount, 0), MAX_DAILY_CALLS);
+
+    return {
+      date,
+      used,
+      limit: MAX_DAILY_CALLS,
+      remaining: MAX_DAILY_CALLS - used,
+    };
+  }
 
   async createAlarm(userId: string, dto: AlarmDto) {
     const alarm = await this.alarmModel.create({
@@ -459,7 +486,10 @@ export class AlarmService implements OnModuleInit {
   }
 
   /** 등록돼 있던 지연·반복 job 전부 제거 */
-  private async clearJobs(alarmId: string, removalReason = 'alarm rescheduled') {
+  private async clearJobs(
+    alarmId: string,
+    removalReason = 'alarm rescheduled',
+  ) {
     const jobIds = [
       `${alarmId}-once`,
       `${alarmId}-once-prewarm`,
@@ -503,7 +533,10 @@ export class AlarmService implements OnModuleInit {
     await this.removeJobs(Array.from(new Set(jobIds)), removalReason);
   }
 
-  private async removeJobs(jobIds: string[], removalReason = 'explicit remove') {
+  private async removeJobs(
+    jobIds: string[],
+    removalReason = 'explicit remove',
+  ) {
     await Promise.all(
       jobIds.map(async (jobId) => {
         const job = await this.alarmQueue.getJob(jobId);
@@ -547,7 +580,7 @@ export class AlarmService implements OnModuleInit {
       .populate({
         path: 'user',
         select:
-          '_id name email language timeZone interest location customMessage',
+          '_id name email language speechStyle timeZone interest location customMessage',
       })
       .lean();
     return this.serializeAlarm(alarm);
@@ -598,6 +631,7 @@ export class AlarmService implements OnModuleInit {
         : await this.apnsService.sendWakeFollowupPush(
             followupToken,
             DEFAULT_RETRY_LIMIT_MESSAGE,
+            deviceToken.apnsEnvironment,
           );
 
     if (pushResult.sent.length) {
@@ -629,6 +663,7 @@ export class AlarmService implements OnModuleInit {
         user?.language,
         user?.name,
         normalizedAlarm.role,
+        user?.speechStyle,
       );
     }
   }
@@ -651,6 +686,7 @@ export class AlarmService implements OnModuleInit {
       callType,
       retryCount,
     );
+    const user = await this.userService.findOne(userId as any);
 
     await this.livekit.prewarmAgent(
       alarmId,
@@ -661,6 +697,7 @@ export class AlarmService implements OnModuleInit {
       alarmId,
       callType,
       retryCount,
+      user?.language || '한국어',
     );
   }
 
@@ -684,51 +721,85 @@ export class AlarmService implements OnModuleInit {
       throw new Error(`Device token not found for user ${userId}`);
     }
 
-    // 2. prewarm 실패가 있어도 정시 푸시가 사용할 방은 보장한다.
-    await this.livekit.ensureRoom(alarmId);
-
-    // 3. 정시 푸시를 막지 않도록 에이전트 확인은 짧게만 한다.
-    try {
-      await this.livekit.waitForAgentParticipant(
-        alarmId,
-        this.callAgentCheckTimeoutMs,
-      );
-    } catch (error) {
+    const dateKey = this.getLocalDateKey(
+      normalizedAlarm.timeZone || 'Asia/Seoul',
+    );
+    const reservation = await this.userService.reserveDailyCallSlot(
+      userId,
+      dateKey,
+      MAX_DAILY_CALLS,
+    );
+    if (!reservation.allowed) {
       console.warn(
-        `[Alarm] LiveKit agent not visible before push → ${alarmId}`,
-        error,
+        `[Alarm] daily call limit reached → user=${userId} date=${dateKey} limit=${MAX_DAILY_CALLS}`,
       );
+      return {
+        sent: false,
+        reason: 'daily_call_limit',
+        dailyCallLimit: MAX_DAILY_CALLS,
+      };
     }
 
-    // 4. 유저 용 Livekit 토큰 생성
-    const room = alarmId;
-    const tokenClient = await this.livekit.generateLivkitToken(room, userId);
+    try {
+      // 2. prewarm 실패가 있어도 정시 푸시가 사용할 방은 보장한다.
+      await this.livekit.ensureRoom(alarmId);
 
-    // 5. 플랫폼별 푸시 보내기
-    const pushResult =
-      deviceToken.deviceType === 'android'
-        ? await this.fcmService.sendCallPush(deviceToken.deviceToken, {
-            caller: HARU_NAME,
-            lkUrl: this.livekitUrl,
-            lkToken: tokenClient,
-            alarmId,
+      // 3. 정시 푸시를 막지 않도록 에이전트 확인은 짧게만 한다.
+      try {
+        await this.livekit.waitForAgentParticipant(
+          alarmId,
+          this.callAgentCheckTimeoutMs,
+        );
+      } catch (error) {
+        console.warn(
+          `[Alarm] LiveKit agent not visible before push → ${alarmId}`,
+          error,
+        );
+      }
+
+      // 4. 유저 용 Livekit 토큰 생성
+      const room = alarmId;
+      const tokenClient = await this.livekit.generateLivkitToken(room, userId);
+
+      // 5. 플랫폼별 푸시 보내기
+      const pushResult =
+        deviceToken.deviceType === 'android'
+          ? await this.fcmService.sendCallPush(deviceToken.deviceToken, {
+              caller: normalizedAlarm.role,
+              lkUrl: this.livekitUrl,
+              lkToken: tokenClient,
+              alarmId,
+            })
+          : await this.apnsService.sendVoipPush(
+              deviceToken.deviceToken,
+              {
+                caller: normalizedAlarm.role,
+                livekitToken: tokenClient,
+                alarmId,
+              },
+              deviceToken.apnsEnvironment,
+            );
+      if (!pushResult.sent.length) {
+        const reasons = pushResult.failed
+          .map((failure) => {
+            const reason = failure.response?.reason || failure.error?.message;
+            return [failure.status, reason].filter(Boolean).join(' ');
           })
-        : await this.apnsService.sendVoipPush(deviceToken.deviceToken, {
-            caller: HARU_NAME,
-            livekitToken: tokenClient,
-            alarmId,
-          });
-    if (!pushResult.sent.length) {
-      const reasons = pushResult.failed
-        .map((failure) => {
-          const reason = failure.response?.reason || failure.error?.message;
-          return [failure.status, reason].filter(Boolean).join(' ');
-        })
-        .filter(Boolean)
-        .join(', ');
-      throw new Error(
-        `Push failed for alarm ${alarmId}${reasons ? `: ${reasons}` : ''}`,
-      );
+          .filter(Boolean)
+          .join(', ');
+        throw new Error(
+          `Push failed for alarm ${alarmId}${reasons ? `: ${reasons}` : ''}`,
+        );
+      }
+
+      return {
+        sent: true,
+        dailyCallCount: reservation.count,
+        dailyCallLimit: MAX_DAILY_CALLS,
+      };
+    } catch (error) {
+      await this.userService.releaseDailyCallSlot(userId, dateKey);
+      throw error;
     }
   }
 
@@ -750,6 +821,10 @@ export class AlarmService implements OnModuleInit {
       normalizedTest.voice,
       user._id,
       user.timeZone || 'Asia/Seoul',
+      undefined,
+      'test',
+      0,
+      user.language || '한국어',
     );
 
     // 3. 유저 용 Livekit 토큰 생성
@@ -760,6 +835,186 @@ export class AlarmService implements OnModuleInit {
       lkToken: tokenClient,
       lkUrl: this.livekitUrl,
     };
+  }
+
+  async scheduleOnboardingTestCall(user, dto: TestCallDto) {
+    const normalizedTest = this.normalizeAlarmPayload(dto);
+    const delaySeconds = Math.min(Math.max(dto.delaySeconds ?? 10, 5), 30);
+    const userId = user._id.toString();
+    const deviceToken = await this.userService.getUserDeviceToken(userId);
+    if (!deviceToken?.deviceToken) {
+      throw new Error(`Device token not found for user ${userId}`);
+    }
+
+    const roomName = `${userId}_onboarding_test_${Date.now()}`;
+    const prompt = await this.promptService.getTestCallPrompt(
+      user,
+      normalizedTest.wakeIntensity,
+      normalizedTest.role,
+    );
+
+    await this.livekit.ensureAgentReadyForTest(
+      roomName,
+      prompt,
+      normalizedTest.voice,
+      userId,
+      user.timeZone || 'Asia/Seoul',
+      undefined,
+      'test',
+      0,
+      user.language || '한국어',
+    );
+
+    const scheduledAt = new Date(Date.now() + delaySeconds * 1000);
+    const jobId = `${userId}-onboarding-test-${scheduledAt.getTime()}`;
+    await this.alarmQueue.add(
+      'onboarding-test-call',
+      {
+        action: 'onboarding-test-call',
+        userId,
+        roomName,
+        role: normalizedTest.role,
+      },
+      {
+        jobId,
+        delay: delaySeconds * 1000,
+        removeOnComplete: true,
+        removeOnFail: { count: 1000 },
+      },
+    );
+
+    return {
+      scheduledAt: scheduledAt.toISOString(),
+      delaySeconds,
+      callType: 'test',
+      retryEnabled: false,
+      jobId,
+      roomName,
+    };
+  }
+
+  async cancelOnboardingTestCall(
+    userId: string,
+    dto: CancelOnboardingTestCallDto,
+  ) {
+    const queuedJobs = await this.alarmQueue.getJobs(
+      [
+        'delayed',
+        'waiting',
+        'active',
+        'paused',
+        'prioritized',
+        'waiting-children',
+      ] as any,
+      0,
+      -1,
+      false,
+    );
+    const jobsById = new Map<string, any>();
+
+    for (const job of queuedJobs) {
+      if (
+        job.data?.action === 'onboarding-test-call' &&
+        job.data?.userId?.toString() === userId
+      ) {
+        jobsById.set(job.id?.toString(), job);
+      }
+    }
+
+    if (dto.jobId) {
+      const explicitJob = await this.alarmQueue.getJob(dto.jobId);
+      if (
+        explicitJob?.data?.action === 'onboarding-test-call' &&
+        explicitJob.data?.userId?.toString() === userId
+      ) {
+        jobsById.set(explicitJob.id?.toString(), explicitJob);
+      }
+    }
+
+    const roomNames = new Set<string>();
+    if (dto.roomName && dto.roomName.startsWith(`${userId}_onboarding_test_`)) {
+      roomNames.add(dto.roomName);
+    }
+
+    let removedJobs = 0;
+    for (const job of jobsById.values()) {
+      if (job.data?.roomName) {
+        roomNames.add(job.data.roomName);
+      }
+
+      try {
+        await job.remove();
+        removedJobs += 1;
+      } catch (error) {
+        console.warn(
+          `[Alarm] onboarding test job removal failed → ${job.id}`,
+          error,
+        );
+      }
+    }
+
+    await Promise.all(
+      Array.from(roomNames).map((roomName) =>
+        this.livekit.deleteRoom(roomName),
+      ),
+    );
+
+    return {
+      cancelled: true,
+      removedJobs,
+      deletedRooms: roomNames.size,
+    };
+  }
+
+  async sendOnboardingTestCall(
+    userId: string,
+    roomName: string,
+    role = HARI_NAME,
+  ) {
+    const deviceToken = await this.userService.getUserDeviceToken(userId);
+    if (!deviceToken?.deviceToken) {
+      throw new Error(`Device token not found for user ${userId}`);
+    }
+
+    const tokenClient = await this.livekit.generateLivkitToken(
+      roomName,
+      userId,
+    );
+    const alarmId = 'onboarding-test';
+    const pushResult =
+      deviceToken.deviceType === 'android'
+        ? await this.fcmService.sendCallPush(deviceToken.deviceToken, {
+            caller: role,
+            lkUrl: this.livekitUrl,
+            lkToken: tokenClient,
+            alarmId,
+          })
+        : await this.apnsService.sendVoipPush(
+            deviceToken.deviceToken,
+            {
+              caller: role,
+              livekitToken: tokenClient,
+              alarmId,
+            },
+            deviceToken.apnsEnvironment,
+          );
+
+    if (!pushResult.sent.length) {
+      const reasons = pushResult.failed
+        .map((failure) => {
+          const reason = failure.response?.reason || failure.error?.message;
+          return [failure.status, reason].filter(Boolean).join(' ');
+        })
+        .filter(Boolean)
+        .join(', ');
+      throw new Error(
+        `Onboarding test push failed for user ${userId}${
+          reasons ? `: ${reasons}` : ''
+        }`,
+      );
+    }
+
+    return { sent: true, callType: 'test', retryEnabled: false };
   }
 
   async scheduleRetryCall(alarmId: string, retryMinutes?: number) {

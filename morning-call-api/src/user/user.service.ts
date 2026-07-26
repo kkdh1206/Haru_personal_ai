@@ -16,6 +16,7 @@ import {
 } from 'src/memory/schemas/user-profile.schema';
 import { ConfigService } from '@nestjs/config';
 import { google } from 'googleapis';
+import * as firebase from 'firebase-admin';
 
 @Injectable()
 export class UserService {
@@ -34,6 +35,11 @@ export class UserService {
     if (user) {
       return user;
     }
+
+    // A locally cached ID token can outlive a deleted Firebase account.
+    // Verify the remote user before creating a new database record.
+    await firebase.auth().getUser(firebaseUid);
+
     try {
       user = await this.userModel.create({ firebaseUid, email });
       return user;
@@ -64,13 +70,11 @@ export class UserService {
       $set.location = updateUserDto.location;
     if (updateUserDto.language !== undefined)
       $set.language = updateUserDto.language;
+    if (updateUserDto.speechStyle !== undefined)
+      $set.speechStyle = updateUserDto.speechStyle;
 
     return this.userModel
-      .findByIdAndUpdate(
-        { _id: userId },
-        { $set },
-        { new: true },
-      )
+      .findByIdAndUpdate({ _id: userId }, { $set }, { new: true })
       .lean();
   }
 
@@ -99,10 +103,14 @@ export class UserService {
     deviceToken: string,
     deviceType: 'ios' | 'android' = 'ios',
     notificationToken?: string,
+    apnsEnvironment?: 'sandbox' | 'production',
   ) {
     const $set: Partial<User> = { deviceToken, deviceType };
     if (notificationToken) {
       $set.notificationToken = notificationToken;
+    }
+    if (deviceType === 'ios' && apnsEnvironment) {
+      $set.apnsEnvironment = apnsEnvironment;
     }
 
     return this.userModel
@@ -113,8 +121,61 @@ export class UserService {
   getUserDeviceToken(userId: string) {
     return this.userModel
       .findById(userId)
-      .select('deviceToken notificationToken deviceType')
+      .select(
+        'deviceToken notificationToken deviceType apnsEnvironment updatedAt',
+      )
       .lean();
+  }
+
+  async reserveDailyCallSlot(
+    userId: string,
+    dateKey: string,
+    maxCalls: number,
+  ) {
+    const limit = Math.max(1, maxCalls);
+
+    await this.userModel.updateOne(
+      {
+        _id: userId,
+        dailyCallTrackingDate: { $ne: dateKey },
+      },
+      {
+        $set: {
+          dailyCallTrackingDate: dateKey,
+          dailyCallCount: 0,
+        },
+      },
+    );
+
+    const user = await this.userModel
+      .findOneAndUpdate(
+        {
+          _id: userId,
+          dailyCallTrackingDate: dateKey,
+          dailyCallCount: { $lt: limit },
+        },
+        { $inc: { dailyCallCount: 1 } },
+        { new: true },
+      )
+      .select('dailyCallCount')
+      .lean();
+
+    return {
+      allowed: Boolean(user),
+      count: user?.dailyCallCount ?? limit,
+      limit,
+    };
+  }
+
+  async releaseDailyCallSlot(userId: string, dateKey: string) {
+    await this.userModel.updateOne(
+      {
+        _id: userId,
+        dailyCallTrackingDate: dateKey,
+        dailyCallCount: { $gt: 0 },
+      },
+      { $inc: { dailyCallCount: -1 } },
+    );
   }
 
   updateCalendarToken(
@@ -136,7 +197,10 @@ export class UserService {
       .lean();
   }
 
-  async updateCalendarTokenFromAuthCode(userId: string, serverAuthCode: string) {
+  async updateCalendarTokenFromAuthCode(
+    userId: string,
+    serverAuthCode: string,
+  ) {
     const oAuth2Client = new google.auth.OAuth2(
       this.cs.get<string>('google.clientId'),
       this.cs.get<string>('google.clientSecret'),
@@ -193,15 +257,38 @@ export class UserService {
   }
 
   async deleteAccount(userId: string) {
-    const user = await this.userModel.findById(userId).select('_id').lean();
+    const user = await this.userModel
+      .findById(userId)
+      .select('_id firebaseUid')
+      .lean();
     if (!user) return null;
 
-    await Promise.all([
+    try {
+      await firebase.auth().deleteUser(user.firebaseUid);
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'auth/user-not-found') {
+        throw error;
+      }
+    }
+
+    const [alarms, memories, profile] = await Promise.all([
       this.alarmModel.deleteMany({ userId }),
       this.memoryModel.deleteMany({ userId }),
       this.userProfileModel.deleteOne({ userId }),
     ]);
 
-    return this.userModel.findByIdAndDelete(userId).lean();
+    const deletedUser = await this.userModel.findByIdAndDelete(userId).lean();
+    if (!deletedUser) return null;
+
+    return {
+      status: 'deleted' as const,
+      deleted: true,
+      firebaseDeleted: true,
+      deletedResources: {
+        alarms: alarms.deletedCount,
+        memories: memories.deletedCount,
+        profile: profile.deletedCount,
+      },
+    };
   }
 }

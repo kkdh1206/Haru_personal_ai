@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString } from 'class-validator';
+import { SPEECH_STYLE_CODES } from 'src/prompt/speech-style';
 
 export class UpdateUserDto {
   @ApiProperty()
@@ -21,4 +22,10 @@ export class UpdateUserDto {
   @IsIn(['한국어', 'English', '日本語'])
   @IsOptional()
   language?: string;
+
+  @ApiProperty({ enum: SPEECH_STYLE_CODES, required: false })
+  @IsString()
+  @IsIn([...SPEECH_STYLE_CODES])
+  @IsOptional()
+  speechStyle?: string;
 }

@@ -15,4 +15,13 @@ export class DeviceTokenDto {
   @IsOptional()
   @IsIn(['ios', 'android'])
   deviceType?: 'ios' | 'android';
+
+  @ApiProperty({
+    required: false,
+    enum: ['sandbox', 'production'],
+    description: 'APNs environment that issued the iOS token',
+  })
+  @IsOptional()
+  @IsIn(['sandbox', 'production'])
+  apnsEnvironment?: 'sandbox' | 'production';
 }

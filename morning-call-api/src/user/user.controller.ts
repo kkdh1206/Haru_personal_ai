@@ -51,6 +51,7 @@ export class UserController {
       dto.deviceToken,
       dto.deviceType ?? 'ios',
       dto.notificationToken,
+      dto.apnsEnvironment,
     );
     if (!updated) return 'failed';
     return 'updated';
@@ -81,10 +82,7 @@ export class UserController {
     description:
       'Android Google Sign-In serverAuthCode를 서버에서 access/refresh token으로 교환해 저장합니다.',
   })
-  async updateCalendarTokenFromCode(
-    @Req() req,
-    @Body() dto: CalendarCodeDto,
-  ) {
+  async updateCalendarTokenFromCode(@Req() req, @Body() dto: CalendarCodeDto) {
     return this.userService.updateCalendarTokenFromAuthCode(
       req.user._id,
       dto.serverAuthCode,
@@ -171,6 +169,6 @@ export class UserController {
   async deleteAccount(@Req() req) {
     const deleted = await this.userService.deleteAccount(req.user._id);
     if (!deleted) throw new NotFoundException('User not found');
-    return { deleted: true };
+    return deleted;
   }
 }

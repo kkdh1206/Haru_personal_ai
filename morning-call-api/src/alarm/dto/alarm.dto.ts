@@ -7,15 +7,15 @@ export class AlarmDto {
   @IsOptional()
   personality?: string = 'gentle';
 
-  @ApiProperty({ default: 'Rasalgethi' })
+  @ApiProperty({ default: 'Leda' })
   @IsString()
   @IsOptional()
-  voice?: string = 'Rasalgethi';
+  voice?: string = 'Leda';
 
-  @ApiProperty({ required: false, default: '하루' })
+  @ApiProperty({ required: false, default: '하리' })
   @IsString()
   @IsOptional()
-  role?: string = '하루';
+  role?: string = '하리';
 
   @ApiProperty({ required: false, default: 'gentle' })
   @IsString()

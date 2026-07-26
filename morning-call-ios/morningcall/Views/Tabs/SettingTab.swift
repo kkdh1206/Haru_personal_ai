@@ -17,6 +17,19 @@ private struct CalendarConnectionStatus: Decodable {
     let connected: Bool
 }
 
+private struct DailyCallUsage: Decodable {
+    let date: String
+    let used: Int
+    let limit: Int
+    let remaining: Int
+}
+
+private struct AccountDeletionResponse: Decodable {
+    let status: String
+    let deleted: Bool
+    let firebaseDeleted: Bool
+}
+
 struct SettingView: View {
     @EnvironmentObject var authVM: AuthViewModel
     @StateObject private var googleHelper = GoogleSignInHelper()
@@ -30,7 +43,10 @@ struct SettingView: View {
     @State private var isCalendarStatusLoading = false
     @State private var isCalendarDisconnecting = false
     @State private var isCalendarConnecting = false
+    @State private var dailyCallUsage: DailyCallUsage?
+    @State private var isDailyCallUsageLoading = false
     @State private var showDeleteAccountAlert = false
+    @State private var showDeleteAccountError = false
     @State private var isDeletingAccount = false
 
     private let languageOptions: [(code: String, label: String)] = [
@@ -45,6 +61,7 @@ struct SettingView: View {
                 profileSection
                 appLanguageSection
                 callSection
+                dailyCallSection
                 characterSection
                 calendarSection
                 logoutSection
@@ -60,6 +77,7 @@ struct SettingView: View {
         .task {
             loadInitialSettings()
             loadCalendarStatus()
+            loadDailyCallUsage()
         }
         .alert(localized("계정 탈퇴"), isPresented: $showDeleteAccountAlert) {
             Button(localized("취소"), role: .cancel) {}
@@ -68,6 +86,11 @@ struct SettingView: View {
             }
         } message: {
             Text(localized("계정과 알람이 삭제됩니다. 이 작업은 되돌릴 수 없어요."))
+        }
+        .alert(localized("계정 탈퇴 실패"), isPresented: $showDeleteAccountError) {
+            Button(localized("완료"), role: .cancel) {}
+        } message: {
+            Text(localized("계정을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요."))
         }
         .preferredColorScheme(.light)
     }
@@ -153,6 +176,46 @@ struct SettingView: View {
             .onChange(of: selectedAppLanguage) { language in
                 env.updateAppLanguage(language)
             }
+        }
+    }
+
+    private var dailyCallSection: some View {
+        settingsCard(title: "오늘의 모닝콜") {
+            HStack(spacing: 14) {
+                Image(systemName: "phone.badge.clock.fill")
+                    .font(.system(size: 21, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.47, green: 0.61, blue: 0.92))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(localized("남은 전화 횟수"))
+                        .font(.system(.body, design: .rounded).weight(.semibold))
+                        .foregroundStyle(.black)
+                    Text(localized("일반 모닝콜과 재통화를 합쳐 하루 최대 3회예요."))
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.black.opacity(0.58))
+                }
+
+                Spacer()
+
+                if isDailyCallUsageLoading {
+                    ProgressView()
+                        .tint(.black)
+                } else {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(dailyCallUsage.map { "\($0.remaining) / \($0.limit)" } ?? "--")
+                            .font(.system(.title3, design: .rounded).weight(.bold))
+                            .foregroundStyle(.black)
+                        Text(localized("회 남음"))
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.black.opacity(0.52))
+                    }
+                }
+            }
+            .padding(18)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.white.opacity(0.78))
+            )
         }
     }
 
@@ -337,9 +400,15 @@ struct SettingView: View {
         }
 
         let language = selectedLanguage.isEmpty ? "한국어" : selectedLanguage
+        let speechStyle = SpeechStyle.value(
+            forCallLanguage: language,
+            preserving: env.user?.speechStyle,
+            currentLanguage: env.user?.language
+        )
         let body: [String: Any] = [
             "name": trimmedName,
             "language": language,
+            "speechStyle": speechStyle,
             "location": env.user?.location ?? ""
         ]
         
@@ -351,6 +420,7 @@ struct SettingView: View {
                     selectedLanguage = language
                     env.user?.name = trimmedName
                     env.user?.language = language
+                    env.user?.speechStyle = speechStyle
                     print("✅ 사용자 설정 저장 완료: \(updated)")
                 case .failure(let error):
                     print("❌ 사용자 설정 저장 실패: \(error)")
@@ -393,6 +463,22 @@ struct SettingView: View {
         }
     }
 
+    private func loadDailyCallUsage() {
+        isDailyCallUsageLoading = true
+
+        APIClient.request(path: "/alarm/call-usage", method: .GET) { (result: Result<DailyCallUsage, Error>) in
+            DispatchQueue.main.async {
+                isDailyCallUsageLoading = false
+                switch result {
+                case .success(let usage):
+                    dailyCallUsage = usage
+                case .failure(let error):
+                    print("❌ 오늘의 모닝콜 사용량 확인 실패: \(error)")
+                }
+            }
+        }
+    }
+
     private func connectCalendar() {
         isCalendarConnecting = true
         googleHelper.signInForCalendar { success in
@@ -423,29 +509,32 @@ struct SettingView: View {
 
     private func deleteAccount() {
         isDeletingAccount = true
+        let deletedUserID = Auth.auth().currentUser?.uid
 
-        APIClient.requestVoid(path: "/user", method: .DELETE) { result in
+        APIClient.request(path: "/user", method: .DELETE) { (result: Result<AccountDeletionResponse, Error>) in
             DispatchQueue.main.async {
+                isDeletingAccount = false
+
                 switch result {
-                case .success:
-                    guard let currentUser = Auth.auth().currentUser else {
-                        FeatureIntroStore.resetForCurrentUser()
-                        authVM.signOut()
+                case .success(let response):
+                    guard
+                        response.status == "deleted",
+                        response.deleted,
+                        response.firebaseDeleted
+                    else {
+                        showDeleteAccountError = true
                         return
                     }
 
-                    let deletedUserID = currentUser.uid
-                    currentUser.delete { error in
-                        if let error {
-                            print("❌ Firebase 계정 삭제 실패: \(error)")
-                        }
-                        DispatchQueue.main.async {
-                            FeatureIntroStore.reset(forUserID: deletedUserID)
-                            authVM.signOut()
-                        }
+                    if let deletedUserID {
+                        FeatureIntroStore.reset(forUserID: deletedUserID)
+                    } else {
+                        FeatureIntroStore.resetForCurrentUser()
                     }
+
+                    authVM.signOut()
                 case .failure(let error):
-                    isDeletingAccount = false
+                    showDeleteAccountError = true
                     print("❌ 계정 탈퇴 실패: \(error)")
                 }
             }

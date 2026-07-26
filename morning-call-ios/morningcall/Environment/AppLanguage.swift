@@ -1,5 +1,54 @@
 import Foundation
 
+enum SpeechStyle: String, Codable {
+    case gyeongsang = "ko-gyeongsang"
+    case osaka = "ja-osaka"
+    case california = "en-california"
+
+    static func defaultStyle(forCallLanguage language: String) -> SpeechStyle {
+        switch languageCode(for: language) {
+        case "ja":
+            return .osaka
+        case "en":
+            return .california
+        default:
+            return .gyeongsang
+        }
+    }
+
+    static func value(
+        forCallLanguage language: String,
+        preserving currentStyle: String?,
+        currentLanguage: String?
+    ) -> String {
+        let targetLanguageCode = languageCode(for: language)
+        if targetLanguageCode == languageCode(for: currentLanguage),
+           let currentStyle,
+           let style = SpeechStyle(rawValue: currentStyle),
+           style == defaultStyle(forCallLanguage: language) {
+            return style.rawValue
+        }
+        return defaultStyle(forCallLanguage: language).rawValue
+    }
+
+    private static func languageCode(for language: String?) -> String {
+        guard let language else { return "ko" }
+        let normalized = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.contains("japanese")
+            || normalized.contains("일본")
+            || normalized.contains("日本")
+            || normalized.hasPrefix("ja") {
+            return "ja"
+        }
+        if normalized.contains("english")
+            || normalized.contains("영어")
+            || normalized.hasPrefix("en") {
+            return "en"
+        }
+        return "ko"
+    }
+}
+
 enum AppLanguage: String, CaseIterable, Identifiable {
     case korean = "ko"
     case english = "en"
@@ -23,6 +72,17 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     }
 
     var nativeLabel: String {
+        switch self {
+        case .korean:
+            return "한국어"
+        case .english:
+            return "English"
+        case .japanese:
+            return "日本語"
+        }
+    }
+
+    var callLanguageValue: String {
         switch self {
         case .korean:
             return "한국어"

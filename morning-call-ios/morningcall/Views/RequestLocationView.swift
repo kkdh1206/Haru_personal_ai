@@ -127,6 +127,7 @@ class CurrentLocationManager: NSObject, ObservableObject, CLLocationManagerDeleg
                 case .success(let user):
                     env?.user?.location = user.location ?? location
                     env?.user?.language = user.language
+                    env?.user?.speechStyle = user.speechStyle
                 case .failure(let error):
                     print("❌ 위치 갱신 실패: \(error)")
                 }
@@ -291,10 +292,17 @@ struct RequestLocationView: View {
         isSaving = true
         env.user?.location = location
 
+        let language = env.user?.language ?? "한국어"
+        let speechStyle = SpeechStyle.value(
+            forCallLanguage: language,
+            preserving: env.user?.speechStyle,
+            currentLanguage: env.user?.language
+        )
         APIClient.request(path: "/user", method: .PUT, body: [
             "name": name,
             "location": location,
-            "language": env.user?.language ?? "한국어"
+            "language": language,
+            "speechStyle": speechStyle
         ]) { (result: Result<UserInfo, Error>) in
             DispatchQueue.main.async {
                 isSaving = false
@@ -303,11 +311,9 @@ struct RequestLocationView: View {
                     env.user?.name = user.name ?? env.user?.name
                     env.user?.location = user.location ?? location
                     env.user?.language = user.language ?? env.user?.language
-                    if (env.user?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty {
-                        env.onboardingStep = .enterName
-                    } else {
-                        env.onboardingStep = .completed
-                    }
+                    env.user?.speechStyle = user.speechStyle ?? env.user?.speechStyle
+                    FeatureIntroStore.advance(to: .alarmSetup)
+                    env.onboardingStep = .alarmSetup
                 case .failure(let error):
                     print("❌ 유저 정보 저장 실패: \(error)")
                 }

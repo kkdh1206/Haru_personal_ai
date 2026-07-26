@@ -18,6 +18,7 @@ struct UserInfo: Decodable {
     let location: String?
     let interest: String?
     let language: String?
+    let speechStyle: String?
 }
 
 struct RootView: View {
@@ -38,6 +39,12 @@ struct RootView: View {
                     EnterNameView()
                 case .requestLocation:
                     RequestLocationView()
+                case .alarmSetup:
+                    OnboardingAlarmSetupView()
+                case .calendarIntro:
+                    CalendarIntroView()
+                case .testCallSetup:
+                    OnboardingTestCallView()
                 case .completed:
                     AlarmListView()
                         .task {
@@ -53,7 +60,7 @@ struct RootView: View {
             viewModel.checkAuthState()
             AppIconManager.applyStoredPreference()
         }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             guard phase == .active, viewModel.isLoggedIn, env.onboardingStep == .completed else { return }
             CurrentLocationManager.shared.refreshAndSaveIfAuthorized(env: env)
         }
@@ -71,14 +78,16 @@ struct RootView: View {
                         name: user.name,
                         location: user.location,
                         interest: user.interest,
-                        language: user.language
+                        language: user.language,
+                        speechStyle: user.speechStyle
                     )
+                    DeviceTokenManager.shared.registerTokensToAPI()
                     let trimmedName = user.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
                     if trimmedName.isEmpty {
                         env.onboardingStep = .enterName
                     } else if FeatureIntroStore.shouldShow(for: user) {
-                        env.onboardingStep = .featureIntro
+                        env.onboardingStep = FeatureIntroStore.currentStep()
                     } else {
                         env.onboardingStep = .completed
                     }
@@ -102,6 +111,7 @@ class AuthViewModel: ObservableObject {
     }
 
     func signOut() {
+        DeviceTokenManager.shared.invalidateRegistration()
         try? Auth.auth().signOut()
         isLoggedIn = false
     }
@@ -312,50 +322,105 @@ final class AppleSignInCoordinator: NSObject, ObservableObject, ASAuthorizationC
 class DeviceTokenManager: ObservableObject {
     static let shared = DeviceTokenManager()
 
+    @Published private(set) var isRegistered = false
+    @Published private(set) var isRegistering = false
     @Published var deviceToken: String? = nil {
-        didSet { registerTokensToAPI() }
+        didSet {
+            invalidateRegistration()
+            registerTokensToAPI()
+        }
     }
     @Published var notificationToken: String? = nil {
-        didSet { registerTokensToAPI() }
+        didSet {
+            invalidateRegistration()
+            registerTokensToAPI()
+        }
     }
 
-    func registerTokensToAPI() {
-        guard FirebaseApp.app() != nil else { return }
+    private var registeredFingerprint: String?
+    private var registrationRequestID: UUID?
+
+    private static var apnsEnvironment: String {
+#if DEBUG
+        return "sandbox"
+#else
+        return "production"
+#endif
+    }
+
+    func invalidateRegistration() {
+        registeredFingerprint = nil
+        registrationRequestID = nil
+        isRegistered = false
+        isRegistering = false
+    }
+
+    func registerTokensToAPI(completion: ((Bool) -> Void)? = nil) {
+        guard FirebaseApp.app() != nil else {
+            completion?(false)
+            return
+        }
+        guard let userID = Auth.auth().currentUser?.uid else {
+            completion?(false)
+            return
+        }
         guard let voipToken = deviceToken else {
             print("❌ VoIP APNs 토큰 없음")
+            completion?(false)
             return
         }
 
-        AuthTokenManager.shared.refreshTokenIfNeeded { idToken in
-            guard let idToken else { return }
+        let fingerprint = [
+            userID,
+            voipToken,
+            notificationToken ?? "",
+            Self.apnsEnvironment
+        ].joined(separator: "|")
 
-            var request = URLRequest(url: URL(string: "https://morningcall.poapper.com/user/device-token")!)
-            request.httpMethod = "PATCH"
-            request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if isRegistered, registeredFingerprint == fingerprint {
+            completion?(true)
+            return
+        }
 
-            var body: [String: Any] = [
-                "deviceToken": voipToken,
-                "deviceType": "ios"
-            ]
-            if let notificationToken = self.notificationToken {
-                body["notificationToken"] = notificationToken
-            }
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
+        let requestID = UUID()
+        registrationRequestID = requestID
+        isRegistered = false
+        isRegistering = true
 
-            URLSession.shared.dataTask(with: request) { data, response, error in
-                if let error {
-                    print("🌐 토큰 등록 에러: \(error.localizedDescription)")
+        var body: [String: Any] = [
+            "deviceToken": voipToken,
+            "deviceType": "ios",
+            "apnsEnvironment": Self.apnsEnvironment
+        ]
+        if let notificationToken {
+            body["notificationToken"] = notificationToken
+        }
+
+        APIClient.requestVoid(
+            path: "/user/device-token",
+            method: .PATCH,
+            body: body
+        ) { result in
+            DispatchQueue.main.async {
+                guard self.registrationRequestID == requestID else {
+                    completion?(false)
                     return
                 }
-                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-                if (200..<300).contains(statusCode) {
+
+                self.isRegistering = false
+                switch result {
+                case .success:
                     print("✅ 디바이스 토큰 등록 완료")
-                } else {
-                    let responseBody = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                    print("❌ 디바이스 토큰 등록 실패: \(statusCode) \(responseBody)")
+                    self.registeredFingerprint = fingerprint
+                    self.isRegistered = true
+                    completion?(true)
+                case .failure(let error):
+                    print("❌ 디바이스 토큰 등록 실패: \(error)")
+                    self.registeredFingerprint = nil
+                    self.isRegistered = false
+                    completion?(false)
                 }
-            }.resume()
+            }
         }
     }
 }

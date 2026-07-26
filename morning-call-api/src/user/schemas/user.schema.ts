@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
+import { SPEECH_STYLE_CODES } from 'src/prompt/speech-style';
 
 export type UserDocument = User & Document;
 
@@ -26,6 +27,9 @@ export class User {
   @Prop({ default: '한국어' })
   language: string;
 
+  @Prop({ default: null, enum: SPEECH_STYLE_CODES })
+  speechStyle: string | null;
+
   @Prop({ nullable: true }) // 날씨 기준 위치 (city, province) ex. 포항시, 경상북도
   location: string;
 
@@ -41,6 +45,9 @@ export class User {
   @Prop({ nullable: true })
   deviceType: 'ios' | 'android';
 
+  @Prop({ nullable: true, enum: ['sandbox', 'production'] })
+  apnsEnvironment: 'sandbox' | 'production';
+
   @Prop({ nullable: true })
   calendarAccessToken: string; // encrypted
 
@@ -49,6 +56,12 @@ export class User {
 
   @Prop({ nullable: true })
   customMessage: string;
+
+  @Prop({ default: null })
+  dailyCallTrackingDate: string | null;
+
+  @Prop({ default: 0, min: 0 })
+  dailyCallCount: number;
 
   @Prop({ default: 'user', enum: ['user', 'admin'] })
   role: string;

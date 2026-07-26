@@ -36,8 +36,9 @@ export class LivekitService {
     userId: string,
     timeZone: string,
     alarmId?: string,
-    callType: 'initial' | 'retry' = 'initial',
+    callType: 'initial' | 'retry' | 'test' = 'initial',
     retryCount = 0,
+    language = '한국어',
   ) {
     await this.ensureRoom(roomName);
 
@@ -56,6 +57,7 @@ export class LivekitService {
         alarm_id: alarmId || null,
         call_type: callType,
         retry_count: retryCount,
+        language,
       }),
     });
   }
@@ -67,8 +69,9 @@ export class LivekitService {
     userId: string,
     timeZone: string,
     alarmId?: string,
-    callType: 'initial' | 'retry' = 'initial',
+    callType: 'initial' | 'retry' | 'test' = 'initial',
     retryCount = 0,
+    language = '한국어',
   ) {
     await this.prewarmAgent(
       roomName,
@@ -79,6 +82,7 @@ export class LivekitService {
       alarmId,
       callType,
       retryCount,
+      language,
     );
     await this.waitForAgentParticipant(roomName);
   }
@@ -138,6 +142,18 @@ export class LivekitService {
 
     const token = await at.toJwt();
     return token;
+  }
+
+  async deleteRoom(roomName: string) {
+    try {
+      await this.roomService.deleteRoom(roomName);
+      console.log('[Livekit] room deleted', roomName);
+    } catch (error) {
+      if (this.isLivekitNotFoundError(error)) {
+        return;
+      }
+      throw error;
+    }
   }
 
   private async listParticipantsIfRoomExists(roomName: string) {

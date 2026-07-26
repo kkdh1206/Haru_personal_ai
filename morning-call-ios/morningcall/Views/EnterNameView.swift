@@ -107,10 +107,17 @@ struct EnterNameView: View {
         showSaveError = false
         isSaving = true
 
+        let language = env.user?.language ?? "한국어"
+        let speechStyle = SpeechStyle.value(
+            forCallLanguage: language,
+            preserving: env.user?.speechStyle,
+            currentLanguage: env.user?.language
+        )
         APIClient.request(path: "/user", method: .PUT, body: [
             "name": trimmed,
             "location": env.user?.location ?? "",
-            "language": env.user?.language ?? "한국어"
+            "language": language,
+            "speechStyle": speechStyle
         ]) { (result: Result<UserInfo, Error>) in
             DispatchQueue.main.async {
                 isSaving = false
@@ -120,7 +127,9 @@ struct EnterNameView: View {
                     env.user?.name = user.name ?? trimmed
                     env.user?.location = user.location ?? env.user?.location
                     env.user?.language = user.language ?? env.user?.language
+                    env.user?.speechStyle = user.speechStyle ?? env.user?.speechStyle
 
+                    FeatureIntroStore.advance(to: .featureIntro)
                     env.onboardingStep = .featureIntro
                 case .failure(let error):
                     showSaveError = true

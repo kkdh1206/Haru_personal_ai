@@ -22,13 +22,6 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
         notificationCenter.delegate = self
         LocalCallFallbackScheduler.shared.registerNotificationCategory()
         application.registerForRemoteNotifications()
-        notificationCenter.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if let error {
-                print("❌ Notification authorization failed:", error.localizedDescription)
-                return
-            }
-            print(granted ? "✅ Notification authorization granted" : "⚠️ Notification authorization denied")
-        }
         print("🔥 Firebase configured")
         return true
     }

@@ -7,6 +7,8 @@ type ApnNotificationWithHeaders = apn.Notification & {
   headers: () => Record<string, string | number>;
 };
 
+export type ApnsEnvironment = 'sandbox' | 'production';
+
 function summarizeApnsResult(res: apn.Responses) {
   return {
     sent: res.sent,
@@ -22,19 +24,38 @@ function summarizeApnsResult(res: apn.Responses) {
 
 @Injectable()
 export class ApnsService implements OnModuleDestroy {
-  private provider: apn.Provider;
-  private livekitUrl: string;
+  private readonly providers = new Map<ApnsEnvironment, apn.Provider>();
+  private readonly providerToken: apn.ProviderToken;
+  private readonly defaultEnvironment: ApnsEnvironment;
+  private readonly livekitUrl: string;
 
   constructor(private readonly cs: ConfigService) {
     this.livekitUrl = this.cs.getOrThrow<string>('livekit.websocketUrl');
-    this.provider = new apn.Provider({
-      token: {
-        key: fs.readFileSync('APNsKey.p8'),
-        keyId: this.cs.getOrThrow<string>('apns.keyId'),
-        teamId: this.cs.getOrThrow<string>('apns.teamId'),
-      },
-      production: this.cs.get<boolean>('apns.production'),
+    this.providerToken = {
+      key: fs.readFileSync('APNsKey.p8'),
+      keyId: this.cs.getOrThrow<string>('apns.keyId'),
+      teamId: this.cs.getOrThrow<string>('apns.teamId'),
+    };
+    this.defaultEnvironment = this.cs.get<boolean>('apns.production')
+      ? 'production'
+      : 'sandbox';
+  }
+
+  private getProvider(environment?: ApnsEnvironment) {
+    const selectedEnvironment = this.resolveEnvironment(environment);
+    const existingProvider = this.providers.get(selectedEnvironment);
+    if (existingProvider) return existingProvider;
+
+    const provider = new apn.Provider({
+      token: this.providerToken,
+      production: selectedEnvironment === 'production',
     });
+    this.providers.set(selectedEnvironment, provider);
+    return provider;
+  }
+
+  private resolveEnvironment(environment?: ApnsEnvironment) {
+    return environment ?? this.defaultEnvironment;
   }
 
   private applyPushHeaders(
@@ -63,6 +84,7 @@ export class ApnsService implements OnModuleDestroy {
       livekitToken: string;
       alarmId: string;
     },
+    environment?: ApnsEnvironment,
   ) {
     const note = new apn.Notification();
     note.topic = `${this.cs.get<string>('apns.bundleId')}.voip`;
@@ -76,15 +98,20 @@ export class ApnsService implements OnModuleDestroy {
     };
     this.applyPushHeaders(note, 'voip', 0);
 
-    const res = await this.provider.send(note, token);
-    console.log(
-      res.sent.length ? '✅ sent' : '❌ failed',
-      summarizeApnsResult(res),
-    );
+    const selectedEnvironment = this.resolveEnvironment(environment);
+    const res = await this.getProvider(selectedEnvironment).send(note, token);
+    console.log(res.sent.length ? '✅ sent' : '❌ failed', {
+      environment: selectedEnvironment,
+      ...summarizeApnsResult(res),
+    });
     return res;
   }
 
-  async sendWakeFollowupPush(token: string, body: string) {
+  async sendWakeFollowupPush(
+    token: string,
+    body: string,
+    environment?: ApnsEnvironment,
+  ) {
     const note = new apn.Notification();
     note.topic = this.cs.getOrThrow<string>('apns.bundleId');
     note.priority = 10;
@@ -97,15 +124,17 @@ export class ApnsService implements OnModuleDestroy {
     note.payload = { type: 'wake_followup' };
     this.applyPushHeaders(note, 'alert');
 
-    const res = await this.provider.send(note, token);
-    console.log(
-      res.sent.length ? '✅ followup sent' : '❌ followup failed',
-      summarizeApnsResult(res),
-    );
+    const selectedEnvironment = this.resolveEnvironment(environment);
+    const res = await this.getProvider(selectedEnvironment).send(note, token);
+    console.log(res.sent.length ? '✅ followup sent' : '❌ followup failed', {
+      environment: selectedEnvironment,
+      ...summarizeApnsResult(res),
+    });
     return res;
   }
 
   onModuleDestroy() {
-    this.provider.shutdown();
+    this.providers.forEach((provider) => provider.shutdown());
+    this.providers.clear();
   }
 }
