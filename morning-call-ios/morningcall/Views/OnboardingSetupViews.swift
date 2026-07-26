@@ -440,16 +440,22 @@ struct OnboardingTestCallView: View {
         return max(Int(ceil(scheduledAt.timeIntervalSince(now))), 0)
     }
 
-    private var canSchedule: Bool {
+    private var allRequirementsReady: Bool {
         microphonePermission == .granted
             && notificationPermissionGranted
             && confirmedDoNotDisturb
             && tokenManager.isRegistered
+    }
+
+    private var canSchedule: Bool {
+        allRequirementsReady
             && !isScheduling
     }
 
     private var testCallCompleted: Bool {
         callPresentation.lastEndedAlarmID == "onboarding-test"
+            || callPresentation.onboardingTestCompleted
+            || FeatureIntroStore.testCallCompleted
     }
 
     private var testCallWaitTimedOut: Bool {
@@ -553,14 +559,14 @@ struct OnboardingTestCallView: View {
                         }
                     } else {
                         VStack(spacing: 10) {
-                            Text(testCallCompleted ? "테스트 통화 완료" : secondsRemaining > 0 ? "\(secondsRemaining)" : "전화 수신 대기 중")
+                            Text(testCallCompleted ? "테스트 통화 발송 완료" : secondsRemaining > 0 ? "\(secondsRemaining)" : "전화 수신 대기 중")
                                 .font(.system(size: secondsRemaining > 0 && !testCallCompleted ? 72 : 28, weight: .bold, design: .rounded))
                                 .foregroundStyle(Color.black.opacity(0.88))
                                 .contentTransition(.numericText())
 
                             Text(LocalizedStringKey(
                                 testCallCompleted
-                                    ? "통화 수신과 음성 확인을 마쳤어요."
+                                    ? "걸려오는 전화를 받아 확인해보세요."
                                     : secondsRemaining > 0
                                         ? "초 뒤에 전화가 울려요"
                                         : "곧 Haru의 전화가 도착합니다."
@@ -591,7 +597,7 @@ struct OnboardingTestCallView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    if scheduledAt == nil {
+                    if scheduledAt == nil, allRequirementsReady {
                         Button {
                             scheduleTestCall()
                         } label: {
@@ -614,6 +620,12 @@ struct OnboardingTestCallView: View {
                         .font(.system(.subheadline, design: .rounded).weight(.semibold))
                         .foregroundStyle(Color.black.opacity(0.56))
                         .frame(maxWidth: .infinity)
+                    } else if scheduledAt == nil {
+                        Text("위 4가지 항목을 모두 확인하면 테스트 전화를 받거나 건너뛸 수 있어요.")
+                            .font(.system(.footnote, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.black.opacity(0.56))
+                            .frame(maxWidth: .infinity)
+                            .multilineTextAlignment(.center)
                     } else if testCallCompleted {
                         Button {
                             endTestAndFinishOnboarding()
@@ -657,12 +669,14 @@ struct OnboardingTestCallView: View {
         }
         .onAppear {
             now = Date()
+            callPresentation.refreshOnboardingTestCompletion()
             refreshPermissionStatus()
             DeviceTokenManager.shared.registerTokensToAPI()
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             now = Date()
+            callPresentation.refreshOnboardingTestCompletion()
             refreshPermissionStatus()
         }
         .onChange(of: callPresentation.phase) { _, _ in
@@ -734,9 +748,9 @@ struct OnboardingTestCallView: View {
 
     private var notificationPermissionGranted: Bool {
         switch notificationAuthorization {
-        case .authorized, .provisional, .ephemeral:
+        case .authorized, .ephemeral:
             return true
-        case .denied, .notDetermined:
+        case .denied, .notDetermined, .provisional:
             return false
         @unknown default:
             return false
@@ -838,20 +852,15 @@ struct OnboardingTestCallView: View {
             }
         }
 
+        completeOnboarding()
         Task {
             await CallManager.shared.endCurrentCall()
-            await MainActor.run {
-                completeOnboarding()
-            }
         }
     }
 
     private func completeOnboarding() {
         FeatureIntroStore.markCompleted()
-        Task { @MainActor in
-            await Task.yield()
-            env.onboardingStep = .completed
-        }
+        env.onboardingStep = .completed
     }
 
     private static func parseISODate(_ value: String) -> Date? {

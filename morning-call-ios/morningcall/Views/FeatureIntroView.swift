@@ -8,6 +8,7 @@ enum FeatureIntroStore {
     private static let testCallScheduledAtKey = "haru.onboarding.test-call-scheduled-at.v2"
     private static let testCallJobIDKey = "haru.onboarding.test-call-job-id.v2"
     private static let testCallRoomNameKey = "haru.onboarding.test-call-room-name.v2"
+    private static let testCallCompletedKey = "haru.onboarding.test-call-completed.v2"
 
     static func shouldShow(for _: UserInfo) -> Bool {
         !UserDefaults.standard.bool(forKey: completedKeyForCurrentUser())
@@ -37,6 +38,7 @@ enum FeatureIntroStore {
         UserDefaults.standard.removeObject(forKey: testCallScheduledAtKeyForCurrentUser())
         UserDefaults.standard.removeObject(forKey: testCallJobIDKeyForCurrentUser())
         UserDefaults.standard.removeObject(forKey: testCallRoomNameKeyForCurrentUser())
+        UserDefaults.standard.removeObject(forKey: testCallCompletedKeyForCurrentUser())
     }
 
     static var testCallScheduledAt: Date? {
@@ -70,12 +72,25 @@ enum FeatureIntroStore {
         }
     }
 
+    static var testCallCompleted: Bool {
+        UserDefaults.standard.bool(forKey: testCallCompletedKeyForCurrentUser())
+    }
+
+    static func markTestCallCompleted() {
+        UserDefaults.standard.set(true, forKey: testCallCompletedKeyForCurrentUser())
+    }
+
+    static func clearTestCallCompleted() {
+        UserDefaults.standard.removeObject(forKey: testCallCompletedKeyForCurrentUser())
+    }
+
     static func resetForCurrentUser() {
         UserDefaults.standard.removeObject(forKey: completedKeyForCurrentUser())
         UserDefaults.standard.removeObject(forKey: currentStepKeyForCurrentUser())
         UserDefaults.standard.removeObject(forKey: testCallScheduledAtKeyForCurrentUser())
         UserDefaults.standard.removeObject(forKey: testCallJobIDKeyForCurrentUser())
         UserDefaults.standard.removeObject(forKey: testCallRoomNameKeyForCurrentUser())
+        UserDefaults.standard.removeObject(forKey: testCallCompletedKeyForCurrentUser())
     }
 
     static func reset(forUserID uid: String) {
@@ -84,6 +99,7 @@ enum FeatureIntroStore {
         UserDefaults.standard.removeObject(forKey: testCallScheduledAtKey(forUserID: uid))
         UserDefaults.standard.removeObject(forKey: testCallJobIDKey(forUserID: uid))
         UserDefaults.standard.removeObject(forKey: testCallRoomNameKey(forUserID: uid))
+        UserDefaults.standard.removeObject(forKey: testCallCompletedKey(forUserID: uid))
     }
 
     private static func completedKeyForCurrentUser() -> String {
@@ -144,6 +160,18 @@ enum FeatureIntroStore {
 
     private static func testCallRoomNameKey(forUserID uid: String) -> String {
         "\(testCallRoomNameKey).\(uid)"
+    }
+
+    private static func testCallCompletedKeyForCurrentUser() -> String {
+        guard let uid = Auth.auth().currentUser?.uid, !uid.isEmpty else {
+            return testCallCompletedKey
+        }
+
+        return testCallCompletedKey(forUserID: uid)
+    }
+
+    private static func testCallCompletedKey(forUserID uid: String) -> String {
+        "\(testCallCompletedKey).\(uid)"
     }
 }
 

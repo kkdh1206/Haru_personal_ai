@@ -192,8 +192,8 @@
 "일어나지 않으면 최초 전화 후 최대 두 번 더 연락해요. 지금 진행하는 테스트 전화는 1회만 울리고 재통화하지 않아요." = "If you do not wake up, Haru can call up to two more times after the first call. This test rings only once and never retries.";
 "테스트 전화를 예약하지 못했어요. 기기 연결과 네트워크를 확인한 뒤 다시 시도해 주세요." = "Could not schedule the test call. Check your device connection and network, then try again.";
 "테스트 통화를 준비 중이에요" = "Preparing Your Test Call";
-"테스트 통화 완료" = "Test Call Complete";
-"통화 수신과 음성 확인을 마쳤어요." = "Incoming calls and audio are working.";
+"테스트 통화 발송 완료" = "Test Call Sent";
+"걸려오는 전화를 받아 확인해보세요." = "Answer the incoming call to make sure it works.";
 "테스트 전화 다시 받기" = "Try the Test Call Again";
 "10초 뒤 테스트 전화 받기" = "Receive a Test Call in 10 Seconds";
 "테스트를 건너뛰고 홈으로" = "Skip Test and Go Home";

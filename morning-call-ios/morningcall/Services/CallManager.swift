@@ -22,6 +22,7 @@ final class CallPresentationStore: ObservableObject {
     @Published private(set) var isMuted = false
     @Published private(set) var isSpeakerOn = false
     @Published private(set) var lastEndedAlarmID: String?
+    @Published private(set) var onboardingTestCompleted = FeatureIntroStore.testCallCompleted
 
     var isVisible: Bool {
         phase != .idle
@@ -66,6 +67,9 @@ final class CallPresentationStore: ObservableObject {
            wasAnswered || endedAlarmID == "onboarding-test" {
             lastEndedAlarmID = endedAlarmID
         }
+        if endedAlarmID == "onboarding-test", wasAnswered {
+            markOnboardingTestCompleted()
+        }
         phase = .idle
         connectedAt = nil
         alarmID = nil
@@ -75,6 +79,20 @@ final class CallPresentationStore: ObservableObject {
 
     func prepareForOnboardingTest() {
         lastEndedAlarmID = nil
+        onboardingTestCompleted = false
+        FeatureIntroStore.clearTestCallCompleted()
+    }
+
+    func markOnboardingTestCompleted() {
+        onboardingTestCompleted = true
+        FeatureIntroStore.markTestCallCompleted()
+    }
+
+    func refreshOnboardingTestCompletion() {
+        if FeatureIntroStore.testCallCompleted
+            || (alarmID == "onboarding-test" && (phase == .connecting || phase == .active)) {
+            onboardingTestCompleted = true
+        }
     }
 }
 
@@ -621,6 +639,9 @@ private extension CallManager {
         let callerName = currentCallerName
         let currentAlarmID = alarmId
         await MainActor.run {
+            if currentAlarmID == "onboarding-test" {
+                CallPresentationStore.shared.markOnboardingTestCompleted()
+            }
             CallPresentationStore.shared.showConnecting(
                 callerName: callerName,
                 alarmID: currentAlarmID
