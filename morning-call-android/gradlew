@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -e
 
-if [ -x "./gradle/wrapper/gradle-wrapper.jar" ]; then
+if [ -f "./gradle/wrapper/gradle-wrapper.jar" ]; then
   exec java -jar ./gradle/wrapper/gradle-wrapper.jar "$@"
 fi
 

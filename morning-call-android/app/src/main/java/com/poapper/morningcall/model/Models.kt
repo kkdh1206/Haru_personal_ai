@@ -25,6 +25,18 @@ data class UserInfo(
 )
 
 @Serializable
+data class BillingEntitlement(
+    val entitlementId: String = "haru_plus",
+    val status: String = "none",
+    val productId: String? = null,
+    val store: String? = null,
+    val expiresAt: String? = null,
+    val willRenew: Boolean = false,
+    val isActive: Boolean = false,
+    val enforcementEnabled: Boolean = false,
+)
+
+@Serializable
 data class UserSettings(
     val name: String = "",
     val language: String = "한국어",

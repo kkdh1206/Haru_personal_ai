@@ -21,8 +21,41 @@ export class User {
   @Prop({ default: 'Asia/Seoul' })
   timeZone: string;
 
-  @Prop({ default: 'false' })
+  @Prop({ default: false })
   isSubscribed: boolean;
+
+  @Prop({
+    default: 'none',
+    enum: ['none', 'trial', 'active', 'grace_period', 'expired'],
+  })
+  subscriptionStatus: 'none' | 'trial' | 'active' | 'grace_period' | 'expired';
+
+  @Prop({ default: null })
+  subscriptionProductId: string | null;
+
+  @Prop({ default: null })
+  subscriptionStore: string | null;
+
+  @Prop({ default: null })
+  subscriptionExpiresAt: Date | null;
+
+  @Prop({ default: false })
+  subscriptionWillRenew: boolean;
+
+  @Prop({ default: null })
+  subscriptionLastEventAt: Date | null;
+
+  @Prop({ default: null, index: true })
+  subscriptionExternalId: string | null;
+
+  @Prop({ default: null, index: true })
+  appleAppAccountToken: string | null;
+
+  @Prop({ default: null })
+  onboardingTestCallUsedAt: Date | null;
+
+  @Prop({ default: null })
+  onboardingTestCallReservedAt: Date | null;
 
   @Prop({ default: '한국어' })
   language: string;

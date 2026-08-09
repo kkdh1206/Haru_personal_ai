@@ -1,4 +1,8 @@
 @echo off
+if exist gradle\wrapper\gradle-wrapper.jar (
+  java -jar gradle\wrapper\gradle-wrapper.jar %*
+  exit /b %ERRORLEVEL%
+)
 where gradle >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
   gradle %*

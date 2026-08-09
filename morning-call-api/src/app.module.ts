@@ -15,6 +15,7 @@ import { LivekitService } from './livekit/livekit.service';
 import { PromptModule } from './prompt/prompt.module';
 import { LivekitController } from './livekit/livekit.controller';
 import { MemoryModule } from './memory/memory.module';
+import { BillingModule } from './billing/billing.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { MemoryModule } from './memory/memory.module';
     CalendarModule,
     PromptModule,
     MemoryModule,
+    BillingModule,
   ],
   controllers: [AppController, LivekitController],
   providers: [AppService, LivekitService],

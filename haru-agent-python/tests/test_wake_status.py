@@ -9,7 +9,10 @@ from agent import (
     Assistant,
     build_farewell_reply_request,
     classify_test_audio_confirmation,
+    get_call_wrap_up_seconds,
     get_conversation_phrases,
+    get_max_call_duration_seconds,
+    get_no_answer_timeout_seconds,
     get_realtime_language_code,
     get_silence_nudge_reference,
     get_test_call_farewell,
@@ -23,6 +26,24 @@ from agent import (
 
 def user_message(text: str) -> dict:
     return {"role": "user", "content": text}
+
+
+def test_call_cost_guardrail_defaults_and_minimums(monkeypatch):
+    monkeypatch.delenv("NO_ANSWER_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("CALL_WRAP_UP_SECONDS", raising=False)
+    monkeypatch.delenv("MAX_CALL_DURATION_SECONDS", raising=False)
+
+    assert get_no_answer_timeout_seconds() == 30
+    assert get_call_wrap_up_seconds() == 270
+    assert get_max_call_duration_seconds() == 300
+
+    monkeypatch.setenv("NO_ANSWER_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("CALL_WRAP_UP_SECONDS", "20")
+    monkeypatch.setenv("MAX_CALL_DURATION_SECONDS", "25")
+
+    assert get_no_answer_timeout_seconds() == 5
+    assert get_call_wrap_up_seconds() == 30
+    assert get_max_call_duration_seconds() == 40
 
 
 def test_clear_wake_claim_marks_user_awake():

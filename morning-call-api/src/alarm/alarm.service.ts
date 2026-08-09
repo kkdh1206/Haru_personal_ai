@@ -20,6 +20,7 @@ import { ReportCallOutcomeDto } from './dto/report-call-outcome.dto';
 import { FcmService } from 'src/fcm/fcm.service';
 import { resolveSpeechStyle } from 'src/prompt/speech-style';
 import { CancelOnboardingTestCallDto } from './dto/cancel-onboarding-test-call.dto';
+import { BillingService } from 'src/billing/billing.service';
 
 const HARU_NAME = '하루';
 const HARI_NAME = '하리';
@@ -52,6 +53,7 @@ export class AlarmService implements OnModuleInit {
     private readonly fcmService: FcmService,
     private readonly userService: UserService,
     private readonly promptService: PromptService,
+    private readonly billingService: BillingService,
     @InjectModel(Alarm.name) private alarmModel: Model<AlarmDocument>,
     @InjectQueue('alarm') private alarmQueue: Queue,
     private readonly cs: ConfigService,
@@ -681,6 +683,10 @@ export class AlarmService implements OnModuleInit {
     const retryCount = options.retryCount ?? 0;
     const alarmId = normalizedAlarm._id.toString();
     const userId = normalizedAlarm.userId.toString();
+    if (!(await this.billingService.canUseMorningCall(userId))) {
+      console.warn(`[Billing] skipped prewarm for inactive user=${userId}`);
+      return { prepared: false, reason: 'subscription_required' };
+    }
     const prompt = await this.buildPromptForAlarm(
       normalizedAlarm,
       callType,
@@ -714,6 +720,10 @@ export class AlarmService implements OnModuleInit {
     // 0. 유저 ID 가져오기
     const alarmId = normalizedAlarm._id.toString();
     const userId = normalizedAlarm.userId.toString();
+    if (!(await this.billingService.canUseMorningCall(userId))) {
+      console.warn(`[Billing] skipped call for inactive user=${userId}`);
+      return { sent: false, reason: 'subscription_required' };
+    }
 
     // 1. 디바이스 토큰 가져오기
     const deviceToken = await this.userService.getUserDeviceToken(userId);
@@ -805,92 +815,124 @@ export class AlarmService implements OnModuleInit {
 
   // 테스트 전화
   async testCall(user, dto: TestCallDto) {
+    const userId = user._id.toString();
+    if (
+      this.billingService.isEnforcementEnabled() &&
+      !(await this.userService.reserveOnboardingTestCall(userId))
+    ) {
+      throw new UnauthorizedException('Free test call already used');
+    }
     const normalizedTest = this.normalizeAlarmPayload(dto);
+    try {
+      // 1. 프롬프트 생성
+      const prompt = await this.promptService.getTestCallPrompt(
+        user,
+        normalizedTest.wakeIntensity,
+        normalizedTest.role,
+      );
 
-    // 1. 프롬프트 생성
-    const prompt = await this.promptService.getTestCallPrompt(
-      user,
-      normalizedTest.wakeIntensity,
-      normalizedTest.role,
-    );
+      // 2. 에이전트 준비
+      await this.livekit.ensureAgentReadyForTest(
+        user._id + '_test',
+        prompt,
+        normalizedTest.voice,
+        user._id,
+        user.timeZone || 'Asia/Seoul',
+        undefined,
+        'test',
+        0,
+        user.language || '한국어',
+      );
 
-    // 2. 에이전트 준비
-    await this.livekit.ensureAgentReadyForTest(
-      user._id + '_test',
-      prompt,
-      normalizedTest.voice,
-      user._id,
-      user.timeZone || 'Asia/Seoul',
-      undefined,
-      'test',
-      0,
-      user.language || '한국어',
-    );
+      // 3. 유저 용 Livekit 토큰 생성
+      const room = user._id + '_test';
+      const tokenClient = await this.livekit.generateLivkitToken(
+        room,
+        user._id,
+      );
+      if (this.billingService.isEnforcementEnabled()) {
+        await this.userService.completeOnboardingTestCall(userId);
+      }
 
-    // 3. 유저 용 Livekit 토큰 생성
-    const room = user._id + '_test';
-    const tokenClient = await this.livekit.generateLivkitToken(room, user._id);
-
-    return {
-      lkToken: tokenClient,
-      lkUrl: this.livekitUrl,
-    };
+      return {
+        lkToken: tokenClient,
+        lkUrl: this.livekitUrl,
+      };
+    } catch (error) {
+      if (this.billingService.isEnforcementEnabled()) {
+        await this.userService.releaseOnboardingTestCall(userId);
+      }
+      throw error;
+    }
   }
 
   async scheduleOnboardingTestCall(user, dto: TestCallDto) {
     const normalizedTest = this.normalizeAlarmPayload(dto);
     const delaySeconds = Math.min(Math.max(dto.delaySeconds ?? 10, 5), 30);
     const userId = user._id.toString();
-    const deviceToken = await this.userService.getUserDeviceToken(userId);
-    if (!deviceToken?.deviceToken) {
-      throw new Error(`Device token not found for user ${userId}`);
+    if (
+      this.billingService.isEnforcementEnabled() &&
+      !(await this.userService.reserveOnboardingTestCall(userId))
+    ) {
+      throw new UnauthorizedException('Free test call already used');
     }
+    try {
+      const deviceToken = await this.userService.getUserDeviceToken(userId);
+      if (!deviceToken?.deviceToken) {
+        throw new Error(`Device token not found for user ${userId}`);
+      }
 
-    const roomName = `${userId}_onboarding_test_${Date.now()}`;
-    const prompt = await this.promptService.getTestCallPrompt(
-      user,
-      normalizedTest.wakeIntensity,
-      normalizedTest.role,
-    );
+      const roomName = `${userId}_onboarding_test_${Date.now()}`;
+      const prompt = await this.promptService.getTestCallPrompt(
+        user,
+        normalizedTest.wakeIntensity,
+        normalizedTest.role,
+      );
 
-    await this.livekit.ensureAgentReadyForTest(
-      roomName,
-      prompt,
-      normalizedTest.voice,
-      userId,
-      user.timeZone || 'Asia/Seoul',
-      undefined,
-      'test',
-      0,
-      user.language || '한국어',
-    );
-
-    const scheduledAt = new Date(Date.now() + delaySeconds * 1000);
-    const jobId = `${userId}-onboarding-test-${scheduledAt.getTime()}`;
-    await this.alarmQueue.add(
-      'onboarding-test-call',
-      {
-        action: 'onboarding-test-call',
-        userId,
+      await this.livekit.ensureAgentReadyForTest(
         roomName,
-        role: normalizedTest.role,
-      },
-      {
-        jobId,
-        delay: delaySeconds * 1000,
-        removeOnComplete: true,
-        removeOnFail: { count: 1000 },
-      },
-    );
+        prompt,
+        normalizedTest.voice,
+        userId,
+        user.timeZone || 'Asia/Seoul',
+        undefined,
+        'test',
+        0,
+        user.language || '한국어',
+      );
 
-    return {
-      scheduledAt: scheduledAt.toISOString(),
-      delaySeconds,
-      callType: 'test',
-      retryEnabled: false,
-      jobId,
-      roomName,
-    };
+      const scheduledAt = new Date(Date.now() + delaySeconds * 1000);
+      const jobId = `${userId}-onboarding-test-${scheduledAt.getTime()}`;
+      await this.alarmQueue.add(
+        'onboarding-test-call',
+        {
+          action: 'onboarding-test-call',
+          userId,
+          roomName,
+          role: normalizedTest.role,
+        },
+        {
+          jobId,
+          delay: delaySeconds * 1000,
+          removeOnComplete: true,
+          removeOnFail: { count: 1000 },
+        },
+      );
+
+      return {
+        scheduledAt: scheduledAt.toISOString(),
+        delaySeconds,
+        callType: 'test',
+        retryEnabled: false,
+        jobId,
+        roomName,
+      };
+    } catch (error) {
+      if (this.billingService.isEnforcementEnabled()) {
+        await this.userService.releaseOnboardingTestCall(userId);
+      }
+      throw error;
+    }
   }
 
   async cancelOnboardingTestCall(
@@ -959,6 +1001,10 @@ export class AlarmService implements OnModuleInit {
       ),
     );
 
+    if (this.billingService.isEnforcementEnabled()) {
+      await this.userService.releaseOnboardingTestCall(userId);
+    }
+
     return {
       cancelled: true,
       removedJobs,
@@ -973,6 +1019,9 @@ export class AlarmService implements OnModuleInit {
   ) {
     const deviceToken = await this.userService.getUserDeviceToken(userId);
     if (!deviceToken?.deviceToken) {
+      if (this.billingService.isEnforcementEnabled()) {
+        await this.userService.releaseOnboardingTestCall(userId);
+      }
       throw new Error(`Device token not found for user ${userId}`);
     }
 
@@ -1007,11 +1056,18 @@ export class AlarmService implements OnModuleInit {
         })
         .filter(Boolean)
         .join(', ');
+      if (this.billingService.isEnforcementEnabled()) {
+        await this.userService.releaseOnboardingTestCall(userId);
+      }
       throw new Error(
         `Onboarding test push failed for user ${userId}${
           reasons ? `: ${reasons}` : ''
         }`,
       );
+    }
+
+    if (this.billingService.isEnforcementEnabled()) {
+      await this.userService.completeOnboardingTestCall(userId);
     }
 
     return { sent: true, callType: 'test', retryEnabled: false };

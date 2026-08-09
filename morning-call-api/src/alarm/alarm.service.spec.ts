@@ -70,6 +70,10 @@ describe('AlarmService scheduling', () => {
       getPrompt: jest.fn().mockResolvedValue('prompt'),
       getTestCallPrompt: jest.fn().mockResolvedValue('test prompt'),
     };
+    const billingService = {
+      isEnforcementEnabled: jest.fn().mockReturnValue(false),
+      canUseMorningCall: jest.fn().mockResolvedValue(true),
+    };
     const userService = {
       getUserDeviceToken: jest.fn().mockResolvedValue({
         deviceToken: 'device-token',
@@ -114,6 +118,7 @@ describe('AlarmService scheduling', () => {
       overrides.fcmService || fcmService,
       overrides.userService || userService,
       overrides.promptService || promptService,
+      overrides.billingService || billingService,
       overrides.alarmModel || (alarmModel as any),
       overrides.queue || (queue as any),
       overrides.configService || (configService as any),
@@ -125,6 +130,7 @@ describe('AlarmService scheduling', () => {
       alarmModel,
       livekit,
       promptService,
+      billingService,
       userService,
       fcmService,
       apnsService,

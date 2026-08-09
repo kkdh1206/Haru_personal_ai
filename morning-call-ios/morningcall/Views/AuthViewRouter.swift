@@ -25,6 +25,7 @@ struct RootView: View {
     @StateObject private var viewModel = AuthViewModel()
     @EnvironmentObject var env: AppEnvironment
     @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
 
     var body: some View {
         Group {
@@ -59,6 +60,18 @@ struct RootView: View {
         .onAppear {
             viewModel.checkAuthState()
             AppIconManager.applyStoredPreference()
+            configurePurchasesIfPossible()
+        }
+        .onChange(of: viewModel.isLoggedIn) { _, isLoggedIn in
+            if isLoggedIn {
+                configurePurchasesIfPossible()
+            }
+        }
+        .onChange(of: subscriptionManager.entitlement?.isActive) { _, _ in
+            showRequiredPaywallIfNeeded()
+        }
+        .onChange(of: subscriptionManager.entitlement?.enforcementEnabled) { _, _ in
+            showRequiredPaywallIfNeeded()
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, viewModel.isLoggedIn, env.onboardingStep == .completed else { return }
@@ -66,6 +79,11 @@ struct RootView: View {
         }
         .environment(\.locale, env.appLanguage.locale)
         .environmentObject(viewModel)
+        .sheet(isPresented: $subscriptionManager.showPaywall) {
+            SubscriptionPaywallView()
+                .environmentObject(subscriptionManager)
+                .environmentObject(env)
+        }
     }
     
     func checkAuth() {
@@ -90,6 +108,7 @@ struct RootView: View {
                         env.onboardingStep = FeatureIntroStore.currentStep()
                     } else {
                         env.onboardingStep = .completed
+                        showRequiredPaywallIfNeeded()
                     }
                 case .failure(let error):
                     print("❌ 에러: \(error)")
@@ -100,6 +119,18 @@ struct RootView: View {
     
     private func registerDeviceTokenToAPI() {
         DeviceTokenManager.shared.registerTokensToAPI()
+    }
+
+    private func configurePurchasesIfPossible() {
+        guard let userID = Auth.auth().currentUser?.uid else { return }
+        subscriptionManager.configure(appUserID: userID)
+    }
+
+    private func showRequiredPaywallIfNeeded() {
+        guard env.onboardingStep == .completed,
+              subscriptionManager.entitlement?.enforcementEnabled == true,
+              subscriptionManager.isActive == false else { return }
+        subscriptionManager.showPaywall = true
     }
 }
 

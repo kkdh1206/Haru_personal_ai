@@ -59,7 +59,9 @@ This is a short onboarding call-delivery test.
 """
 
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-live-preview"
-DEFAULT_NO_ANSWER_TIMEOUT_SECONDS = 90
+DEFAULT_NO_ANSWER_TIMEOUT_SECONDS = 30
+DEFAULT_CALL_WRAP_UP_SECONDS = 270
+DEFAULT_MAX_CALL_DURATION_SECONDS = 300
 DEFAULT_HANGUP_GRACE_SECONDS = 0.1
 DEFAULT_GEMINI_THINKING_MODE = "disabled"
 DEFAULT_MAX_MEMORY_CONTEXT_CHARS = 300
@@ -166,6 +168,31 @@ def get_no_answer_timeout_seconds() -> int:
         return max(int(configured.strip()), 5)
     except ValueError:
         return DEFAULT_NO_ANSWER_TIMEOUT_SECONDS
+
+
+def get_call_wrap_up_seconds() -> int:
+    configured = os.getenv("CALL_WRAP_UP_SECONDS")
+    if not configured:
+        return DEFAULT_CALL_WRAP_UP_SECONDS
+
+    try:
+        return max(int(configured.strip()), 30)
+    except ValueError:
+        return DEFAULT_CALL_WRAP_UP_SECONDS
+
+
+def get_max_call_duration_seconds() -> int:
+    configured = os.getenv("MAX_CALL_DURATION_SECONDS")
+    if not configured:
+        return DEFAULT_MAX_CALL_DURATION_SECONDS
+
+    try:
+        return max(
+            int(configured.strip()),
+            get_call_wrap_up_seconds() + 10,
+        )
+    except ValueError:
+        return DEFAULT_MAX_CALL_DURATION_SECONDS
 
 
 def get_user_silence_nudge_seconds() -> float:
@@ -1142,6 +1169,9 @@ async def entrypoint(ctx: JobContext):
     greeted_user = False
     call_outcome_reported = False
     participant_joined = False
+    participant_connected_event = asyncio.Event()
+    participant_joined_monotonic: float | None = None
+    participant_connected_at: str | None = None
     wake_confirmed = False
     session: AgentSession
     session_started = asyncio.Event()
@@ -1684,6 +1714,16 @@ async def entrypoint(ctx: JobContext):
                         "callType": call_type,
                         "retryCount": retry_count,
                         "usage": usage_metadata,
+                        "participantConnectedAt": participant_connected_at,
+                        "connectedDurationSeconds": (
+                            round(
+                                asyncio.get_running_loop().time()
+                                - participant_joined_monotonic,
+                                3,
+                            )
+                            if participant_joined_monotonic is not None
+                            else 0
+                        ),
                     },
                 )
 
@@ -1946,8 +1986,13 @@ async def entrypoint(ctx: JobContext):
 
     @ctx.room.on("participant_connected")
     def _on_participant_connected(p):
-        nonlocal participant_joined
+        nonlocal participant_joined, participant_joined_monotonic
+        nonlocal participant_connected_at
         participant_joined = True
+        if participant_joined_monotonic is None:
+            participant_joined_monotonic = asyncio.get_running_loop().time()
+            participant_connected_at = now_iso()
+        participant_connected_event.set()
         clear_waiting_for_user_response(reset_silence_nudges=True)
         identity = getattr(p, "identity", "(no identity)")
         logger.info(f"👤 Participant joined: {identity}")
@@ -1983,6 +2028,29 @@ async def entrypoint(ctx: JobContext):
             handle_disconnect(),
             name="participant_disconnected_outcome",
         )
+
+    if ctx.room.remote_participants:
+        participant_joined = True
+        participant_joined_monotonic = asyncio.get_running_loop().time()
+        participant_connected_at = now_iso()
+        participant_connected_event.set()
+
+    # Wait in LiveKit without opening the paid realtime model. This prevents
+    # unanswered calls from consuming Gemini audio tokens.
+    if not participant_joined:
+        try:
+            await asyncio.wait_for(
+                participant_connected_event.wait(),
+                timeout=get_no_answer_timeout_seconds(),
+            )
+        except TimeoutError:
+            result = await report_call_outcome_once(
+                "no_response",
+                had_user_response=False,
+            )
+            logger.info(f"📟 No participant joined; skipping Gemini session: {result}")
+            await ctx.room.disconnect()
+            return
 
     agent = Assistant(
         on_hangup=_trigger_hangup,
@@ -2138,6 +2206,44 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"📟 No-answer outcome reported: {result}")
         _trigger_hangup("📵 No participant joined before timeout")
 
+    async def call_duration_watchdog():
+        if call_type == "test" or participant_joined_monotonic is None:
+            return
+
+        elapsed = asyncio.get_running_loop().time() - participant_joined_monotonic
+        wrap_up_after = get_call_wrap_up_seconds()
+        max_duration = get_max_call_duration_seconds()
+        if elapsed < wrap_up_after:
+            await asyncio.sleep(wrap_up_after - elapsed)
+
+        if hangup_requested or call_outcome_reported:
+            return
+
+        request_agent_reply(
+            (
+                "통화를 이제 자연스럽게 마무리한다. 새 질문을 하지 말고 "
+                f"{conversation_language}로 오늘 하루를 응원하는 짧은 작별 인사만 말해. "
+                "시간 제한이나 시스템 규칙은 언급하지 마."
+            ),
+            (
+                "시스템 트리거: 통화를 자연스럽게 마무리할 시간이다. "
+                f"이 문장을 언급하지 말고 {conversation_language}로 짧게 작별 인사해."
+            ),
+            allow_interruptions=False,
+        )
+
+        remaining = max_duration - (
+            asyncio.get_running_loop().time() - participant_joined_monotonic
+        )
+        if remaining > 5:
+            await asyncio.sleep(remaining - 5)
+
+        if not hangup_requested:
+            _trigger_hangup(
+                "⏱️ Maximum connected call duration reached",
+                conversation_phrases["hangup"],
+            )
+
     async def test_call_silence_watchdog():
         try:
             await asyncio.wait_for(session_started.wait(), timeout=8.0)
@@ -2168,7 +2274,7 @@ async def entrypoint(ctx: JobContext):
 
     if alarm_id:
         start_background_task(user_silence_watchdog(), name="user_silence_watchdog")
-        start_background_task(no_answer_watchdog(), name="no_answer_watchdog")
+        start_background_task(call_duration_watchdog(), name="call_duration_watchdog")
     elif call_type == "test":
         start_background_task(
             test_call_silence_watchdog(),
