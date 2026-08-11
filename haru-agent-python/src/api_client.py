@@ -225,8 +225,11 @@ class BackendApiClient:
                 json=payload,
             )
             response.raise_for_status()
-            logger.info(f"📅 Calendar event created: {title}")
-            return response.json()
+            result = response.json()
+            logger.info(
+                f"📅 Calendar event {'queued' if result.get('pending') else 'created'}: {title}"
+            )
+            return result
         except httpx.HTTPStatusError as e:
             logger.error(
                 f"❌ HTTP error creating calendar event: {e.response.status_code} - {e.response.text}"

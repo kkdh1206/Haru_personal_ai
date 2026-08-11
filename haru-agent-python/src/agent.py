@@ -896,6 +896,9 @@ class Assistant(Agent):
     ):
         """
         Create a calendar event. Prefer ISO times; all-day uses YYYY-MM-DD and all_day=true.
+        If the result contains pending=true, say that the request was sent to the iPhone
+        and will be added to Apple Calendar when the device processes it; do not claim
+        that the event has already been saved.
         """
         if self._api_client and self._user_id:
             result = await self._api_client.create_calendar_event(
