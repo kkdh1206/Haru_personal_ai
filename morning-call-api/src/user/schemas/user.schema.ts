@@ -54,6 +54,15 @@ export class User {
   @Prop({ nullable: true })
   calendarRefreshToken: string; // encrypted
 
+  @Prop({ default: null, enum: ['google', 'apple'] })
+  calendarProvider: 'google' | 'apple' | null;
+
+  @Prop({ default: false })
+  appleCalendarConnected: boolean;
+
+  @Prop({ default: null })
+  appleCalendarLastSyncedAt: Date | null;
+
   @Prop({ nullable: true })
   customMessage: string;
 

@@ -159,8 +159,8 @@
             <li>위치 관련 정보: 날씨 안내를 위한 지역 및 시간대 정보</li>
             <li>통화 관련 정보: 통화 상태, 재통화 요청</li>
             <li>
-              캘린더 연동 정보: 이용자가 동의한 경우 Google Calendar 접근 토큰 및
-              갱신 토큰
+              캘린더 연동 정보: 이용자가 동의한 경우 Google Calendar 접근·갱신
+              토큰 또는 Apple Calendar의 일정 제목, 시간, 메모, 장소
             </li>
           </ul>
 
@@ -175,18 +175,22 @@
             <li>고객 문의 대응 및 계정 탈퇴 처리</li>
           </ul>
 
-          <h2>3. Google Calendar 정보 처리</h2>
+          <h2>3. 캘린더 정보 처리</h2>
           <p>
             이용자가 Google Calendar 연동에 동의하면 Haru는 일정 조회 및 일정
             추가 기능을 제공하기 위해 필요한 범위의 토큰을 저장합니다. 토큰은
-            암호화하여 저장되며, 이용자는 앱 설정에서 언제든지 캘린더 연동을
-            해제할 수 있습니다.
+            암호화하여 저장됩니다. Apple Calendar 연동에 동의하면 iPhone이
+            EventKit으로 읽은 일정 중 브리핑에 필요한 일정 제목, 시간, 메모,
+            장소를 Haru 서버에 동기화합니다. 통화 중 요청한 새 일정은 iPhone에
+            전달되어 Apple Calendar에 저장됩니다. 이용자는 앱 설정에서 언제든지
+            캘린더 연동을 해제할 수 있습니다.
           </p>
 
           <h2>4. 개인정보 보관 및 삭제</h2>
           <p>
             개인정보는 서비스 제공에 필요한 기간 동안 보관됩니다. 이용자가 계정
-            탈퇴를 요청하면 계정 정보, 알람, 캘린더 연동 토큰 등은 삭제됩니다.
+            탈퇴를 요청하면 계정 정보, 알람, 캘린더 연동 토큰과 동기화된 Apple
+            Calendar 일정 등은 삭제됩니다.
             다만 법령상 보관 의무가 있는 정보는 해당 법령에서 정한 기간 동안
             보관될 수 있습니다.
           </p>
@@ -202,7 +206,7 @@
           <p>서비스 제공 과정에서 다음 외부 서비스가 사용될 수 있습니다.</p>
           <ul>
             <li>Firebase Authentication: 로그인 및 인증</li>
-            <li>Google Calendar API: 캘린더 연동 기능</li>
+            <li>Google Calendar API 및 Apple EventKit: 캘린더 연동 기능</li>
             <li>LiveKit 등 통화 인프라: 모닝콜 통화 제공</li>
             <li>Google Gemini AI 모델: 대화 내용 생성, 음성 생성</li>
             <li>AWS 서버 인프라: 서비스 운영</li>
@@ -210,8 +214,8 @@
 
           <h2>7. 이용자의 권리</h2>
           <p>
-            이용자는 앱 설정을 통해 개인정보 일부를 수정하거나, Google Calendar
-            연동을 해제하거나, 계정 탈퇴를 요청할 수 있습니다. 추가 문의가 필요한
+            이용자는 앱 설정을 통해 개인정보 일부를 수정하거나, 캘린더 연동을
+            해제하거나, 계정 탈퇴를 요청할 수 있습니다. 추가 문의가 필요한
             경우 아래 연락처로 요청할 수 있습니다.
           </p>
 
@@ -248,8 +252,9 @@
             </li>
             <li>Call-related information: call status and retry call requests</li>
             <li>
-              Calendar integration information: Google Calendar access token and
-              refresh token when the user consents
+              Calendar integration information: Google Calendar access and refresh
+              tokens, or Apple Calendar event titles, times, notes, and locations,
+              when the user consents
             </li>
           </ul>
 
@@ -267,20 +272,23 @@
             <li>Responding to user inquiries and processing account deletion</li>
           </ul>
 
-          <h2>3. Google Calendar Information</h2>
+          <h2>3. Calendar Information</h2>
           <p>
             When a user agrees to connect Google Calendar, Haru stores the tokens
             needed to provide schedule lookup and event creation features. Tokens
-            are stored in encrypted form, and users may disconnect calendar
-            integration at any time in the app settings.
+            are stored in encrypted form. When a user connects Apple Calendar, the
+            iPhone uses EventKit to synchronize event titles, times, notes, and
+            locations needed for briefings with Haru's server. Events requested
+            during a call are sent to the iPhone and saved to Apple Calendar. Users
+            may disconnect calendar integration at any time in the app settings.
           </p>
 
           <h2>4. Retention and Deletion</h2>
           <p>
             Personal information is retained for as long as necessary to provide
             the service. When a user requests account deletion, account
-            information, alarms, calendar integration tokens, and related data are
-            deleted. Information that must be retained under applicable laws may
+            information, alarms, calendar integration tokens, synchronized Apple
+            Calendar events, and related data are deleted. Information that must be retained under applicable laws may
             be stored for the period required by those laws.
           </p>
 
@@ -296,7 +304,7 @@
           <p>The following external services may be used to provide Haru.</p>
           <ul>
             <li>Firebase Authentication: login and authentication</li>
-            <li>Google Calendar API: calendar integration features</li>
+            <li>Google Calendar API and Apple EventKit: calendar integration features</li>
             <li>LiveKit and call infrastructure: morning call delivery</li>
             <li>Google Gemini AI model: conversation and voice generation</li>
             <li>AWS server infrastructure: service operation</li>
@@ -304,8 +312,8 @@
 
           <h2>7. User Rights</h2>
           <p>
-            Users may modify certain personal information, disconnect Google
-            Calendar integration, or request account deletion through the app
+            Users may modify certain personal information, disconnect calendar
+            integration, or request account deletion through the app
             settings. For additional requests, users may contact Haru using the
             contact information below.
           </p>

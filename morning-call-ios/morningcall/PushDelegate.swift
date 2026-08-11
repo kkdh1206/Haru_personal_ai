@@ -64,6 +64,21 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
         print("❌ Notification token registration failed:", error.localizedDescription)
     }
 
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        guard userInfo["type"] as? String == "apple_calendar_pending" else {
+            completionHandler(.noData)
+            return
+        }
+
+        AppleCalendarService.shared.handleCalendarPush { success in
+            completionHandler(success ? .newData : .failed)
+        }
+    }
+
     // 푸시 수신 → CallKit 보고
     func pushRegistry(_ registry: PKPushRegistry,
                       didReceiveIncomingPushWith payload: PKPushPayload,

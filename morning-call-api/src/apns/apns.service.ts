@@ -60,7 +60,7 @@ export class ApnsService implements OnModuleDestroy {
 
   private applyPushHeaders(
     note: apn.Notification,
-    pushType: 'alert' | 'voip',
+    pushType: 'alert' | 'background' | 'voip',
     expiration?: number,
   ) {
     const notification = note as ApnNotificationWithHeaders;
@@ -127,6 +127,27 @@ export class ApnsService implements OnModuleDestroy {
     const selectedEnvironment = this.resolveEnvironment(environment);
     const res = await this.getProvider(selectedEnvironment).send(note, token);
     console.log(res.sent.length ? '✅ followup sent' : '❌ followup failed', {
+      environment: selectedEnvironment,
+      ...summarizeApnsResult(res),
+    });
+    return res;
+  }
+
+  async sendAppleCalendarSyncPush(
+    token: string,
+    environment?: ApnsEnvironment,
+  ) {
+    const note = new apn.Notification();
+    note.topic = this.cs.getOrThrow<string>('apns.bundleId');
+    note.priority = 5;
+    note.expiry = Math.floor(Date.now() / 1000) + 3600;
+    note.aps = { 'content-available': 1 };
+    note.payload = { type: 'apple_calendar_pending' };
+    this.applyPushHeaders(note, 'background');
+
+    const selectedEnvironment = this.resolveEnvironment(environment);
+    const res = await this.getProvider(selectedEnvironment).send(note, token);
+    console.log(res.sent.length ? '✅ calendar sync sent' : '❌ calendar sync failed', {
       environment: selectedEnvironment,
       ...summarizeApnsResult(res),
     });

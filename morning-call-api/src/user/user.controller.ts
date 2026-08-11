@@ -110,7 +110,7 @@ export class UserController {
   async disconnectCalendar(@Req() req) {
     const updated = await this.userService.disconnectCalendar(req.user._id);
     if (!updated) throw new NotFoundException('User not found');
-    return { connected: false };
+    return this.userService.getCalendarStatus(req.user._id);
   }
 
   @Patch('custom-message')

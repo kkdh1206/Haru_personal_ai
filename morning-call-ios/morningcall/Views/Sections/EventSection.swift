@@ -64,6 +64,9 @@ struct EventSection: View {
             }
         }
         .task { loadData() }
+        .onReceive(NotificationCenter.default.publisher(for: .haruCalendarDidSync)) { _ in
+            loadData()
+        }
     }
 
     private func localized(_ key: String) -> String {

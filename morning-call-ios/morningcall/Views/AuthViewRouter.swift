@@ -50,6 +50,7 @@ struct RootView: View {
                         .task {
                             registerDeviceTokenToAPI()
                             CurrentLocationManager.shared.refreshAndSaveIfAuthorized(env: env)
+                            AppleCalendarService.shared.syncIfNeeded()
                         }
                 }
             } else {
@@ -63,6 +64,7 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, viewModel.isLoggedIn, env.onboardingStep == .completed else { return }
             CurrentLocationManager.shared.refreshAndSaveIfAuthorized(env: env)
+            AppleCalendarService.shared.syncIfNeeded()
         }
         .environment(\.locale, env.appLanguage.locale)
         .environmentObject(viewModel)

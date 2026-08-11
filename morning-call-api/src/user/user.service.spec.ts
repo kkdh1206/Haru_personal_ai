@@ -161,6 +161,7 @@ describe('UserService', () => {
         $set: {
           calendarAccessToken: 'encrypted:access-token',
           calendarRefreshToken: 'encrypted:refresh-token',
+          calendarProvider: 'google',
         },
       },
       { new: true },
@@ -249,6 +250,8 @@ describe('UserService', () => {
         alarms: 2,
         memories: 3,
         profile: 1,
+        appleCalendarEvents: 0,
+        pendingAppleCalendarEvents: 0,
       },
     });
 

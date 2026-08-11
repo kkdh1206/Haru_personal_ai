@@ -93,6 +93,7 @@ class GoogleSignInHelper: ObservableObject {
                 DispatchQueue.main.async {
                     self.accessToken = accessToken
                     self.refreshToken = refreshToken
+                    CalendarProviderStore.selected = .google
                     completion(true)
                 }
             }.resume()

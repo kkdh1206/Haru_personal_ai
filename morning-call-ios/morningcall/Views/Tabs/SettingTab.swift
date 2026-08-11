@@ -15,6 +15,8 @@ struct UserSettings: Codable {
 
 private struct CalendarConnectionStatus: Decodable {
     let connected: Bool
+    let provider: String?
+    let lastSyncedAt: String?
 }
 
 private struct DailyCallUsage: Decodable {
@@ -40,9 +42,11 @@ struct SettingView: View {
     @State private var selectedLanguage: String = "한국어"
     @State private var selectedCharacter: CharacterPreference = CharacterPreferenceStore.current
     @State private var isCalendarConnected = false
+    @State private var calendarProvider: CalendarProvider?
     @State private var isCalendarStatusLoading = false
     @State private var isCalendarDisconnecting = false
     @State private var isCalendarConnecting = false
+    @State private var showCalendarConnectionError = false
     @State private var dailyCallUsage: DailyCallUsage?
     @State private var isDailyCallUsageLoading = false
     @State private var showDeleteAccountAlert = false
@@ -265,7 +269,7 @@ struct SettingView: View {
     }
 
     private var calendarSection: some View {
-        settingsCard(title: "구글 캘린더") {
+        settingsCard(title: "캘린더") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
                     Image(systemName: isCalendarConnected ? "calendar.badge.checkmark" : "calendar.badge.exclamationmark")
@@ -276,7 +280,11 @@ struct SettingView: View {
                         Text(localized(isCalendarConnected ? "연동됨" : "연동 안 됨"))
                             .font(.system(.body, design: .rounded).weight(.semibold))
                             .foregroundStyle(.black)
-                        Text(localized(isCalendarConnected ? "Google Calendar가 연결되어 있어요." : "일정 추가를 사용하려면 캘린더를 연결해 주세요."))
+                        Text(
+                            isCalendarConnected
+                            ? String(format: localized("%@가 연결되어 있어요."), calendarProvider?.displayName ?? localized("캘린더"))
+                            : localized("일정 추가를 사용하려면 캘린더를 연결해 주세요.")
+                        )
                             .font(.system(.footnote, design: .rounded))
                             .foregroundStyle(Color.black.opacity(0.58))
                     }
@@ -289,6 +297,29 @@ struct SettingView: View {
                 )
 
                 if isCalendarConnected {
+                    if let provider = calendarProvider {
+                        Button {
+                            connectCalendar(provider == .apple ? .google : .apple)
+                        } label: {
+                            Label(
+                                String(
+                                    format: localized("%@로 전환"),
+                                    provider == .apple ? "Google Calendar" : "Apple Calendar"
+                                ),
+                                systemImage: "arrow.triangle.2.circlepath"
+                            )
+                            .font(.system(.body, design: .rounded).weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                        }
+                        .disabled(isCalendarConnecting || isCalendarDisconnecting)
+                        .foregroundStyle(.black)
+                        .background(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .fill(Color.white.opacity(0.78))
+                        )
+                    }
+
                     Button {
                         disconnectCalendar()
                     } label: {
@@ -304,32 +335,46 @@ struct SettingView: View {
                             .fill(Color.white.opacity(0.82))
                     )
                 } else {
-                    Button {
-                        connectCalendar()
-                    } label: {
-                        HStack(spacing: 10) {
-                            if isCalendarConnecting {
-                                ProgressView()
-                                    .tint(.black)
-                            } else {
-                                Image(systemName: "link")
-                                    .font(.system(size: 17, weight: .semibold))
-                            }
-                            Text(localized(isCalendarConnecting ? "연동 중..." : "캘린더 연동하기"))
-                                .font(.system(.body, design: .rounded).weight(.semibold))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                    }
-                    .disabled(isCalendarConnecting)
-                    .foregroundStyle(.black)
-                    .background(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .fill(Color.white.opacity(0.78))
-                    )
+                    calendarConnectButton(provider: .google, systemImage: "g.circle.fill")
+                    calendarConnectButton(provider: .apple, systemImage: "apple.logo")
+                }
+
+                if showCalendarConnectionError {
+                    Text(localized("캘린더 연결에 실패했어요. 권한과 네트워크를 확인해 주세요."))
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.red.opacity(0.8))
                 }
             }
         }
+    }
+
+    private func calendarConnectButton(
+        provider: CalendarProvider,
+        systemImage: String
+    ) -> some View {
+        Button {
+            connectCalendar(provider)
+        } label: {
+            HStack(spacing: 10) {
+                if isCalendarConnecting {
+                    ProgressView()
+                        .tint(.black)
+                } else {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 17, weight: .semibold))
+                }
+                Text(String(format: localized("%@ 연결하기"), provider.displayName))
+                    .font(.system(.body, design: .rounded).weight(.semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+        }
+        .disabled(isCalendarConnecting)
+        .foregroundStyle(.black)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.white.opacity(0.78))
+        )
     }
 
     private var logoutSection: some View {
@@ -455,7 +500,13 @@ struct SettingView: View {
                 isCalendarStatusLoading = false
                 switch result {
                 case .success(let status):
+                    calendarProvider = status.provider.flatMap(CalendarProvider.init(rawValue:))
+                    CalendarProviderStore.selected = calendarProvider
                     isCalendarConnected = status.connected
+                        && (calendarProvider != .apple || AppleCalendarService.shared.hasFullAccess)
+                    if calendarProvider == .apple {
+                        AppleCalendarService.shared.syncIfNeeded()
+                    }
                 case .failure(let error):
                     print("❌ 캘린더 상태 확인 실패: \(error)")
                 }
@@ -479,27 +530,41 @@ struct SettingView: View {
         }
     }
 
-    private func connectCalendar() {
+    private func connectCalendar(_ provider: CalendarProvider) {
         isCalendarConnecting = true
-        googleHelper.signInForCalendar { success in
+        showCalendarConnectionError = false
+
+        let finish: (Bool) -> Void = { success in
             DispatchQueue.main.async {
                 isCalendarConnecting = false
                 if success {
                     loadCalendarStatus()
+                } else {
+                    showCalendarConnectionError = true
                 }
             }
+        }
+
+        switch provider {
+        case .google:
+            googleHelper.signInForCalendar(completion: finish)
+        case .apple:
+            AppleCalendarService.shared.connect(completion: finish)
         }
     }
 
     private func disconnectCalendar() {
         isCalendarDisconnecting = true
 
-        APIClient.request(path: "/user/calendar-token", method: .DELETE) { (result: Result<CalendarConnectionStatus, Error>) in
+        let path = calendarProvider == .apple ? "/calendar/apple" : "/user/calendar-token"
+        APIClient.request(path: path, method: .DELETE) { (result: Result<CalendarConnectionStatus, Error>) in
             DispatchQueue.main.async {
                 isCalendarDisconnecting = false
                 switch result {
                 case .success(let status):
                     isCalendarConnected = status.connected
+                    calendarProvider = status.provider.flatMap { CalendarProvider(rawValue: $0) }
+                    CalendarProviderStore.selected = calendarProvider
                 case .failure(let error):
                     print("❌ 캘린더 연동 해제 실패: \(error)")
                 }

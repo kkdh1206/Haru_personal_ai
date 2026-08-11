@@ -2,9 +2,10 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import { User, UserDocument } from './schemas/user.schema';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CryptoService } from 'src/utils/crypto.service';
@@ -28,6 +29,9 @@ export class UserService {
     private userProfileModel: Model<UserProfileDocument>,
     private readonly crypto: CryptoService,
     private readonly cs: ConfigService,
+    @Optional()
+    @InjectConnection()
+    private readonly connection?: Connection,
   ) {}
 
   async oauthSync(firebaseUid: string, email: string) {
@@ -190,6 +194,7 @@ export class UserService {
           $set: {
             calendarAccessToken: this.crypto.encrypt(calendarAccessToken),
             calendarRefreshToken: this.crypto.encrypt(calendarRefreshToken),
+            calendarProvider: 'google',
           },
         },
         { new: true },
@@ -237,20 +242,94 @@ export class UserService {
   async getCalendarStatus(userId: string) {
     const user = await this.userModel
       .findById(userId)
-      .select('calendarAccessToken calendarRefreshToken')
+      .select(
+        'calendarAccessToken calendarRefreshToken calendarProvider appleCalendarConnected appleCalendarLastSyncedAt',
+      )
       .lean();
     if (!user) throw new NotFoundException('User not found');
 
+    const googleConnected = Boolean(
+      user.calendarAccessToken && user.calendarRefreshToken,
+    );
+    const appleConnected = Boolean(user.appleCalendarConnected);
+    const provider =
+      user.calendarProvider === 'apple' && appleConnected
+        ? 'apple'
+        : user.calendarProvider === 'google' && googleConnected
+          ? 'google'
+          : googleConnected
+            ? 'google'
+            : appleConnected
+              ? 'apple'
+              : null;
+
     return {
-      connected: Boolean(user.calendarAccessToken && user.calendarRefreshToken),
+      connected: provider !== null,
+      provider,
+      googleConnected,
+      appleConnected,
+      lastSyncedAt:
+        provider === 'apple' ? user.appleCalendarLastSyncedAt : null,
     };
+  }
+
+  async getCalendarProvider(userId: string) {
+    const status = await this.getCalendarStatus(userId);
+    return status.connected ? status.provider : null;
+  }
+
+  connectAppleCalendar(userId: string) {
+    return this.userModel
+      .findByIdAndUpdate(
+        { _id: userId },
+        {
+          $set: {
+            calendarProvider: 'apple',
+            appleCalendarConnected: true,
+          },
+        },
+        { new: true },
+      )
+      .lean();
+  }
+
+  markAppleCalendarSynced(userId: string, syncedAt: Date) {
+    return this.userModel
+      .findByIdAndUpdate(
+        { _id: userId, appleCalendarConnected: true },
+        { $set: { appleCalendarLastSyncedAt: syncedAt } },
+        { new: true },
+      )
+      .lean();
+  }
+
+  disconnectAppleCalendar(userId: string) {
+    return this.userModel
+      .findByIdAndUpdate(
+        { _id: userId },
+        {
+          $set: { appleCalendarConnected: false },
+          $unset: {
+            appleCalendarLastSyncedAt: '',
+            calendarProvider: '',
+          },
+        },
+        { new: true },
+      )
+      .lean();
   }
 
   disconnectCalendar(userId: string) {
     return this.userModel
       .findByIdAndUpdate(
         { _id: userId },
-        { $unset: { calendarAccessToken: '', calendarRefreshToken: '' } },
+        {
+          $unset: {
+            calendarAccessToken: '',
+            calendarRefreshToken: '',
+            calendarProvider: '',
+          },
+        },
         { new: true },
       )
       .lean();
@@ -271,10 +350,27 @@ export class UserService {
       }
     }
 
-    const [alarms, memories, profile] = await Promise.all([
+    const calendarUserId = this.connection ? new Types.ObjectId(userId) : null;
+    const [
+      alarms,
+      memories,
+      profile,
+      appleCalendarEvents,
+      pendingAppleCalendarEvents,
+    ] = await Promise.all([
       this.alarmModel.deleteMany({ userId }),
       this.memoryModel.deleteMany({ userId }),
       this.userProfileModel.deleteOne({ userId }),
+      calendarUserId
+        ? this.connection
+            .collection('apple_calendar_events')
+            .deleteMany({ userId: calendarUserId })
+        : Promise.resolve({ deletedCount: 0 }),
+      calendarUserId
+        ? this.connection
+            .collection('pending_apple_calendar_events')
+            .deleteMany({ userId: calendarUserId })
+        : Promise.resolve({ deletedCount: 0 }),
     ]);
 
     const deletedUser = await this.userModel.findByIdAndDelete(userId).lean();
@@ -288,6 +384,8 @@ export class UserService {
         alarms: alarms.deletedCount,
         memories: memories.deletedCount,
         profile: profile.deletedCount,
+        appleCalendarEvents: appleCalendarEvents.deletedCount,
+        pendingAppleCalendarEvents: pendingAppleCalendarEvents.deletedCount,
       },
     };
   }

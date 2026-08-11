@@ -264,6 +264,7 @@ struct OnboardingAlarmSetupView: View {
 
 private struct OnboardingCalendarStatus: Decodable {
     let connected: Bool
+    let provider: String?
 }
 
 struct CalendarIntroView: View {
@@ -271,6 +272,7 @@ struct CalendarIntroView: View {
     @StateObject private var googleHelper = GoogleSignInHelper()
 
     @State private var isConnected = false
+    @State private var connectedProvider: CalendarProvider?
     @State private var isLoading = true
     @State private var isConnecting = false
     @State private var showConnectionError = false
@@ -288,7 +290,7 @@ struct CalendarIntroView: View {
                             .font(.system(size: 36, weight: .semibold))
                             .foregroundStyle(Color(red: 0.35, green: 0.52, blue: 0.84))
 
-                        Text("Google Calendar를 연결할까요?")
+                        Text("캘린더를 연결할까요?")
                             .font(.system(.largeTitle, design: .rounded).weight(.bold))
                             .foregroundStyle(Color.black.opacity(0.92))
 
@@ -310,7 +312,7 @@ struct CalendarIntroView: View {
                         calendarBenefit(
                             icon: "text.bubble.fill",
                             title: "말로 일정을 추가할 수 있어요",
-                            description: "통화 중 일정과 시간을 말하면 Google Calendar에 추가할 수 있어요."
+                            description: "통화 중 일정과 시간을 말하면 선택한 캘린더에 추가할 수 있어요."
                         )
                     }
 
@@ -324,21 +326,20 @@ struct CalendarIntroView: View {
                             .padding(.bottom, 12)
                     }
 
-                    Button {
-                        isConnected ? continueToTest() : connectCalendar()
-                    } label: {
-                        HStack(spacing: 9) {
-                            if isLoading || isConnecting {
-                                ProgressView()
-                                    .tint(.white)
-                            } else {
-                                Image(systemName: isConnected ? "checkmark.circle.fill" : "link")
-                            }
-                            Text(LocalizedStringKey(isConnected ? "연결됨, 계속하기" : "Google Calendar 연결하기"))
+                    if isConnected {
+                        Button {
+                            continueToTest()
+                        } label: {
+                            Label("연결됨, 계속하기", systemImage: "checkmark.circle.fill")
+                        }
+                        .disabled(isLoading || isConnecting)
+                        .buttonStyle(PrimaryButtonStyle())
+                    } else {
+                        VStack(spacing: 12) {
+                            calendarConnectButton(provider: .google, systemImage: "g.circle.fill")
+                            calendarConnectButton(provider: .apple, systemImage: "apple.logo")
                         }
                     }
-                    .disabled(isLoading || isConnecting)
-                    .buttonStyle(PrimaryButtonStyle())
 
                     Button("지금은 건너뛰기") {
                         continueToTest()
@@ -381,30 +382,68 @@ struct CalendarIntroView: View {
         .onboardingPanel()
     }
 
+    private func calendarConnectButton(
+        provider: CalendarProvider,
+        systemImage: String
+    ) -> some View {
+        Button {
+            connectCalendar(provider)
+        } label: {
+            HStack(spacing: 9) {
+                if isLoading || isConnecting {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: systemImage)
+                }
+                Text(
+                    String(
+                        format: AppLocalizer.string("%@ 연결하기", language: env.appLanguage),
+                        provider.displayName
+                    )
+                )
+            }
+        }
+        .disabled(isLoading || isConnecting)
+        .buttonStyle(PrimaryButtonStyle())
+    }
+
     private func loadCalendarStatus() {
         APIClient.request(path: "/user/calendar-status", method: .GET) { (result: Result<OnboardingCalendarStatus, Error>) in
             DispatchQueue.main.async {
                 isLoading = false
                 if case .success(let status) = result {
+                    connectedProvider = status.provider.flatMap { CalendarProvider(rawValue: $0) }
+                    CalendarProviderStore.selected = connectedProvider
                     isConnected = status.connected
+                        && (connectedProvider != .apple || AppleCalendarService.shared.hasFullAccess)
                 }
             }
         }
     }
 
-    private func connectCalendar() {
+    private func connectCalendar(_ provider: CalendarProvider) {
         isConnecting = true
         showConnectionError = false
-        googleHelper.signInForCalendar { success in
+
+        let finish: (Bool) -> Void = { success in
             DispatchQueue.main.async {
                 isConnecting = false
                 if success {
                     isConnected = true
+                    connectedProvider = provider
                     continueToTest()
                 } else {
                     showConnectionError = true
                 }
             }
+        }
+
+        switch provider {
+        case .google:
+            googleHelper.signInForCalendar(completion: finish)
+        case .apple:
+            AppleCalendarService.shared.connect(completion: finish)
         }
     }
 
