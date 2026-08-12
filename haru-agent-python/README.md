@@ -81,6 +81,14 @@ BACKEND_API_URL=http://localhost:3000/api
    - Store user info via function tools
    - Close API connection at call end
 
+## Cost guardrails
+
+Production calls wait for the participant before opening the Gemini realtime
+session. The defaults are a 30-second unanswered-call timeout, a natural wrap-up
+at 270 connected seconds, and a hard stop at 300 connected seconds. Override
+them with `NO_ANSWER_TIMEOUT_SECONDS`, `CALL_WRAP_UP_SECONDS`, and
+`MAX_CALL_DURATION_SECONDS` when needed.
+
 ### Function Tools
 
 The agent has access to function tools for saving memory during conversations:

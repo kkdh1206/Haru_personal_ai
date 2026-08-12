@@ -171,6 +171,44 @@ export class UserService {
     };
   }
 
+  async reserveOnboardingTestCall(userId: string) {
+    const reservationCutoff = new Date(Date.now() - 10 * 60 * 1000);
+    const user = await this.userModel
+      .findOneAndUpdate(
+        {
+          _id: userId,
+          onboardingTestCallUsedAt: null,
+          $or: [
+            { onboardingTestCallReservedAt: null },
+            { onboardingTestCallReservedAt: { $lt: reservationCutoff } },
+          ],
+        },
+        { $set: { onboardingTestCallReservedAt: new Date() } },
+        { new: true },
+      )
+      .select('_id')
+      .lean();
+
+    return Boolean(user);
+  }
+
+  async completeOnboardingTestCall(userId: string) {
+    await this.userModel.updateOne(
+      { _id: userId, onboardingTestCallUsedAt: null },
+      {
+        $set: { onboardingTestCallUsedAt: new Date() },
+        $unset: { onboardingTestCallReservedAt: '' },
+      },
+    );
+  }
+
+  async releaseOnboardingTestCall(userId: string) {
+    await this.userModel.updateOne(
+      { _id: userId, onboardingTestCallUsedAt: null },
+      { $unset: { onboardingTestCallReservedAt: '' } },
+    );
+  }
+
   async releaseDailyCallSlot(userId: string, dateKey: string) {
     await this.userModel.updateOne(
       {

@@ -36,6 +36,7 @@ struct SettingView: View {
     @EnvironmentObject var authVM: AuthViewModel
     @StateObject private var googleHelper = GoogleSignInHelper()
     @EnvironmentObject var env: AppEnvironment
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
 
     @State private var userName: String = ""
     @State private var selectedAppLanguage: AppLanguage = AppLanguageStore.current
@@ -63,6 +64,7 @@ struct SettingView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 profileSection
+                subscriptionSection
                 appLanguageSection
                 callSection
                 dailyCallSection
@@ -97,6 +99,9 @@ struct SettingView: View {
             Text(localized("계정을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요."))
         }
         .preferredColorScheme(.light)
+        .task {
+            subscriptionManager.refresh()
+        }
     }
 
     private var profileSection: some View {
@@ -112,6 +117,51 @@ struct SettingView: View {
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .fill(Color.white.opacity(0.78))
                 )
+        }
+    }
+
+    private var subscriptionSection: some View {
+        settingsCard(title: "구독") {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 14) {
+                    Image(systemName: subscriptionManager.isActive ? "checkmark.seal.fill" : "sunrise.fill")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(subscriptionManager.isActive ? Color.green : Color(red: 0.95, green: 0.57, blue: 0.22))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(localized(subscriptionManager.isTrial ? "무료 체험 이용 중" : subscriptionManager.isActive ? "하루 플러스 이용 중" : "하루 플러스"))
+                            .font(.system(.body, design: .rounded).weight(.semibold))
+                        Text(localized(subscriptionManager.isActive ? "매일 AI 모닝콜을 이용할 수 있어요." : "신규 이용자는 3일 무료 체험을 이용할 수 있어요."))
+                            .font(.system(.footnote, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.58))
+                    }
+
+                    Spacer()
+                }
+
+                Button {
+                    if subscriptionManager.isActive {
+                        subscriptionManager.openSubscriptionManagement()
+                    } else {
+                        subscriptionManager.showPaywall = true
+                    }
+                } label: {
+                    Text(localized(subscriptionManager.isActive ? "구독 관리" : "구독 시작하기"))
+                        .font(.system(.body, design: .rounded).weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .foregroundStyle(subscriptionManager.isActive ? Color.black : Color.white)
+                .background(
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(subscriptionManager.isActive ? Color.white.opacity(0.82) : Color.black.opacity(0.9))
+                )
+            }
+            .padding(18)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.white.opacity(0.78))
+            )
         }
     }
 

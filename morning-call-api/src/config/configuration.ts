@@ -47,4 +47,25 @@ export default () => ({
     callAgentCheckTimeoutMs:
       process.env.ALARM_CALL_AGENT_CHECK_TIMEOUT_MS || '1000',
   },
+  // Billing / native stores
+  billing: {
+    enforcementEnabled: process.env.BILLING_ENFORCEMENT_ENABLED === 'true',
+    entitlementId: process.env.BILLING_ENTITLEMENT_ID || 'haru_plus',
+    appleBundleId: process.env.APPLE_BUNDLE_ID || 'com.poapper.morningcall',
+    appleAppId: process.env.APPLE_APP_ID || '',
+    appleEnvironment: process.env.APPLE_ENVIRONMENT || 'Sandbox',
+    appleRootCaBase64: process.env.APPLE_ROOT_CA_BASE64 || '',
+    appleOnlineChecks: process.env.APPLE_ENABLE_ONLINE_CHECKS !== 'false',
+    appleProductId:
+      process.env.APPLE_SUBSCRIPTION_PRODUCT_ID ||
+      'haru.plus.monthly',
+    googlePackageName:
+      process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.poapper.morningcall',
+    googleProductId:
+      process.env.GOOGLE_PLAY_SUBSCRIPTION_PRODUCT_ID || 'haru_plus_monthly',
+    googleServiceAccountJson:
+      process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || '',
+    googleNotificationAudience:
+      process.env.GOOGLE_PLAY_NOTIFICATION_AUDIENCE || '',
+  },
 });

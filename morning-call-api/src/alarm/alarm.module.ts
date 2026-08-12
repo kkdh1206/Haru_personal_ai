@@ -14,6 +14,7 @@ import { BullBoardModule } from 'src/bull-board/bull-board.module';
 import { LivekitService } from 'src/livekit/livekit.service';
 import { PromptModule } from 'src/prompt/prompt.module';
 import { FcmService } from 'src/fcm/fcm.service';
+import { BillingModule } from 'src/billing/billing.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { FcmService } from 'src/fcm/fcm.service';
     CalendarModule,
     InformationModule,
     PromptModule,
+    BillingModule,
   ],
   controllers: [AlarmController],
   providers: [

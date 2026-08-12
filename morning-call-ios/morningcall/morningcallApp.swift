@@ -11,12 +11,14 @@ import SwiftUI
 struct morningcallApp: App {
     @UIApplicationDelegateAdaptor(PushDelegate.self) var pushDelegate
     @StateObject var env = AppEnvironment()
+    @StateObject var subscriptionManager = SubscriptionManager()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(CallManager.shared)
                 .environmentObject(env)
+                .environmentObject(subscriptionManager)
         }
     }
 }

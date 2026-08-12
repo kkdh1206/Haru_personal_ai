@@ -1,8 +1,11 @@
 package com.poapper.morningcall
 
 import android.Manifest
+import android.app.Activity
 import android.os.Build
 import android.os.Bundle
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -199,11 +202,30 @@ private fun LocationScreen(onSave: (String) -> Unit) {
 
 @Composable
 private fun HomeScreen(viewModel: MainViewModel, onConnectCalendar: () -> Unit) {
+    val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
+    var showSubscriptionPaywall by remember { mutableStateOf(false) }
+    var dismissedRequiredPaywall by remember { mutableStateOf(false) }
     var editAlarm by remember { mutableStateOf<Pair<Int, Alarm?>?>(null) }
     val state by viewModel.state.collectAsState()
+    val subscription by viewModel.subscriptionState.collectAsState()
     val period = viewModel.currentDayPeriod()
     val next = viewModel.nextAlarmSummary()
+
+    LaunchedEffect(
+        subscription.entitlement?.enforcementEnabled,
+        subscription.isActive,
+    ) {
+        if (subscription.isActive) {
+            showSubscriptionPaywall = false
+            dismissedRequiredPaywall = false
+        } else if (
+            subscription.entitlement?.enforcementEnabled == true &&
+            !dismissedRequiredPaywall
+        ) {
+            showSubscriptionPaywall = true
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         Image(painterResource(backgroundFor(period)), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -251,7 +273,22 @@ private fun HomeScreen(viewModel: MainViewModel, onConnectCalendar: () -> Unit) 
         SettingsDialog(
             viewModel = viewModel,
             onConnectCalendar = onConnectCalendar,
+            onOpenPaywall = { showSubscriptionPaywall = true },
             onDismiss = { showSettings = false },
+        )
+    }
+
+    if (showSubscriptionPaywall) {
+        SubscriptionPaywallDialog(
+            price = subscription.localizedMonthlyPrice,
+            isLoading = subscription.isLoading,
+            error = subscription.error,
+            onPurchase = { viewModel.purchaseMonthly(context as Activity) },
+            onRestore = viewModel::restorePurchases,
+            onDismiss = {
+                dismissedRequiredPaywall = true
+                showSubscriptionPaywall = false
+            },
         )
     }
 }
@@ -329,15 +366,57 @@ private fun WakeStyleButton(text: String, selected: Boolean, onClick: () -> Unit
 private fun SettingsDialog(
     viewModel: MainViewModel,
     onConnectCalendar: () -> Unit,
+    onOpenPaywall: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
+    val subscription by viewModel.subscriptionState.collectAsState()
+    val context = LocalContext.current
     var languageExpanded by remember { mutableStateOf(false) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("설정") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7E8)),
+                    shape = RoundedCornerShape(18.dp),
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            when {
+                                subscription.isTrial -> "무료 체험 이용 중"
+                                subscription.isActive -> "하루 플러스 이용 중"
+                                else -> "하루 플러스"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                        )
+                        Text(
+                            if (subscription.isActive) "매일 AI 모닝콜을 이용할 수 있어요."
+                            else "3일 무료 체험 후 월간 구독으로 이어져요.",
+                            color = Color.Black.copy(alpha = 0.62f),
+                        )
+                        Button(
+                            onClick = {
+                                if (subscription.isActive) {
+                                    context.startActivity(
+                                        Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse("https://play.google.com/store/account/subscriptions?package=${context.packageName}"),
+                                        ),
+                                    )
+                                } else {
+                                    onOpenPaywall()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (subscription.isActive) "구독 관리" else "구독 시작하기")
+                        }
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Phone, null)
                     Spacer(Modifier.width(8.dp))
@@ -384,6 +463,66 @@ private fun SettingsDialog(
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+    )
+}
+
+@Composable
+private fun SubscriptionPaywallDialog(
+    price: String,
+    isLoading: Boolean,
+    error: String?,
+    onPurchase: () -> Unit,
+    onRestore: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = { if (!isLoading) onDismiss() },
+        title = { Text("하루 플러스", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("매일 아침, AI가 직접 전화해 깨워드려요.")
+                Text("✓ 매일 개인화된 AI 모닝콜")
+                Text("✓ 필요할 때 최대 2회 재통화")
+                Text("✓ 날씨와 오늘 일정 브리핑")
+                Spacer(Modifier.height(4.dp))
+                Text("신규 이용자 3일 무료 체험", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Text("$price/월", fontWeight = FontWeight.Bold, fontSize = 24.sp)
+                Text(
+                    "신규 이용자는 무료 체험 종료 후 자동으로 갱신돼요. 언제든 취소할 수 있어요.",
+                    color = Color.Black.copy(alpha = 0.62f),
+                    fontSize = 13.sp,
+                )
+                Text(
+                    "구독에는 매일 1회의 모닝콜과 필요할 때 재통화가 포함됩니다.",
+                    color = Color.Black.copy(alpha = 0.52f),
+                    fontSize = 12.sp,
+                )
+                error?.let { Text(it, color = Color(0xFFB3261E), fontSize = 13.sp) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://morningcall.poapper.com/terms")))
+                    }) { Text("이용약관") }
+                    TextButton(onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://morningcall.poapper.com/privacy")))
+                    }) { Text("개인정보 처리방침") }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onPurchase, enabled = !isLoading) {
+                Text(if (isLoading) "처리 중..." else "구독 시작하기")
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onRestore, enabled = !isLoading) { Text("구매 복원") }
+                TextButton(onClick = onDismiss, enabled = !isLoading) { Text("닫기") }
+            }
+        },
     )
 }
 

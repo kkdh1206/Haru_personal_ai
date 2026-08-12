@@ -3,25 +3,29 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as firebase from 'firebase-admin';
-import * as serviceAccount from '../firebase-adminsdk.json';
 import cookieParser from 'cookie-parser';
 import { join } from 'path';
 import { readFile } from 'fs/promises';
 
-const firebaseParams = {
-  type: serviceAccount.type,
-  projectId: serviceAccount.project_id,
-  privateKeyId: serviceAccount.private_key_id,
-  privateKey: serviceAccount.private_key,
-  clientEmail: serviceAccount.client_email,
-  clientId: serviceAccount.client_id,
-  authUri: serviceAccount.auth_uri,
-  tokenUri: serviceAccount.token_uri,
-  authProviderX509CertUrl: serviceAccount.auth_provider_x509_cert_url,
-  clientX509CertUrl: serviceAccount.client_x509_cert_url,
-};
-
 async function bootstrap() {
+  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
+    : JSON.parse(
+        await readFile(join(process.cwd(), 'firebase-adminsdk.json'), 'utf8'),
+      );
+  const firebaseParams = {
+    type: serviceAccount.type,
+    projectId: serviceAccount.project_id,
+    privateKeyId: serviceAccount.private_key_id,
+    privateKey: serviceAccount.private_key,
+    clientEmail: serviceAccount.client_email,
+    clientId: serviceAccount.client_id,
+    authUri: serviceAccount.auth_uri,
+    tokenUri: serviceAccount.token_uri,
+    authProviderX509CertUrl: serviceAccount.auth_provider_x509_cert_url,
+    clientX509CertUrl: serviceAccount.client_x509_cert_url,
+  };
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   app.use(cookieParser());

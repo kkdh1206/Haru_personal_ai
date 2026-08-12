@@ -68,6 +68,12 @@ project.xcworkspace
 google-services.json
 GoogleService-Info.plist
 *.json
+!morning-call-api/package.json
+!morning-call-api/tsconfig.json
+!morning-call-api/tsconfig.build.json
+!morning-call-api/nest-cli.json
+!morning-call-api/test/jest-e2e.json
+.pnpm-store/
 
 # Logs
 *.log

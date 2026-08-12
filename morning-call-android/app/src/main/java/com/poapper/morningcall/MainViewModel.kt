@@ -2,11 +2,13 @@ package com.poapper.morningcall
 
 import android.app.Application
 import android.content.Intent
+import android.app.Activity
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.messaging.FirebaseMessaging
 import com.poapper.morningcall.alarm.LocalFallbackScheduler
 import com.poapper.morningcall.call.CallManager
+import com.poapper.morningcall.billing.SubscriptionManager
 import com.poapper.morningcall.data.APIClient
 import com.poapper.morningcall.data.AuthRepository
 import com.poapper.morningcall.data.CharacterStore
@@ -49,8 +51,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val authRepository = AuthRepository(context)
     private val api = APIClient(authRepository)
     private val characterStore = CharacterStore(context)
+    private val subscriptionManager = SubscriptionManager(context, api, authRepository)
     private val _state = MutableStateFlow(AppUiState(isLoggedIn = authRepository.isLoggedIn))
     val state: StateFlow<AppUiState> = _state.asStateFlow()
+    val subscriptionState = subscriptionManager.state
 
     init {
         if (authRepository.isLoggedIn) bootstrap()
@@ -75,6 +79,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             runCatching {
                 _state.value = _state.value.copy(isLoggedIn = true, isLoading = true, error = null)
                 val user = api.checkUser()
+                subscriptionManager.configure()
                 val step = when {
                     user.name.isNullOrBlank() -> OnboardingStep.EnterName
                     user.location.isNullOrBlank() -> OnboardingStep.RequestLocation
@@ -197,6 +202,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 CallManager.startOutgoing(context, info.lkUrl, info.lkToken, character.roleName)
             }.onFailure { setError(it) }
         }
+    }
+
+    fun purchaseMonthly(activity: Activity) {
+        subscriptionManager.purchaseMonthly(activity)
+    }
+
+    fun restorePurchases() {
+        subscriptionManager.restorePurchases()
+    }
+
+    fun refreshSubscription() {
+        subscriptionManager.refresh()
     }
 
     fun handleCalendarResult(data: Intent?) {

@@ -52,6 +52,7 @@ fastlane/Preview.html
 # User-specific files
 *.swp
 *.lock
+!Podfile.lock
 *.orig
 *.log
 *.env
@@ -62,4 +63,3 @@ fastlane/Preview.html
 # Playground stuff
 timeline.xctimeline
 playground.xcworkspace
-

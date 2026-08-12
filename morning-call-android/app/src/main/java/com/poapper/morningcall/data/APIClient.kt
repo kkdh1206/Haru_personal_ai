@@ -6,6 +6,7 @@ import com.poapper.morningcall.model.Event
 import com.poapper.morningcall.model.LiveKitInfo
 import com.poapper.morningcall.model.UserInfo
 import com.poapper.morningcall.model.UserSettings
+import com.poapper.morningcall.model.BillingEntitlement
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -118,6 +119,17 @@ class APIClient(private val authRepository: AuthRepository) {
 
     suspend fun todayEvents(): List<Event> =
         request("/calendar/today", "GET", ListSerializer(Event.serializer()))
+
+    suspend fun billingEntitlement(): BillingEntitlement =
+        request("/billing/entitlement", "GET", BillingEntitlement.serializer())
+
+    suspend fun syncGoogleBilling(purchaseToken: String, productId: String): BillingEntitlement {
+        val body = buildJsonObject {
+            put("purchaseToken", JsonPrimitive(purchaseToken))
+            put("productId", JsonPrimitive(productId))
+        }
+        return request("/billing/google/sync", "POST", BillingEntitlement.serializer(), body)
+    }
 
     private fun alarmBody(
         time: String,
