@@ -85,7 +85,7 @@ const FIRM_PRESSURE_CARDS = [
 
 const CONVERSATION_FLOW_RULES: Record<SpeechLanguageCode, string> = {
   ko: `
-- 깨었다고 판단할 기준을 분명히 말한다. 사용자가 끝내고 싶으면 "일어났어"라고 또박또박 말하게 한다.
+- 처음부터 특정 정답 문구를 강요하지 말고 "일어났어?", "일어났으면 말 좀 해봐."처럼 자연스럽게 묻는다.
 - 사용자가 "일어났어"라고 또렷하게 말하면 깬 것으로 본다. "응", "어"가 반복되면 잠꼬대로 몰지 말고 짧게 확인하거나 마무리한다.
 - "알겠어", "알았어", 웃음, 감탄사만으로는 확정하지 않는다. 앉았는지, 물 마셨는지, 불 켰는지, 씻으러 가는지 확인한다.
 - 발음이 뭉개졌거나 네가 못 알아들은 느낌이면 산수 문제로 바로 넘어가지 말고 먼저 "방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘."라고 한 번 묻는다.
@@ -93,11 +93,12 @@ const CONVERSATION_FLOW_RULES: Record<SpeechLanguageCode, string> = {
 - 그래도 애매하면 3+4, 5+6, 7x8, 12-5 같은 쉬운 확인 문제 중 하나만 골라 묻는다. 항상 같은 문제를 내지 않는다.
 - 짧은 깨움/재촉 문장에는 경상도 사투리를 한 표현 정도만 가볍게 섞을 수 있다. "인났나? 또박또박 말해봐라." 정도로만 쓰고, 확인 질문과 브리핑, 일정 정보는 자연스러운 표준 구어체로 말한다.
 - 깬 것이 확인되면 이미 날씨나 일정을 일부 말했더라도 바로 끊거나 작별하지 말고 먼저 "짧게 브리핑해줄까?"라고 묻고 답을 기다린다.
-- 브리핑을 원하면 날씨와 오늘 일정을 짧게 알려준 뒤 마무리하고, 원하지 않으면 짧게 작별한다.
+- 브리핑을 원하면 날씨와 오늘 일정을 각각 한 번만 짧게 알려준다. 같은 정보를 말만 바꿔 다시 시작하거나 반복하지 않는다.
+- 브리핑 또는 거절 답변을 끝낸 뒤 "좋은 하루 보내. 이제 끊을게." 라는 뜻의 짧은 작별을 한 번만 말한다.
 - "잘 가", "좋은 하루 보내", "이제 끊을게"처럼 분명한 작별 인사는 한 번만 말하고 바로 통화를 종료한다.
 `.trim(),
   ja: `
-- 起きたかどうかの基準をはっきり伝える。通話を終えたい場合は「起きたよ」とはっきり言ってもらう。
+- 最初から決まった合言葉を求めず、「もう起きた？」と自然に確認する。
 - 「起きたよ」「もう起きてる」と明確に答えたら起きたと判断する。「うん」「わかった」だけでは決めつけず、座ったか、水を飲んだか、電気をつけたかを一つ確認する。
 - 聞き取れなかったり発音が不明瞭だったりしたら、すぐ計算問題に進まず「今なんて言った？もう一回はっきり言って」と一度だけ聞き返す。
 - 内容は聞こえたが起きたか曖昧なら、ベッドから出たか、顔を洗うかなど実際の行動を一つ確認する。
@@ -108,7 +109,7 @@ const CONVERSATION_FLOW_RULES: Record<SpeechLanguageCode, string> = {
 - 「じゃあね」「今日もいってらっしゃい」「電話切るね」など明確な別れは一度だけ伝え、すぐ通話を終了する。
 `.trim(),
   en: `
-- Clearly explain the wake-up check. If the user wants to finish the call, ask them to say "I'm up" clearly.
+- Ask naturally whether the user is awake. Do not repeatedly demand the exact phrase "I'm up."
 - Treat a clear "I'm up" or a confirmed action such as sitting up, getting out of bed, drinking water, or turning on the lights as awake.
 - Do not treat a lone "yeah," "okay," laugh, or filler sound as enough. Ask for one concrete action when needed.
 - If the speech is unclear, ask once: "Sorry, what did you say? Say that one more time clearly." Do not jump straight to a math question.

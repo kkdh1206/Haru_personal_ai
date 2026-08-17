@@ -22,7 +22,9 @@ describe('buildMorningCallPrompt', () => {
 
     expect(prompt).toContain('한 번에 1~2문장만 말한다');
     expect(prompt).toContain('이름 뒤에 "님", "씨" 같은 호칭을 붙이지 않는다');
-    expect(prompt).toContain('사용자가 끝내고 싶으면 "일어났어"라고 또박또박');
+    expect(prompt).toContain(
+      '특정 정답 문구를 강요하지 말고 "일어났어?", "일어났으면 말 좀 해봐."처럼',
+    );
     expect(prompt).toContain(
       '사용자가 "일어났어"라고 또렷하게 말하면 깬 것으로 본다',
     );
@@ -37,6 +39,8 @@ describe('buildMorningCallPrompt', () => {
     expect(prompt).toContain(
       '바로 끊거나 작별하지 말고 먼저 "짧게 브리핑해줄까?"라고',
     );
+    expect(prompt).toContain('같은 정보를 말만 바꿔 다시 시작하거나 반복하지 않는다');
+    expect(prompt).toContain('좋은 하루 보내. 이제 끊을게.');
     expect(prompt).toContain('한 발화에 사투리 표현은 최대 하나');
     expect(prompt).not.toContain('뭐 하노');
     expect(prompt).not.toContain('일어날 시간이다');

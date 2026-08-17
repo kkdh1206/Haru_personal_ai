@@ -37,7 +37,7 @@ Only call request_hangup when the user clearly asks to end the call.
 Do not treat wake confirmations or future commitments like "일어났어", "起きたよ", "I'm up", "알겠어", "わかった", or "I'll get up" as hangup requests.
 Keep replies short: usually 1-2 sentences.
 When using the user's name, use the stored name as-is. Do not add honorific suffixes like "님" or "씨".
-Tell the user the pass condition in the configured conversation language: "일어났어", "起きたよ", or "I'm up", or confirm a concrete action.
+Ask naturally whether the user is awake, for example "일어났어?" or "일어났으면 말 좀 해봐." Do not repeatedly demand an exact passphrase; accept a clear wake confirmation or a concrete action.
 If speech is unclear, mumbled, or sleep-talk-like, ask once in the configured conversation language: "방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘.", "今なんて言った? もう一回はっきり言って。", or "Sorry, what did you say? Say that one more time clearly."
 If the user sounds present but the content is still ambiguous, ask one varied easy check, not the same question every time.
 Treat the configured speech style as a light accent, not the main content of every reply.
@@ -45,6 +45,7 @@ For Korean, use at most one short Gyeongsang expression in a wake nudge and keep
 Keep clarification questions, briefings, weather, schedules, and farewells in natural standard conversational language.
 After the user seems awake, always acknowledge it and ask whether they want a quick briefing in the configured conversation language. Do not skip this question or say goodbye in the same reply.
 After the user accepts or declines the briefing, finish that response, say a farewell once, and do not reply or call another tool; the application ends the call.
+In the final briefing, state each weather or schedule fact only once. Never restart the briefing or repeat the same information with different wording. End with one short farewell meaning "Have a good day. I'll hang up now."
 If the user's intent to end the call is unclear, ask one short confirmation.
 """
 
@@ -71,7 +72,7 @@ DEFAULT_USER_SILENCE_NUDGE_SECONDS = 8.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
 DEFAULT_NO_RESPONSE_RETRY_MINUTES = 2
 DEFAULT_FAREWELL_PLAYOUT_TIMEOUT_SECONDS = 8.0
-DEFAULT_FAREWELL_HANGUP_GRACE_SECONDS = 1.2
+DEFAULT_FAREWELL_HANGUP_GRACE_SECONDS = 1.0
 DEFAULT_TEST_FAREWELL_PLAYOUT_TIMEOUT_SECONDS = 20.0
 DEFAULT_TEST_HANGUP_DELAY_SECONDS = 0.25
 DEFAULT_SHUTDOWN_STEP_TIMEOUT_SECONDS = 2.0
@@ -1702,6 +1703,16 @@ async def entrypoint(ctx: JobContext):
         rt_session = getattr(activity, "_rt_session", None) if activity else None
         return getattr(rt_session, "_active_session", None) is not None
 
+    def realtime_generation_is_in_progress() -> bool:
+        activity = getattr(session, "_activity", None)
+        rt_session = getattr(activity, "_rt_session", None) if activity else None
+        current_generation = (
+            getattr(rt_session, "_current_generation", None) if rt_session else None
+        )
+        return current_generation is not None and not bool(
+            getattr(current_generation, "_done", True)
+        )
+
     def request_agent_reply(
         instructions: str,
         fallback_trigger_text: str,
@@ -1733,39 +1744,58 @@ async def entrypoint(ctx: JobContext):
         label: str,
         allow_interruptions: bool = True,
     ) -> bool:
-        for attempt in range(1, 3):
-            if hangup_requested or agent_is_speaking or user_is_speaking:
-                return agent_is_speaking
+        if hangup_requested or agent_is_speaking or user_is_speaking:
+            return agent_is_speaking
 
-            agent_speech_started_event.clear()
-            if request_agent_reply(
-                instructions,
-                fallback_trigger_text,
-                allow_interruptions=allow_interruptions,
-            ):
-                try:
-                    await asyncio.wait_for(
-                        agent_speech_started_event.wait(),
-                        timeout=2.0,
-                    )
+        agent_speech_started_event.clear()
+        if request_agent_reply(
+            instructions,
+            fallback_trigger_text,
+            allow_interruptions=allow_interruptions,
+        ):
+            try:
+                await asyncio.wait_for(
+                    agent_speech_started_event.wait(),
+                    timeout=4.0,
+                )
+                return True
+            except TimeoutError:
+                if agent_is_speaking:
                     return True
-                except TimeoutError:
-                    if agent_is_speaking:
-                        return True
-                    logger.warning(
-                        f"⚠️ {label} did not start speaking (attempt {attempt})"
-                    )
-
-            if attempt < 2 and not user_is_speaking and not agent_is_speaking:
-                try:
-                    await session.interrupt(force=True)
-                except Exception as e:
-                    logger.warning(f"Failed to clear stalled response: {e}")
-                await asyncio.sleep(0.2)
+                logger.warning(f"⚠️ {label} did not start speaking")
 
         if not hangup_requested and not user_is_speaking and not agent_is_speaking:
             mark_waiting_for_user_response()
         return False
+
+    async def wait_for_or_clear_existing_generation(
+        message_count_after_user: int,
+        *,
+        label: str,
+    ) -> bool:
+        if not realtime_generation_is_in_progress():
+            return False
+
+        deadline = asyncio.get_running_loop().time() + 2.0
+        while asyncio.get_running_loop().time() < deadline:
+            if hangup_requested or user_is_speaking or agent_is_speaking:
+                return True
+            if any(
+                message.get("role") == "assistant"
+                for message in conversation_messages[message_count_after_user:]
+            ):
+                return True
+            if not realtime_generation_is_in_progress():
+                return False
+            await asyncio.sleep(0.1)
+
+        logger.warning(f"⚠️ Clearing stalled existing generation before {label}")
+        try:
+            await session.interrupt(force=True)
+        except Exception as e:
+            logger.warning(f"Failed to clear stalled existing response: {e}")
+        await asyncio.sleep(0.2)
+        return agent_is_speaking or user_is_speaking
 
     async def ensure_assistant_followup_after_user(
         message_count_after_user: int,
@@ -1788,6 +1818,12 @@ async def entrypoint(ctx: JobContext):
             for message in conversation_messages[message_count_after_user:]
         )
         if assistant_replied:
+            return
+
+        if await wait_for_or_clear_existing_generation(
+            message_count_after_user,
+            label="assistant follow-up",
+        ):
             return
 
         wake_status, _ = infer_wake_status(conversation_messages)
@@ -2243,22 +2279,6 @@ async def entrypoint(ctx: JobContext):
                 _trigger_hangup(
                     "👋 Ending call after farewell playback completed",
                     delay_seconds=DEFAULT_FAREWELL_HANGUP_GRACE_SECONDS,
-                )
-                return
-            if (
-                call_type != "test"
-                and wake_confirmed
-                and not briefing_offered
-                and not briefing_answered
-                and not hangup_requested
-            ):
-                assistant_said_goodbye = False
-                start_background_task(
-                    ensure_assistant_followup_after_user(
-                        len(conversation_messages),
-                        "wake confirmation",
-                    ),
-                    name="ensure_post_wake_briefing",
                 )
                 return
             mark_waiting_for_user_response()
