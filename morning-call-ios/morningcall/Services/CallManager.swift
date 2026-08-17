@@ -4,6 +4,18 @@ import AVFoundation
 import LiveKit
 import LiveKitWebRTC
 
+private enum LocalNudgeAudioLibrary {
+    static let assetsByStage: [Int: [String]] = [
+        1: ["wakeup", "warm_wake_water"],
+        2: ["wakeupx5", "late_wakeup_warning"],
+        3: ["last_chance"],
+    ]
+
+    static func randomAsset(for stage: Int) -> String? {
+        assetsByStage[stage]?.randomElement()
+    }
+}
+
 enum CallPresentationPhase: Equatable {
     case idle
     case incoming
@@ -121,6 +133,12 @@ final actor CallManager: NSObject, ObservableObject {
     // 상태 플래그
     private var isConnectingOrConnected = false // LiveKit 연결 중이거나 이미 연결된 상태
 
+    // 로컬 무응답 깨우기 음성
+    private var localNudgeAudioPlayer: AVAudioPlayer?
+    private var localNudgeCompletionTask: Task<Void, Never>?
+    private var localNudgeRequestID: String?
+    private var localNudgeAsset: String?
+
     // MARK: - Init
 
     override init() {
@@ -225,6 +243,7 @@ final actor CallManager: NSObject, ObservableObject {
 
     private func failCallPresentation(uuid: UUID) {
         guard currentCallUUID == uuid else { return }
+        clearLocalNudgePlayback()
         let endedAlarmID = alarmId
         currentCallUUID = nil
         livekitURL = nil
@@ -350,6 +369,172 @@ final actor CallManager: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - 로컬 무응답 깨우기 음성
+
+    private func playLocalNudge(stage: Int, requestID: String) async {
+        guard currentCallUUID != nil, wasAnswered, isConnectingOrConnected else {
+            await publishLocalAudioEvent(
+                type: "local_audio.failed",
+                requestID: requestID,
+                reason: "call_not_active"
+            )
+            return
+        }
+
+        guard let asset = LocalNudgeAudioLibrary.randomAsset(for: stage) else {
+            await publishLocalAudioEvent(
+                type: "local_audio.failed",
+                requestID: requestID,
+                reason: "unknown_stage"
+            )
+            return
+        }
+
+        guard let url = Bundle.main.url(forResource: asset, withExtension: "wav") else {
+            print("⚠️ Local nudge WAV is missing from the app bundle: \(asset).wav")
+            await publishLocalAudioEvent(
+                type: "local_audio.failed",
+                requestID: requestID,
+                asset: asset,
+                reason: "asset_missing"
+            )
+            return
+        }
+
+        if let activeRequestID = localNudgeRequestID {
+            await finishLocalNudge(
+                requestID: activeRequestID,
+                reason: "replaced",
+                notifyAgent: true
+            )
+        }
+
+        do {
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.numberOfLoops = 0
+            player.volume = 1
+            player.prepareToPlay()
+
+            guard player.play() else {
+                await publishLocalAudioEvent(
+                    type: "local_audio.failed",
+                    requestID: requestID,
+                    asset: asset,
+                    reason: "playback_rejected"
+                )
+                return
+            }
+
+            localNudgeAudioPlayer = player
+            localNudgeRequestID = requestID
+            localNudgeAsset = asset
+
+            let durationMilliseconds = Int((player.duration * 1_000).rounded())
+            let waitNanoseconds = UInt64(max(player.duration + 0.25, 0) * 1_000_000_000)
+            localNudgeCompletionTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: waitNanoseconds)
+                guard !Task.isCancelled else { return }
+                await self?.finishLocalNudge(
+                    requestID: requestID,
+                    reason: "completed",
+                    notifyAgent: true
+                )
+            }
+
+            print("🔔 Playing local nudge: stage=\(stage) asset=\(asset).wav")
+            await publishLocalAudioEvent(
+                type: "local_audio.started",
+                requestID: requestID,
+                asset: asset,
+                durationMilliseconds: durationMilliseconds
+            )
+        } catch {
+            print("⚠️ Failed to play local nudge \(asset).wav: \(error.localizedDescription)")
+            clearLocalNudgePlayback()
+            await publishLocalAudioEvent(
+                type: "local_audio.failed",
+                requestID: requestID,
+                asset: asset,
+                reason: "player_error"
+            )
+        }
+    }
+
+    private func stopLocalNudge(requestID: String?, reason: String) async {
+        guard let activeRequestID = localNudgeRequestID else { return }
+        guard requestID == nil || requestID == activeRequestID else { return }
+
+        await finishLocalNudge(
+            requestID: activeRequestID,
+            reason: reason,
+            notifyAgent: true
+        )
+    }
+
+    private func finishLocalNudge(
+        requestID: String,
+        reason: String,
+        notifyAgent: Bool
+    ) async {
+        guard localNudgeRequestID == requestID else { return }
+        let asset = localNudgeAsset
+        clearLocalNudgePlayback()
+        print("🔕 Local nudge finished: asset=\(asset ?? "(unknown)") reason=\(reason)")
+
+        if notifyAgent {
+            await publishLocalAudioEvent(
+                type: "local_audio.finished",
+                requestID: requestID,
+                asset: asset,
+                reason: reason
+            )
+        }
+    }
+
+    private func clearLocalNudgePlayback() {
+        localNudgeCompletionTask?.cancel()
+        localNudgeCompletionTask = nil
+        localNudgeAudioPlayer?.stop()
+        localNudgeAudioPlayer = nil
+        localNudgeRequestID = nil
+        localNudgeAsset = nil
+    }
+
+    private func publishLocalAudioEvent(
+        type: String,
+        requestID: String,
+        asset: String? = nil,
+        reason: String? = nil,
+        durationMilliseconds: Int? = nil
+    ) async {
+        guard let room else { return }
+
+        var payload: [String: Any] = [
+            "type": type,
+            "requestId": requestID,
+        ]
+        if let asset {
+            payload["asset"] = asset
+        }
+        if let reason {
+            payload["reason"] = reason
+        }
+        if let durationMilliseconds {
+            payload["durationMs"] = durationMilliseconds
+        }
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            let options = DataPublishOptions(
+                topic: "haru.call.control",
+                reliable: true
+            )
+            try await room.localParticipant.publish(data: data, options: options)
+        } catch {
+            print("⚠️ Failed to publish local audio event: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - LiveKit 연결 및 해제
 
     /// **CallKit 오디오 세션 활성화(didActivate) 이후** LiveKit 방에 연결 시도
@@ -447,6 +632,7 @@ final actor CallManager: NSObject, ObservableObject {
 
     /// LiveKit Room 연결을 해제 후 상태를 초기화
     private func disconnectRoom() async {
+        clearLocalNudgePlayback()
         let endedAlarmID = alarmId
         let answered = wasAnswered
         let currentRoom = room
@@ -485,13 +671,32 @@ extension CallManager: RoomDelegate {
     ) {
         guard topic == "haru.call.control",
               let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              payload["type"] as? String == "call.end" else {
+              let type = payload["type"] as? String else {
             return
         }
 
-        print("📴 서버에서 통화 종료 신호를 받았습니다.")
-        Task {
-            await self.endCurrentCallFromRemote()
+        switch type {
+        case "call.end":
+            print("📴 서버에서 통화 종료 신호를 받았습니다.")
+            Task {
+                await self.endCurrentCallFromRemote()
+            }
+        case "local_audio.play":
+            guard let requestID = payload["requestId"] as? String,
+                  let stage = payload["stage"] as? Int else {
+                return
+            }
+            Task {
+                await self.playLocalNudge(stage: stage, requestID: requestID)
+            }
+        case "local_audio.stop":
+            let requestID = payload["requestId"] as? String
+            let reason = payload["reason"] as? String ?? "stopped"
+            Task {
+                await self.stopLocalNudge(requestID: requestID, reason: reason)
+            }
+        default:
+            break
         }
     }
 

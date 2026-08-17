@@ -78,6 +78,14 @@
 "%@로 전환" = "Switch to %@";
 "%@ 연결하기" = "Connect %@";
 "캘린더 연결에 실패했어요. 권한과 네트워크를 확인해 주세요." = "Calendar connection failed. Check permission and your network.";
+"Apple Calendar 권한이 필요해요" = "Apple Calendar Access Needed";
+"Apple Calendar를 연결하려면 설정에서 캘린더 전체 접근을 허용해 주세요." = "To connect Apple Calendar, allow Full Access to Calendars in Settings.";
+"Apple Calendar 전체 접근 권한을 허용해 주세요." = "Allow Full Access to Apple Calendar.";
+"이 기기에서는 캘린더 접근이 제한되어 있어요." = "Calendar access is restricted on this device.";
+"이 기기에서는 캘린더 접근이 제한되어 있어요. 스크린 타임 또는 관리 설정을 확인해 주세요." = "Calendar access is restricted on this device. Check Screen Time or device management settings.";
+"Google Calendar 연결을 취소했어요." = "Google Calendar connection was canceled.";
+"Google Calendar 접근 권한을 허용해 주세요." = "Allow access to Google Calendar.";
+"캘린더 서버에 연결할 수 없어요. 네트워크를 확인한 뒤 다시 시도해 주세요." = "Could not reach the calendar server. Check your network and try again.";
 "연동됨" = "Connected";
 "연동 안 됨" = "Not Connected";
 "Google Calendar가 연결되어 있어요." = "Google Calendar is connected.";

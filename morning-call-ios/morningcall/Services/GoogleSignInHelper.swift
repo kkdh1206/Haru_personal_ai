@@ -16,87 +16,130 @@ class GoogleSignInHelper: ObservableObject {
     @Published var accessToken: String?
     @Published var refreshToken: String?
 
-    func signInForCalendar(completion: @escaping (Bool) -> Void = { _ in }) {
-        guard let clientID = FirebaseApp.app()?.options.clientID else {
-            completion(false)
-            return
-        }
+    private let calendarScope = "https://www.googleapis.com/auth/calendar"
 
-        let config = GIDConfiguration(clientID: clientID)
-        GIDSignIn.sharedInstance.configuration = config
-        
-        guard
-            let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-            let rootVC = windowScene.windows.first?.rootViewController
-        else {
-            print("No root view controller found.")
-            completion(false)
-            return
-        }
-
-        let scopes = ["https://www.googleapis.com/auth/calendar"]
-
-        Task {
-            do {
-                let result = try await GIDSignIn.sharedInstance.signIn(
-                    withPresenting: rootVC,
-                    hint: nil,
-                    additionalScopes: scopes
-                )
-
-                let accessToken = result.user.accessToken.tokenString
-                let refreshToken = result.user.refreshToken.tokenString
-                registerCalendarTokenToAPI(
-                    accessToken: accessToken,
-                    refreshToken: refreshToken,
-                    completion: completion
-                )
-            } catch {
-                print("❌ Sign-in error: \(error)")
-                completion(false)
-            }
-        }
-    }
-    
-    private func registerCalendarTokenToAPI(
-        accessToken: String,
-        refreshToken: String,
-        completion: @escaping (Bool) -> Void
+    func signInForCalendar(
+        completion: @escaping (CalendarConnectionResult) -> Void = { _ in }
     ) {
-        AuthTokenManager.shared.refreshTokenIfNeeded { idToken in
-            guard let idToken = idToken else {
-                completion(false)
+        Task { @MainActor in
+            guard let clientID = FirebaseApp.app()?.options.clientID else {
+                completion(.failed)
                 return
             }
 
-            var request = URLRequest(url: URL(string: "https://morningcall.poapper.com/user/calendar-token")!)
-            request.httpMethod = "PATCH"
-            request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
 
-            let body: [String: Any] = ["calendarAccessToken": accessToken, "calendarRefreshToken": refreshToken]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
+            guard let presenter = Self.presentingViewController() else {
+                print("❌ Google Calendar 로그인 화면을 표시할 수 없습니다.")
+                completion(.failed)
+                return
+            }
 
-            URLSession.shared.dataTask(with: request) { data, response, error in
-                if let error = error {
-                    print("🌐 등록 에러: \(error.localizedDescription)")
-                    completion(false)
+            do {
+                let user: GIDGoogleUser
+                if let currentUser = GIDSignIn.sharedInstance.currentUser {
+                    if currentUser.grantedScopes?.contains(calendarScope) == true {
+                        user = try await currentUser.refreshTokensIfNeeded()
+                    } else {
+                        let result = try await currentUser.addScopes(
+                            [calendarScope],
+                            presenting: presenter
+                        )
+                        user = result.user
+                    }
+                } else {
+                    let result = try await GIDSignIn.sharedInstance.signIn(
+                        withPresenting: presenter,
+                        hint: nil,
+                        additionalScopes: [calendarScope]
+                    )
+                    user = result.user
+                }
+
+                guard user.grantedScopes?.contains(calendarScope) == true else {
+                    completion(.permissionDenied)
                     return
                 }
-                if let httpResponse = response as? HTTPURLResponse,
-                   !(200...299).contains(httpResponse.statusCode) {
-                    print("🌐 캘린더 토큰 등록 실패: \(httpResponse.statusCode)")
-                    completion(false)
-                    return
+
+                registerCalendarTokenToAPI(user: user, completion: completion)
+            } catch {
+                print("❌ Sign-in error: \(error)")
+                let nsError = error as NSError
+                if nsError.domain == kGIDSignInErrorDomain, nsError.code == -5 {
+                    completion(.cancelled)
+                } else {
+                    completion(.failed)
                 }
-                print("✅ 캘린더 토큰 등록 완료")
+            }
+        }
+    }
+
+    @MainActor
+    private static func presentingViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .sorted { lhs, rhs in
+                lhs.activationState == .foregroundActive
+                    && rhs.activationState != .foregroundActive
+            }
+
+        let rootViewController = scenes.lazy
+            .compactMap { scene in
+                scene.windows.first(where: { $0.isKeyWindow })?.rootViewController
+                    ?? scene.windows.first(where: { !$0.isHidden })?.rootViewController
+            }
+            .first
+
+        return topViewController(from: rootViewController)
+    }
+
+    @MainActor
+    private static func topViewController(from viewController: UIViewController?) -> UIViewController? {
+        if let presented = viewController?.presentedViewController {
+            return topViewController(from: presented)
+        }
+        if let navigation = viewController as? UINavigationController {
+            return topViewController(from: navigation.visibleViewController)
+        }
+        if let tab = viewController as? UITabBarController {
+            return topViewController(from: tab.selectedViewController)
+        }
+        return viewController
+    }
+
+    private func registerCalendarTokenToAPI(
+        user: GIDGoogleUser,
+        completion: @escaping (CalendarConnectionResult) -> Void
+    ) {
+        let accessToken = user.accessToken.tokenString
+        let refreshToken = user.refreshToken.tokenString
+        guard !accessToken.isEmpty, !refreshToken.isEmpty else {
+            completion(.failed)
+            return
+        }
+
+        APIClient.requestVoid(
+            path: "/user/calendar-token",
+            method: .PATCH,
+            body: [
+                "calendarAccessToken": accessToken,
+                "calendarRefreshToken": refreshToken
+            ]
+        ) { result in
+            switch result {
+            case .success:
                 DispatchQueue.main.async {
                     self.accessToken = accessToken
                     self.refreshToken = refreshToken
                     CalendarProviderStore.selected = .google
-                    completion(true)
+                    completion(.connected)
                 }
-            }.resume()
+            case .failure(let error):
+                print("🌐 캘린더 토큰 등록 실패: \(error)")
+                DispatchQueue.main.async {
+                    completion(.failed)
+                }
+            }
         }
     }
 }

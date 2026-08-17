@@ -269,13 +269,17 @@ private struct OnboardingCalendarStatus: Decodable {
 
 struct CalendarIntroView: View {
     @EnvironmentObject private var env: AppEnvironment
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var googleHelper = GoogleSignInHelper()
 
     @State private var isConnected = false
     @State private var connectedProvider: CalendarProvider?
     @State private var isLoading = true
     @State private var isConnecting = false
-    @State private var showConnectionError = false
+    @State private var connectionErrorKey: String?
+    @State private var showAppleCalendarPermissionAlert = false
+    @State private var appleCalendarPermissionRestricted = false
+    @State private var retryAppleCalendarAfterSettings = false
 
     var body: some View {
         ZStack {
@@ -318,8 +322,8 @@ struct CalendarIntroView: View {
 
                     Spacer(minLength: 28)
 
-                    if showConnectionError {
-                        Text("캘린더 연결에 실패했어요. 다시 시도하거나 나중에 설정에서 연결해 주세요.")
+                    if let connectionErrorKey {
+                        Text(AppLocalizer.string(connectionErrorKey, language: env.appLanguage))
                             .font(.system(.footnote, design: .rounded).weight(.semibold))
                             .foregroundStyle(Color.red.opacity(0.80))
                             .fixedSize(horizontal: false, vertical: true)
@@ -356,6 +360,35 @@ struct CalendarIntroView: View {
         }
         .task {
             loadCalendarStatus()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            if retryAppleCalendarAfterSettings,
+               AppleCalendarService.shared.hasFullAccess {
+                retryAppleCalendarAfterSettings = false
+                connectCalendar(.apple)
+            } else {
+                loadCalendarStatus()
+            }
+        }
+        .alert(
+            AppLocalizer.string("Apple Calendar 권한이 필요해요", language: env.appLanguage),
+            isPresented: $showAppleCalendarPermissionAlert
+        ) {
+            Button(AppLocalizer.string("취소", language: env.appLanguage), role: .cancel) {}
+            Button(AppLocalizer.string("설정 열기", language: env.appLanguage)) {
+                retryAppleCalendarAfterSettings = true
+                openCalendarSettings()
+            }
+        } message: {
+            Text(
+                AppLocalizer.string(
+                    appleCalendarPermissionRestricted
+                    ? "이 기기에서는 캘린더 접근이 제한되어 있어요. 스크린 타임 또는 관리 설정을 확인해 주세요."
+                    : "Apple Calendar를 연결하려면 설정에서 캘린더 전체 접근을 허용해 주세요.",
+                    language: env.appLanguage
+                )
+            )
         }
         .preferredColorScheme(.light)
     }
@@ -423,18 +456,32 @@ struct CalendarIntroView: View {
     }
 
     private func connectCalendar(_ provider: CalendarProvider) {
+        guard !isConnecting else { return }
         isConnecting = true
-        showConnectionError = false
+        connectionErrorKey = nil
 
-        let finish: (Bool) -> Void = { success in
+        let finish: (CalendarConnectionResult) -> Void = { result in
             DispatchQueue.main.async {
                 isConnecting = false
-                if success {
+                switch result {
+                case .connected:
                     isConnected = true
                     connectedProvider = provider
                     continueToTest()
-                } else {
-                    showConnectionError = true
+                case .permissionDenied where provider == .apple:
+                    appleCalendarPermissionRestricted = false
+                    connectionErrorKey = "Apple Calendar 전체 접근 권한을 허용해 주세요."
+                    showAppleCalendarPermissionAlert = true
+                case .permissionDenied:
+                    connectionErrorKey = "Google Calendar 접근 권한을 허용해 주세요."
+                case .permissionRestricted:
+                    appleCalendarPermissionRestricted = true
+                    connectionErrorKey = "이 기기에서는 캘린더 접근이 제한되어 있어요."
+                    showAppleCalendarPermissionAlert = true
+                case .cancelled:
+                    connectionErrorKey = "Google Calendar 연결을 취소했어요."
+                case .failed:
+                    connectionErrorKey = "캘린더 서버에 연결할 수 없어요. 네트워크를 확인한 뒤 다시 시도해 주세요."
                 }
             }
         }
@@ -445,6 +492,11 @@ struct CalendarIntroView: View {
         case .apple:
             AppleCalendarService.shared.connect(completion: finish)
         }
+    }
+
+    private func openCalendarSettings() {
+        guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(settingsURL)
     }
 
     private func continueToTest() {

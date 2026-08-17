@@ -67,13 +67,15 @@ DEFAULT_GEMINI_THINKING_MODE = "disabled"
 DEFAULT_MAX_MEMORY_CONTEXT_CHARS = 300
 DEFAULT_MAX_CONVERSATION_MESSAGES = 6
 DEFAULT_MAX_RETRY_CALLS = 2
-DEFAULT_USER_SILENCE_NUDGE_SECONDS = 5.0
+DEFAULT_USER_SILENCE_NUDGE_SECONDS = 10.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
 DEFAULT_NO_RESPONSE_RETRY_MINUTES = 2
 DEFAULT_FAREWELL_PLAYOUT_TIMEOUT_SECONDS = 8.0
 DEFAULT_TEST_FAREWELL_PLAYOUT_TIMEOUT_SECONDS = 20.0
 DEFAULT_TEST_HANGUP_DELAY_SECONDS = 0.25
 DEFAULT_SHUTDOWN_STEP_TIMEOUT_SECONDS = 2.0
+DEFAULT_LOCAL_AUDIO_START_TIMEOUT_SECONDS = 1.5
+DEFAULT_LOCAL_AUDIO_FINISH_TIMEOUT_SECONDS = 12.0
 DEFAULT_HANGUP_FAREWELL_TEXT = "알았어. 이제 끊을게. 오늘 하루 잘 보내."
 CALL_END_TOPIC = "haru.call.control"
 CALL_END_MESSAGE = '{"type":"call.end","reason":"completed"}'
@@ -1183,7 +1185,11 @@ async def entrypoint(ctx: JobContext):
     waiting_for_user_response_since: float | None = None
     agent_is_speaking = False
     user_is_speaking = False
-    silence_nudge_count = 0
+    initial_silence_nudge_count = min(
+        max(retry_count, 0),
+        max(get_max_user_silence_nudges() - 1, 0),
+    )
+    silence_nudge_count = initial_silence_nudge_count
     assistant_said_goodbye = False
     test_reply_hangup_scheduled = False
     test_user_replied_at: float | None = None
@@ -1193,6 +1199,9 @@ async def entrypoint(ctx: JobContext):
     agent_speech_started_event = asyncio.Event()
     agent_speech_finished_event = asyncio.Event()
     agent_speech_finished_event.set()
+    local_audio_started_futures: dict[str, asyncio.Future] = {}
+    local_audio_finished_futures: dict[str, asyncio.Future] = {}
+    active_local_nudge_request_id: str | None = None
 
     def start_background_task(coro, *, name: str | None = None) -> asyncio.Task:
         task = asyncio.create_task(coro, name=name)
@@ -1204,13 +1213,150 @@ async def entrypoint(ctx: JobContext):
         nonlocal waiting_for_user_response_since, silence_nudge_count
         waiting_for_user_response_since = asyncio.get_running_loop().time()
         if reset_silence_nudges:
-            silence_nudge_count = 0
+            silence_nudge_count = initial_silence_nudge_count
 
     def clear_waiting_for_user_response(*, reset_silence_nudges: bool = False):
         nonlocal waiting_for_user_response_since, silence_nudge_count
         waiting_for_user_response_since = None
         if reset_silence_nudges:
-            silence_nudge_count = 0
+            silence_nudge_count = initial_silence_nudge_count
+
+    async def publish_call_control(payload: dict):
+        await ctx.room.local_participant.publish_data(
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            reliable=True,
+            topic=CALL_END_TOPIC,
+        )
+
+    def stop_active_local_nudge(reason: str):
+        request_id = active_local_nudge_request_id
+        if not request_id:
+            return
+
+        async def _send_stop():
+            try:
+                await publish_call_control(
+                    {
+                        "type": "local_audio.stop",
+                        "requestId": request_id,
+                        "reason": reason,
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to stop local silence nudge: {e}")
+
+        start_background_task(
+            _send_stop(),
+            name=f"stop_local_nudge_{request_id}",
+        )
+
+    async def play_local_silence_nudge(stage: int) -> bool:
+        """Play a bundled iOS nudge, falling back when the client cannot handle it."""
+        nonlocal active_local_nudge_request_id
+
+        if get_realtime_language_code(conversation_language) != "ko-KR":
+            return False
+
+        loop = asyncio.get_running_loop()
+        request_id = f"nudge-{stage}-{int(loop.time() * 1000)}"
+        started_future = loop.create_future()
+        finished_future = loop.create_future()
+        local_audio_started_futures[request_id] = started_future
+        local_audio_finished_futures[request_id] = finished_future
+
+        try:
+            await publish_call_control(
+                {
+                    "type": "local_audio.play",
+                    "requestId": request_id,
+                    "stage": stage,
+                }
+            )
+            started_payload = await asyncio.wait_for(
+                asyncio.shield(started_future),
+                timeout=DEFAULT_LOCAL_AUDIO_START_TIMEOUT_SECONDS,
+            )
+            if not started_payload:
+                return False
+
+            active_local_nudge_request_id = request_id
+            logger.info(
+                "🔔 Local silence nudge started: "
+                f"stage={stage} asset={started_payload.get('asset', '(unknown)')}"
+            )
+
+            try:
+                finished_payload = await asyncio.wait_for(
+                    asyncio.shield(finished_future),
+                    timeout=DEFAULT_LOCAL_AUDIO_FINISH_TIMEOUT_SECONDS,
+                )
+                reason = finished_payload.get("reason", "completed")
+                logger.info(
+                    "🔕 Local silence nudge finished: "
+                    f"stage={stage} reason={reason}"
+                )
+                if (
+                    reason == "completed"
+                    and not hangup_requested
+                    and not call_outcome_reported
+                    and not user_is_speaking
+                    and not agent_is_speaking
+                ):
+                    mark_waiting_for_user_response()
+            except TimeoutError:
+                logger.warning(
+                    f"⚠️ Local silence nudge completion timed out: {request_id}"
+                )
+                stop_active_local_nudge("server_timeout")
+                if (
+                    not hangup_requested
+                    and not call_outcome_reported
+                    and not user_is_speaking
+                    and not agent_is_speaking
+                ):
+                    mark_waiting_for_user_response()
+
+            return True
+        except TimeoutError:
+            logger.info(
+                "Client did not acknowledge local audio; using Gemini nudge"
+            )
+            return False
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to request local silence nudge: {e}")
+            return False
+        finally:
+            if active_local_nudge_request_id == request_id:
+                active_local_nudge_request_id = None
+            local_audio_started_futures.pop(request_id, None)
+            local_audio_finished_futures.pop(request_id, None)
+
+    @ctx.room.on("data_received")
+    def _on_data_received(packet):
+        if getattr(packet, "topic", None) != CALL_END_TOPIC:
+            return
+
+        try:
+            payload = json.loads(packet.data.decode("utf-8"))
+        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+            return
+
+        event_type = payload.get("type")
+        request_id = payload.get("requestId")
+        if not isinstance(request_id, str):
+            return
+
+        if event_type == "local_audio.started":
+            future = local_audio_started_futures.get(request_id)
+            if future and not future.done():
+                future.set_result(payload)
+        elif event_type in {"local_audio.finished", "local_audio.failed"}:
+            started_future = local_audio_started_futures.get(request_id)
+            if started_future and not started_future.done():
+                started_future.set_result(None)
+            finished_future = local_audio_finished_futures.get(request_id)
+            if finished_future and not finished_future.done():
+                finished_future.set_result(payload)
 
     def _trigger_hangup(
         message: str,
@@ -1222,6 +1368,7 @@ async def entrypoint(ctx: JobContext):
         nonlocal hangup_requested, session
         if hangup_requested:
             return
+        stop_active_local_nudge("call_ending")
         hangup_requested = True
         logger.info(message)
 
@@ -1783,7 +1930,7 @@ async def entrypoint(ctx: JobContext):
             logger.info(f"🤖 Gemini says: {text}")
         else:
             assistant_said_goodbye = False
-            clear_waiting_for_user_response(reset_silence_nudges=True)
+            clear_waiting_for_user_response()
             if call_type == "test":
                 agent_speech_started_event.clear()
                 agent_speech_finished_event.clear()
@@ -1963,6 +2110,7 @@ async def entrypoint(ctx: JobContext):
         agent_is_speaking = new_state == "speaking"
 
         if new_state == "speaking":
+            stop_active_local_nudge("agent_speaking")
             agent_speech_finished_event.clear()
             agent_speech_started_event.set()
 
@@ -1981,7 +2129,8 @@ async def entrypoint(ctx: JobContext):
         new_state = getattr(ev, "new_state", None)
         user_is_speaking = new_state == "speaking"
         if user_is_speaking:
-            clear_waiting_for_user_response(reset_silence_nudges=True)
+            stop_active_local_nudge("user_speaking")
+            clear_waiting_for_user_response()
             if call_type == "test" and greeted_user and not test_reply_hangup_scheduled:
                 test_waiting_for_final_speech = True
                 test_final_speech_handle = None
@@ -2185,7 +2334,13 @@ async def entrypoint(ctx: JobContext):
                 f"참고 문구: {nudge_text}"
             )
 
-            if request_agent_reply(nudge_instructions, nudge_trigger_text):
+            if await play_local_silence_nudge(silence_nudge_count):
+                logger.info(
+                    "⏰ Local user silence nudge requested "
+                    f"({silence_nudge_count}/{max_nudges}) after "
+                    f"{nudge_seconds:.1f}s of inactivity"
+                )
+            elif request_agent_reply(nudge_instructions, nudge_trigger_text):
                 logger.info(
                     "⏰ User silence nudge requested "
                     f"({silence_nudge_count}/{max_nudges}) after "
@@ -2193,6 +2348,7 @@ async def entrypoint(ctx: JobContext):
                 )
             else:
                 logger.warning("⚠️ Failed to request user silence nudge")
+                mark_waiting_for_user_response()
 
             await asyncio.sleep(0.5)
 

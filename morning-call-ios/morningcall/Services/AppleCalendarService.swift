@@ -14,6 +14,14 @@ enum CalendarProvider: String, Codable {
     }
 }
 
+enum CalendarConnectionResult: Equatable {
+    case connected
+    case permissionDenied
+    case permissionRestricted
+    case cancelled
+    case failed
+}
+
 enum CalendarProviderStore {
     private static let keyPrefix = "haru.calendar-provider"
 
@@ -92,27 +100,77 @@ final class AppleCalendarService {
         EKEventStore.authorizationStatus(for: .event) == .fullAccess
     }
 
-    func connect(completion: @escaping (Bool) -> Void) {
+    func connect(completion: @escaping (CalendarConnectionResult) -> Void) {
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .fullAccess, .authorized:
+            registerConnection(completion: completion)
+        case .notDetermined, .writeOnly:
+            requestFullAccess(completion: completion)
+        case .denied:
+            complete(.permissionDenied, completion: completion)
+        case .restricted:
+            complete(.permissionRestricted, completion: completion)
+        @unknown default:
+            complete(.failed, completion: completion)
+        }
+    }
+
+    private func requestFullAccess(
+        completion: @escaping (CalendarConnectionResult) -> Void
+    ) {
         eventStore.requestFullAccessToEvents { [weak self] granted, error in
-            guard let self, granted, error == nil else {
-                DispatchQueue.main.async { completion(false) }
+            guard let self else {
+                DispatchQueue.main.async { completion(.failed) }
                 return
             }
 
-            APIClient.request(
-                path: "/calendar/apple/connect",
-                method: .PUT
-            ) { (result: Result<AppleCalendarConnectionResponse, Error>) in
-                switch result {
-                case .success(let response) where response.connected:
-                    CalendarProviderStore.selected = .apple
-                    self.syncIfNeeded { _ in
-                        DispatchQueue.main.async { completion(true) }
-                    }
-                case .success, .failure:
-                    DispatchQueue.main.async { completion(false) }
+            guard granted, error == nil else {
+                switch EKEventStore.authorizationStatus(for: .event) {
+                case .denied:
+                    self.complete(.permissionDenied, completion: completion)
+                case .restricted:
+                    self.complete(.permissionRestricted, completion: completion)
+                default:
+                    self.complete(.failed, completion: completion)
                 }
+                return
             }
+
+            self.registerConnection(completion: completion)
+        }
+    }
+
+    private func registerConnection(
+        completion: @escaping (CalendarConnectionResult) -> Void
+    ) {
+        APIClient.request(
+            path: "/calendar/apple/connect",
+            method: .PUT
+        ) { [weak self] (result: Result<AppleCalendarConnectionResponse, Error>) in
+            guard let self else {
+                DispatchQueue.main.async { completion(.failed) }
+                return
+            }
+
+            switch result {
+            case .success(let response) where response.connected:
+                DispatchQueue.main.async {
+                    CalendarProviderStore.selected = .apple
+                    completion(.connected)
+                    self.syncIfNeeded()
+                }
+            case .success, .failure:
+                self.complete(.failed, completion: completion)
+            }
+        }
+    }
+
+    private func complete(
+        _ result: CalendarConnectionResult,
+        completion: @escaping (CalendarConnectionResult) -> Void
+    ) {
+        DispatchQueue.main.async {
+            completion(result)
         }
     }
 
