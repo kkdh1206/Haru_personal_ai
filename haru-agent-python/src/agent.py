@@ -2148,6 +2148,17 @@ async def entrypoint(ctx: JobContext):
                     "😴 Wake confirmation remains pending after assistant check"
                 )
             logger.info(f"🤖 Gemini says: {text}")
+            if (
+                call_type != "test"
+                and assistant_said_goodbye
+                and briefing_answered
+                and not hangup_requested
+                and not agent_is_speaking
+            ):
+                _trigger_hangup(
+                    "👋 Ending call after late farewell transcript",
+                    delay_seconds=DEFAULT_FAREWELL_HANGUP_GRACE_SECONDS,
+                )
         else:
             user_turn_sequence += 1
             current_user_turn = user_turn_sequence
