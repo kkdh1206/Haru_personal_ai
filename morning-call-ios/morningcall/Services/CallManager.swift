@@ -138,6 +138,8 @@ final actor CallManager: NSObject, ObservableObject {
     private var localNudgeCompletionTask: Task<Void, Never>?
     private var localNudgeRequestID: String?
     private var localNudgeAsset: String?
+    private var userPrefersSpeaker = false
+    private var localNudgeForcedSpeaker = false
 
     // MARK: - Init
 
@@ -158,7 +160,8 @@ final actor CallManager: NSObject, ObservableObject {
         // LiveKit Room 초기화
         self.room = Room(delegate: self)
 
-        // LiveKit의 기본 출력은 스피커 우선이므로 일반 통화처럼 수화부를 우선 사용합니다.
+        // 일반 대화는 수화부로 시작하고, 무응답 깨우기 WAV를 재생할 때만
+        // 잠시 스피커로 전환합니다.
         AudioManager.shared.isSpeakerOutputPreferred = false
 
         // WebRTC 오디오 세션 수동 관리 설정
@@ -357,6 +360,13 @@ final actor CallManager: NSObject, ObservableObject {
     }
 
     func setSpeakerOn(_ speakerOn: Bool) {
+        userPrefersSpeaker = speakerOn
+        localNudgeForcedSpeaker = false
+        applySpeakerRoute(speakerOn)
+    }
+
+    private func applySpeakerRoute(_ speakerOn: Bool) {
+        AudioManager.shared.isSpeakerOutputPreferred = speakerOn
         do {
             try AVAudioSession.sharedInstance().overrideOutputAudioPort(
                 speakerOn ? .speaker : .none
@@ -367,6 +377,18 @@ final actor CallManager: NSObject, ObservableObject {
         } catch {
             print("Speaker state update failed: \(error.localizedDescription)")
         }
+    }
+
+    private func beginLocalNudgeSpeakerBoost() {
+        guard !userPrefersSpeaker else { return }
+        localNudgeForcedSpeaker = true
+        applySpeakerRoute(true)
+    }
+
+    private func restoreSpeakerAfterLocalNudge() {
+        guard localNudgeForcedSpeaker else { return }
+        localNudgeForcedSpeaker = false
+        applySpeakerRoute(userPrefersSpeaker)
     }
 
     // MARK: - 로컬 무응답 깨우기 음성
@@ -414,8 +436,10 @@ final actor CallManager: NSObject, ObservableObject {
             player.numberOfLoops = 0
             player.volume = 1
             player.prepareToPlay()
+            beginLocalNudgeSpeakerBoost()
 
             guard player.play() else {
+                restoreSpeakerAfterLocalNudge()
                 await publishLocalAudioEvent(
                     type: "local_audio.failed",
                     requestID: requestID,
@@ -498,6 +522,7 @@ final actor CallManager: NSObject, ObservableObject {
         localNudgeAudioPlayer = nil
         localNudgeRequestID = nil
         localNudgeAsset = nil
+        restoreSpeakerAfterLocalNudge()
     }
 
     private func publishLocalAudioEvent(
@@ -573,12 +598,11 @@ final actor CallManager: NSObject, ObservableObject {
                 }
 
                 // 3. 오디오 입출력 설정 및 마이크 활성화
-                // 오디오 세션은 이미 CallKit에 의해 활성화됨. 스피커로 강제 출력하려면 아래 주석 해제
-                // try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
                 try await room.localParticipant.setMicrophone(enabled: true)
                 print("🎙️ Microphone enabled after connect")
                 await MainActor.run {
                     CallPresentationStore.shared.showActive()
+                    CallPresentationStore.shared.setSpeakerOn(false)
                 }
             } catch {
                 print("🛑 LiveKit connect error: \(error.localizedDescription)")
@@ -611,11 +635,13 @@ final actor CallManager: NSObject, ObservableObject {
                 mode: .voiceChat,
                 options: [.allowBluetoothHFP]
             )
-            try audioSession.overrideOutputAudioPort(.none)
             try audioSession.setPreferredSampleRate(48_000)
             try audioSession.setPreferredIOBufferDuration(0.005)
             try audioSession.setActive(true)
-            print("🔊 AVAudioSession activated with receiver preferred")
+            try audioSession.overrideOutputAudioPort(.none)
+            userPrefersSpeaker = false
+            localNudgeForcedSpeaker = false
+            print("📱 AVAudioSession activated with receiver preferred")
         } catch {
             print("AVAudioSession config/activate error: \(error)")
         }
@@ -644,6 +670,8 @@ final actor CallManager: NSObject, ObservableObject {
         currentCallUUID = nil
         isOutgoing = false
         wasAnswered = false
+        userPrefersSpeaker = false
+        localNudgeForcedSpeaker = false
 
         let rtc = LKRTCAudioSession.sharedInstance()
         rtc.isAudioEnabled = false

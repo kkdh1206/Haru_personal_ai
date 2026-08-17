@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Put,
   Req,
@@ -17,6 +18,7 @@ import { TestCallDto } from './dto/test-call.dto';
 import { RetryAlarmDto } from './dto/retry-alarm.dto';
 import { ReportCallOutcomeDto } from './dto/report-call-outcome.dto';
 import { CancelOnboardingTestCallDto } from './dto/cancel-onboarding-test-call.dto';
+import { SyncTimeZoneDto } from './dto/sync-time-zone.dto';
 
 @Controller('alarm')
 export class AlarmController {
@@ -54,6 +56,21 @@ export class AlarmController {
   })
   async getDailyCallUsage(@Req() req) {
     return this.alarmService.getDailyCallUsage(req.user._id.toString());
+  }
+
+  @Patch('time-zone')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '사용자 및 알람 시간대 동기화',
+    description:
+      '현재 기기 시간대를 사용자와 모든 알람에 반영하고 활성 알람을 다시 예약합니다.',
+  })
+  async syncTimeZone(@Req() req, @Body() dto: SyncTimeZoneDto) {
+    return this.alarmService.syncUserTimeZone(
+      req.user._id.toString(),
+      dto.timeZone,
+    );
   }
 
   @Put(':id')

@@ -55,6 +55,7 @@ describe('AlarmService scheduling', () => {
     };
     const alarmModel = {
       create: jest.fn().mockImplementation(async (dto) => makeAlarm(dto)),
+      find: jest.fn().mockResolvedValue([]),
       findById: jest.fn().mockResolvedValue(makeAlarm()),
       findByIdAndUpdate: jest.fn().mockResolvedValue(makeAlarm()),
     };
@@ -86,6 +87,7 @@ describe('AlarmService scheduling', () => {
       }),
       releaseDailyCallSlot: jest.fn().mockResolvedValue(undefined),
       findOne: jest.fn().mockResolvedValue({ name: '사용자' }),
+      updateTimeZone: jest.fn().mockResolvedValue(undefined),
     };
     const fcmService = {
       sendCallPush: jest.fn().mockResolvedValue({ sent: [{}], failed: [] }),
@@ -112,14 +114,23 @@ describe('AlarmService scheduling', () => {
       }),
     };
 
+    const effectiveAlarmModel = {
+      ...alarmModel,
+      ...(overrides.alarmModel || {}),
+    };
+    const effectiveUserService = {
+      ...userService,
+      ...(overrides.userService || {}),
+    };
+
     const service = new AlarmService(
       overrides.livekit || livekit,
       overrides.apnsService || apnsService,
       overrides.fcmService || fcmService,
-      overrides.userService || userService,
+      effectiveUserService,
       overrides.promptService || promptService,
       overrides.billingService || billingService,
-      overrides.alarmModel || (alarmModel as any),
+      effectiveAlarmModel as any,
       overrides.queue || (queue as any),
       overrides.configService || (configService as any),
     );
@@ -127,11 +138,11 @@ describe('AlarmService scheduling', () => {
     return {
       service,
       queue,
-      alarmModel,
+      alarmModel: effectiveAlarmModel,
       livekit,
       promptService,
       billingService,
-      userService,
+      userService: effectiveUserService,
       fcmService,
       apnsService,
     };
@@ -181,6 +192,51 @@ describe('AlarmService scheduling', () => {
         delay: Date.parse('2026-06-29T00:00:00.000Z') - fixedNow,
       }),
     );
+  });
+
+  it('migrates existing alarms and queue jobs to the current IANA time zone', async () => {
+    const alarm = makeAlarm({
+      timeZone: 'Asia/Seoul',
+      retryTrackingDate: '2026-06-28',
+      dailyRetryCount: 1,
+    });
+    const alarmModel = { find: jest.fn().mockResolvedValue([alarm]) };
+    const { service, queue, userService } = makeService({ alarmModel });
+
+    await expect(
+      service.syncUserTimeZone('user-id', 'America/Los_Angeles'),
+    ).resolves.toEqual({
+      timeZone: 'America/Los_Angeles',
+      updatedAlarms: 1,
+    });
+
+    expect(userService.updateTimeZone).toHaveBeenCalledWith(
+      'user-id',
+      'America/Los_Angeles',
+    );
+    expect(alarm.timeZone).toBe('America/Los_Angeles');
+    expect(alarm.retryTrackingDate).toBe('2026-06-27');
+    expect(alarm.dailyRetryCount).toBe(0);
+    expect(alarm.save).toHaveBeenCalled();
+    expect(queue.add).toHaveBeenCalledWith(
+      'trigger',
+      expect.objectContaining({ action: 'call' }),
+      expect.objectContaining({
+        jobId: `alarm-id-once-${Date.parse(
+          '2026-06-29T16:00:00.000Z',
+        )}-call`,
+      }),
+    );
+  });
+
+  it('rejects invalid time zones before saving or scheduling', async () => {
+    const { service, queue, userService } = makeService();
+
+    await expect(
+      service.syncUserTimeZone('user-id', 'Mars/Olympus'),
+    ).rejects.toThrow('Invalid IANA time zone');
+    expect(userService.updateTimeZone).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
   });
 
   it('normalizes unsupported wake intensity values to gentle', async () => {
@@ -308,6 +364,25 @@ describe('AlarmService scheduling', () => {
     expect(livekit.ensureRoom).not.toHaveBeenCalled();
     expect(fcmService.sendCallPush).not.toHaveBeenCalled();
     expect(userService.releaseDailyCallSlot).not.toHaveBeenCalled();
+  });
+
+  it('charges daily calls using the canonical user time zone', async () => {
+    const userService = {
+      findOne: jest
+        .fn()
+        .mockResolvedValue({ timeZone: 'America/Los_Angeles' }),
+    };
+    const { service, userService: effectiveUserService } = makeService({
+      userService,
+    });
+
+    await service.call(makeAlarm({ timeZone: 'Asia/Seoul' }));
+
+    expect(effectiveUserService.reserveDailyCallSlot).toHaveBeenCalledWith(
+      'user-id',
+      '2026-06-27',
+      3,
+    );
   });
 
   it('reports the remaining regular and retry calls for the user local date', async () => {

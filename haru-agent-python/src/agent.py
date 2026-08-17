@@ -43,8 +43,8 @@ If the user sounds present but the content is still ambiguous, ask one varied ea
 Treat the configured speech style as a light accent, not the main content of every reply.
 For Korean, use at most one short Gyeongsang expression in a wake nudge and keep sentence endings natural and conversational.
 Keep clarification questions, briefings, weather, schedules, and farewells in natural standard conversational language.
-After the user seems awake, ask whether they want a quick briefing in the configured conversation language before ending, unless you already gave a practical weather or schedule note.
-If the assistant already said a goodbye and the user stays silent, end the call naturally.
+After the user seems awake, always acknowledge it and ask whether they want a quick briefing in the configured conversation language. Do not skip this question or say goodbye in the same reply.
+After the user accepts or declines the briefing, finish that response, say a farewell once, and do not reply or call another tool; the application ends the call.
 If the user's intent to end the call is unclear, ask one short confirmation.
 """
 
@@ -67,13 +67,15 @@ DEFAULT_GEMINI_THINKING_MODE = "disabled"
 DEFAULT_MAX_MEMORY_CONTEXT_CHARS = 300
 DEFAULT_MAX_CONVERSATION_MESSAGES = 6
 DEFAULT_MAX_RETRY_CALLS = 2
-DEFAULT_USER_SILENCE_NUDGE_SECONDS = 10.0
+DEFAULT_USER_SILENCE_NUDGE_SECONDS = 8.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
 DEFAULT_NO_RESPONSE_RETRY_MINUTES = 2
 DEFAULT_FAREWELL_PLAYOUT_TIMEOUT_SECONDS = 8.0
+DEFAULT_FAREWELL_HANGUP_GRACE_SECONDS = 1.2
 DEFAULT_TEST_FAREWELL_PLAYOUT_TIMEOUT_SECONDS = 20.0
 DEFAULT_TEST_HANGUP_DELAY_SECONDS = 0.25
 DEFAULT_SHUTDOWN_STEP_TIMEOUT_SECONDS = 2.0
+DEFAULT_NORMAL_SHUTDOWN_STEP_TIMEOUT_SECONDS = 10.0
 DEFAULT_LOCAL_AUDIO_START_TIMEOUT_SECONDS = 1.5
 DEFAULT_LOCAL_AUDIO_FINISH_TIMEOUT_SECONDS = 12.0
 DEFAULT_HANGUP_FAREWELL_TEXT = "알았어. 이제 끊을게. 오늘 하루 잘 보내."
@@ -782,21 +784,72 @@ def is_assistant_goodbye(text: str) -> bool:
     if not normalized:
         return False
 
-    goodbye_patterns = (
-        "좋은 하루",
-        "잘 보내",
-        "잘 가",
+    explicit_goodbye_patterns = (
         "끊을게",
+        "끊는다",
         "이제 끊",
         "마무리할게",
-        "bye",
         "goodbye",
         "hang up",
-        "またね",
         "じゃあね",
         "電話切るね",
     )
-    return any(pattern in normalized for pattern in goodbye_patterns)
+    if any(pattern in normalized for pattern in explicit_goodbye_patterns):
+        return True
+
+    terminal_text = normalized.rstrip(" .!?\u3002\uff01")
+    courtesy_endings = (
+        "좋은 하루 보내",
+        "오늘 하루 잘 보내",
+        "잘 가",
+        "bye",
+        "have a good one",
+        "have a great day",
+        "またね",
+        "今日もいってらっしゃい",
+    )
+    return any(terminal_text.endswith(pattern) for pattern in courtesy_endings)
+
+
+def is_briefing_offer(text: str) -> bool:
+    normalized = " ".join((text or "").strip().lower().split())
+    if not normalized:
+        return False
+
+    offer_patterns = (
+        "브리핑해줄까",
+        "브리핑 해줄까",
+        "브리핑 들을래",
+        "일정 알려줄까",
+        "일정 말해줄까",
+        "want a quick briefing",
+        "want your briefing",
+        "hear today's schedule",
+        "ブリーフィング",
+        "予定、サクッと聞く",
+        "予定を聞く",
+    )
+    return any(pattern in normalized for pattern in offer_patterns)
+
+
+def is_briefing_request(text: str) -> bool:
+    normalized = " ".join((text or "").strip().lower().split())
+    if not normalized:
+        return False
+
+    request_patterns = (
+        "브리핑해줘",
+        "브리핑 해줘",
+        "일정 알려줘",
+        "일정 말해줘",
+        "날씨 알려줘",
+        "give me the briefing",
+        "tell me the briefing",
+        "what's my schedule",
+        "予定教えて",
+        "ブリーフィングして",
+    )
+    return any(pattern in normalized for pattern in request_patterns)
 
 
 def get_vad():
@@ -1080,10 +1133,12 @@ async def safe_hangup(
                     session.aclose(),
                     timeout=shutdown_step_timeout_seconds,
                 )
+            return True
         except TimeoutError:
             logger.warning("⚠️ Agent session shutdown timed out")
         except Exception as e:
             logger.warning(f"Error while stopping session: {e}")
+        return False
 
     async def disconnect_room():
         try:
@@ -1094,23 +1149,32 @@ async def safe_hangup(
                     ctx.room.disconnect(),
                     timeout=shutdown_step_timeout_seconds,
                 )
+            return True
         except TimeoutError:
             logger.warning("⚠️ Room disconnect timed out")
         except Exception as e:
             logger.warning(f"Error while disconnecting room: {e}")
+        return False
 
     if send_call_end_signal:
-        await disconnect_room()
-        await close_session()
+        room_disconnected = await disconnect_room()
+        session_closed = await close_session()
     else:
-        await close_session()
-        await disconnect_room()
+        session_closed = await close_session()
+        room_disconnected = await disconnect_room()
     try:
         ctx.shutdown(reason="call completed")
     except Exception as e:
         logger.warning(f"Error while shutting down: {e}")
 
-    logger.info("✅ All sessions closed successfully")
+    if session_closed and room_disconnected:
+        logger.info("✅ All sessions closed successfully")
+    else:
+        logger.warning(
+            "⚠️ Call shutdown completed with forced cleanup: "
+            f"session_closed={session_closed} "
+            f"room_disconnected={room_disconnected}"
+        )
 
 
 async def entrypoint(ctx: JobContext):
@@ -1178,6 +1242,8 @@ async def entrypoint(ctx: JobContext):
     participant_joined_monotonic: float | None = None
     participant_connected_at: str | None = None
     wake_confirmed = False
+    briefing_offered = False
+    briefing_answered = False
     session: AgentSession
     session_started = asyncio.Event()
     greeting_lock = asyncio.Lock()
@@ -1292,8 +1358,7 @@ async def entrypoint(ctx: JobContext):
                 )
                 reason = finished_payload.get("reason", "completed")
                 logger.info(
-                    "🔕 Local silence nudge finished: "
-                    f"stage={stage} reason={reason}"
+                    f"🔕 Local silence nudge finished: stage={stage} reason={reason}"
                 )
                 if (
                     reason == "completed"
@@ -1318,9 +1383,7 @@ async def entrypoint(ctx: JobContext):
 
             return True
         except TimeoutError:
-            logger.info(
-                "Client did not acknowledge local audio; using Gemini nudge"
-            )
+            logger.info("Client did not acknowledge local audio; using Gemini nudge")
             return False
         except Exception as e:
             logger.warning(f"⚠️ Failed to request local silence nudge: {e}")
@@ -1434,11 +1497,11 @@ async def entrypoint(ctx: JobContext):
                     if call_type == "test" and exact_farewell
                     else None
                 ),
-                send_call_end_signal=call_type == "test",
+                send_call_end_signal=True,
                 shutdown_step_timeout_seconds=(
                     DEFAULT_SHUTDOWN_STEP_TIMEOUT_SECONDS
                     if call_type == "test"
-                    else None
+                    else DEFAULT_NORMAL_SHUTDOWN_STEP_TIMEOUT_SECONDS
                 ),
             )
 
@@ -1663,11 +1726,52 @@ async def entrypoint(ctx: JobContext):
             logger.warning(f"⚠️ Failed to request agent reply: {e}")
             return False
 
+    async def request_agent_reply_with_speech_ack(
+        instructions: str,
+        fallback_trigger_text: str,
+        *,
+        label: str,
+        allow_interruptions: bool = True,
+    ) -> bool:
+        for attempt in range(1, 3):
+            if hangup_requested or agent_is_speaking or user_is_speaking:
+                return agent_is_speaking
+
+            agent_speech_started_event.clear()
+            if request_agent_reply(
+                instructions,
+                fallback_trigger_text,
+                allow_interruptions=allow_interruptions,
+            ):
+                try:
+                    await asyncio.wait_for(
+                        agent_speech_started_event.wait(),
+                        timeout=2.0,
+                    )
+                    return True
+                except TimeoutError:
+                    if agent_is_speaking:
+                        return True
+                    logger.warning(
+                        f"⚠️ {label} did not start speaking (attempt {attempt})"
+                    )
+
+            if attempt < 2 and not user_is_speaking and not agent_is_speaking:
+                try:
+                    await session.interrupt(force=True)
+                except Exception as e:
+                    logger.warning(f"Failed to clear stalled response: {e}")
+                await asyncio.sleep(0.2)
+
+        if not hangup_requested and not user_is_speaking and not agent_is_speaking:
+            mark_waiting_for_user_response()
+        return False
+
     async def ensure_assistant_followup_after_user(
         message_count_after_user: int,
         user_text: str,
     ):
-        nonlocal wake_confirmed
+        nonlocal wake_confirmed, briefing_offered
 
         await asyncio.sleep(1.4)
 
@@ -1693,7 +1797,8 @@ async def entrypoint(ctx: JobContext):
                 f"사용자가 깬 것으로 확인됐다. 통화를 바로 끊지 말고 {conversation_language}로 한 문장만 말해. "
                 "저장된 이름을 부를 때는 이름 그대로만 쓰고 '님'이나 '씨'를 붙이지 마. "
                 f"다음 문장을 자연스럽게 말해: {conversation_phrases['briefing']} "
-                "이미 날씨나 첫 일정을 알려준 흐름이면 아주 짧은 실용 정보 하나만 말하고 마무리해. "
+                "이미 날씨나 첫 일정을 말했더라도 브리핑이 필요한지는 반드시 물어봐. "
+                "이 응답에서는 작별 인사를 하거나 통화를 종료하지 마. "
                 "자연스러운 표준 구어체로 말해."
             )
             briefing_trigger_text = (
@@ -1702,8 +1807,12 @@ async def entrypoint(ctx: JobContext):
                 f"{conversation_phrases['briefing']} "
                 f"사용자 응답: {user_text}"
             )
-            if request_agent_reply(briefing_instructions, briefing_trigger_text):
-                mark_waiting_for_user_response()
+            if await request_agent_reply_with_speech_ack(
+                briefing_instructions,
+                briefing_trigger_text,
+                label="briefing question after wake confirmation",
+            ):
+                briefing_offered = True
                 logger.info("🗣️ Briefing question requested after wake confirmation")
             else:
                 logger.warning(
@@ -1726,8 +1835,11 @@ async def entrypoint(ctx: JobContext):
             f"사용자 응답: {user_text}"
         )
 
-        if request_agent_reply(followup_instructions, followup_trigger_text):
-            mark_waiting_for_user_response()
+        if await request_agent_reply_with_speech_ack(
+            followup_instructions,
+            followup_trigger_text,
+            label="follow-up after user response",
+        ):
             logger.info("🗣️ Follow-up requested after short user response")
         else:
             logger.warning("⚠️ Failed to request follow-up after user response")
@@ -1911,6 +2023,7 @@ async def entrypoint(ctx: JobContext):
     @session.on("conversation_item_added")
     def _on_conversation_item_added(ev):
         nonlocal assistant_said_goodbye, wake_confirmed
+        nonlocal briefing_offered, briefing_answered
         nonlocal test_reply_hangup_scheduled, test_user_replied_at
         nonlocal test_waiting_for_final_speech, test_final_speech_handle
 
@@ -1927,10 +2040,14 @@ async def entrypoint(ctx: JobContext):
 
         if role == "assistant":
             assistant_said_goodbye = is_assistant_goodbye(text)
+            if is_briefing_offer(text):
+                briefing_offered = True
             logger.info(f"🤖 Gemini says: {text}")
         else:
             assistant_said_goodbye = False
             clear_waiting_for_user_response()
+            if briefing_offered or is_briefing_request(text):
+                briefing_answered = True
             if call_type == "test":
                 agent_speech_started_event.clear()
                 agent_speech_finished_event.clear()
@@ -2103,7 +2220,7 @@ async def entrypoint(ctx: JobContext):
 
     @session.on("agent_state_changed")
     def _on_agent_state_changed(ev):
-        nonlocal agent_is_speaking
+        nonlocal agent_is_speaking, assistant_said_goodbye
 
         old_state = getattr(ev, "old_state", None)
         new_state = getattr(ev, "new_state", None)
@@ -2116,6 +2233,34 @@ async def entrypoint(ctx: JobContext):
 
         if old_state == "speaking" and new_state != "speaking":
             agent_speech_finished_event.set()
+            if (
+                call_type != "test"
+                and assistant_said_goodbye
+                and briefing_answered
+                and not hangup_requested
+            ):
+                clear_waiting_for_user_response()
+                _trigger_hangup(
+                    "👋 Ending call after farewell playback completed",
+                    delay_seconds=DEFAULT_FAREWELL_HANGUP_GRACE_SECONDS,
+                )
+                return
+            if (
+                call_type != "test"
+                and wake_confirmed
+                and not briefing_offered
+                and not briefing_answered
+                and not hangup_requested
+            ):
+                assistant_said_goodbye = False
+                start_background_task(
+                    ensure_assistant_followup_after_user(
+                        len(conversation_messages),
+                        "wake confirmation",
+                    ),
+                    name="ensure_post_wake_briefing",
+                )
+                return
             mark_waiting_for_user_response()
             logger.info(
                 "⏱️ Started user silence timer after assistant finished speaking"

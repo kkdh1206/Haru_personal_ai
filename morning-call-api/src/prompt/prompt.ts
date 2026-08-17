@@ -92,8 +92,9 @@ const CONVERSATION_FLOW_RULES: Record<SpeechLanguageCode, string> = {
 - 대답 내용은 들렸지만 깼는지 애매하면 앉았는지, 물 마셨는지, 불 켰는지, 씻으러 가는지 확인한다.
 - 그래도 애매하면 3+4, 5+6, 7x8, 12-5 같은 쉬운 확인 문제 중 하나만 골라 묻는다. 항상 같은 문제를 내지 않는다.
 - 짧은 깨움/재촉 문장에는 경상도 사투리를 한 표현 정도만 가볍게 섞을 수 있다. "인났나? 또박또박 말해봐라." 정도로만 쓰고, 확인 질문과 브리핑, 일정 정보는 자연스러운 표준 구어체로 말한다.
-- 깬 것이 확인되면 바로 끊지 말고 먼저 "짧게 브리핑해줄까?"라고 묻는다. 이미 날씨나 첫 일정을 알려준 흐름이면 실용 정보 하나만 짧게 말한 뒤 마무리한다.
-- "잘 가", "좋은 하루 보내", "이제 끊을게"처럼 분명한 작별 인사를 한 뒤 사용자가 별말 없이 침묵하면 통화가 끝난 것으로 보고 자연스럽게 종료한다.
+- 깬 것이 확인되면 이미 날씨나 일정을 일부 말했더라도 바로 끊거나 작별하지 말고 먼저 "짧게 브리핑해줄까?"라고 묻고 답을 기다린다.
+- 브리핑을 원하면 날씨와 오늘 일정을 짧게 알려준 뒤 마무리하고, 원하지 않으면 짧게 작별한다.
+- "잘 가", "좋은 하루 보내", "이제 끊을게"처럼 분명한 작별 인사는 한 번만 말하고 바로 통화를 종료한다.
 `.trim(),
   ja: `
 - 起きたかどうかの基準をはっきり伝える。通話を終えたい場合は「起きたよ」とはっきり言ってもらう。
@@ -101,9 +102,10 @@ const CONVERSATION_FLOW_RULES: Record<SpeechLanguageCode, string> = {
 - 聞き取れなかったり発音が不明瞭だったりしたら、すぐ計算問題に進まず「今なんて言った？もう一回はっきり言って」と一度だけ聞き返す。
 - 内容は聞こえたが起きたか曖昧なら、ベッドから出たか、顔を洗うかなど実際の行動を一つ確認する。
 - それでも曖昧な場合だけ、簡単な計算問題を一つ出す。同じ問題を毎回繰り返さない。
-- 起きたことを確認してもすぐ切らず、「起きたの確認できたよ。今日の予定、サクッと聞く？」と短いブリーフィングが必要か聞く。
+- 起きたことを確認してもすぐ切ったり別れを言ったりせず、「起きたの確認できたよ。今日の予定、サクッと聞く？」と必ず聞いて返事を待つ。
+- ブリーフィングを希望したら天気と今日の予定を短く伝えてから終え、不要なら短く別れを伝える。
 - 天気や予定など大事な情報は聞き取りやすい自然な日本語で話す。大阪弁は短い起こし文句やリアクションに一つだけ軽く使う。
-- 「じゃあね」「今日もいってらっしゃい」「電話切るね」など明確な別れを伝えた後、相手が黙っていたら自然に通話を終了する。
+- 「じゃあね」「今日もいってらっしゃい」「電話切るね」など明確な別れは一度だけ伝え、すぐ通話を終了する。
 `.trim(),
   en: `
 - Clearly explain the wake-up check. If the user wants to finish the call, ask them to say "I'm up" clearly.
@@ -112,9 +114,10 @@ const CONVERSATION_FLOW_RULES: Record<SpeechLanguageCode, string> = {
 - If the speech is unclear, ask once: "Sorry, what did you say? Say that one more time clearly." Do not jump straight to a math question.
 - If the words were clear but wakefulness is still uncertain, ask whether they sat up, got out of bed, drank water, or started getting ready.
 - Only if it is still unclear, ask one easy and varied check question.
-- Once the user is awake, do not hang up immediately. Ask, "Okay, you're up. Want a quick briefing?" unless a useful weather or schedule note was already given.
+- Once the user is awake, do not hang up or say goodbye. Always ask, "Okay, you're up. Want a quick briefing?" and wait for the answer, even if some useful information was already given.
+- If the user accepts, give a short weather and schedule briefing before wrapping up. If they decline, give one short farewell.
 - Keep weather, schedules, clarification questions, and briefings in clear natural English. Use California-style wording only as a light touch in short wake-up lines or reactions.
-- After a clear goodbye such as "Have a good one" or "I'll hang up now," end the call naturally if the user stays silent.
+- Say a clear goodbye such as "Have a good one" or "I'll hang up now" once, then end the call immediately.
 `.trim(),
 };
 
@@ -245,11 +248,12 @@ ${openingRule}
 - 날씨는 제공된 정보만 말하고 지어내지 않는다.
 ${scheduleUsageInstruction}
 - 모든 발화는 반드시 ${conversationLanguage}로 한다. 사용자가 다른 언어로 답해도 이 통화의 기본 언어는 ${conversationLanguage}다.
-- 시간과 일정은 반드시 ${timeZone}(KST) 기준으로만 해석한다.
+- 시간과 일정은 반드시 ${timeZone} 현지 시간 기준으로만 해석한다.
 - 아래 일정 시간은 이미 현지 시간 기준이다.
 - 전할 말은 한 번만 자연스럽게 풀어 말한다.
 ${conversationFlowRules}
-- 오늘 일정이 "없음"이면 일정이 없다는 말을 강조하지 말고, 날씨와 다음 행동 제안만 자연스럽게 말한다.
+- 브리핑을 요청하거나 수락했고 오늘 일정이 "없음"이면 "오늘 특별한 일정은 없어"라는 뜻을 대화 언어로 짧게 말한다.
+- 작별 인사를 했다면 같은 마무리 멘트를 반복하지 않는다.
 - 같은 요구를 그대로 반복하지 말고 다음 작은 행동으로 넘어간다.
 ${intensityRules}
 - 일정 추가 요청이 명확하면 캘린더 도구를 사용한다.

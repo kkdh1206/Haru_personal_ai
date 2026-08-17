@@ -88,7 +88,7 @@ struct SettingView: View {
         .navigationTitle(localized("설정"))
         .navigationBarTitleDisplayMode(.inline)
         .tint(.black)
-        .task {
+        .task(id: Auth.auth().currentUser?.uid) {
             loadInitialSettings()
             loadCalendarStatus()
             loadDailyCallUsage()
@@ -102,6 +102,7 @@ struct SettingView: View {
             } else {
                 loadCalendarStatus()
             }
+            loadDailyCallUsage()
         }
         .alert(localized("Apple Calendar 권한이 필요해요"), isPresented: $showAppleCalendarPermissionAlert) {
             Button(localized("취소"), role: .cancel) {}
@@ -598,15 +599,24 @@ struct SettingView: View {
     }
 
     private func loadDailyCallUsage() {
+        guard let requestedUserID = Auth.auth().currentUser?.uid else {
+            dailyCallUsage = nil
+            isDailyCallUsageLoading = false
+            return
+        }
         isDailyCallUsageLoading = true
 
         APIClient.request(path: "/alarm/call-usage", method: .GET) { (result: Result<DailyCallUsage, Error>) in
             DispatchQueue.main.async {
+                guard Auth.auth().currentUser?.uid == requestedUserID else {
+                    return
+                }
                 isDailyCallUsageLoading = false
                 switch result {
                 case .success(let usage):
                     dailyCallUsage = usage
                 case .failure(let error):
+                    dailyCallUsage = nil
                     print("❌ 오늘의 모닝콜 사용량 확인 실패: \(error)")
                 }
             }

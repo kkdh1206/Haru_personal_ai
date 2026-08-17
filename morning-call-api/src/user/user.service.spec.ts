@@ -142,6 +142,16 @@ describe('UserService', () => {
     );
   });
 
+  it('stores the canonical IANA time zone for the user', async () => {
+    await createService().updateTimeZone('user-1', 'America/Los_Angeles');
+
+    expect(findByIdAndUpdate).toHaveBeenCalledWith(
+      { _id: 'user-1' },
+      { $set: { timeZone: 'America/Los_Angeles' } },
+      { new: true },
+    );
+  });
+
   it('exchanges Android calendar auth code and stores encrypted tokens', async () => {
     getToken.mockResolvedValue({
       tokens: {

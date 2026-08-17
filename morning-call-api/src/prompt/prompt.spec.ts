@@ -34,7 +34,9 @@ describe('buildMorningCallPrompt', () => {
     expect(prompt).toContain('ko-gyeongsang');
     expect(prompt).toContain('경상도 사투리는 짧은 깨움이나 재촉에만');
     expect(prompt).toContain('인났나?');
-    expect(prompt).toContain('바로 끊지 말고 먼저 "짧게 브리핑해줄까?"라고');
+    expect(prompt).toContain(
+      '바로 끊거나 작별하지 말고 먼저 "짧게 브리핑해줄까?"라고',
+    );
     expect(prompt).toContain('한 발화에 사투리 표현은 최대 하나');
     expect(prompt).not.toContain('뭐 하노');
     expect(prompt).not.toContain('일어날 시간이다');
@@ -209,6 +211,7 @@ describe('speech styles', () => {
     const prompt = buildMorningCallPrompt({
       ...baseOptions,
       language: 'English',
+      timeZone: 'America/Los_Angeles',
     });
 
     expect(prompt).toContain('en-california');
@@ -222,6 +225,8 @@ describe('speech styles', () => {
     );
     expect(prompt).not.toContain('ko-gyeongsang');
     expect(prompt).not.toContain('방금 뭐라고 했어?');
+    expect(prompt).toContain('America/Los_Angeles 현지 시간');
+    expect(prompt).not.toContain('(KST)');
   });
 
   it('falls back to the language default when a saved style is incompatible', () => {

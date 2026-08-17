@@ -8,6 +8,7 @@
 import SwiftUI
 import FirebaseAuth
 import FirebaseCore
+import GoogleSignIn
 import GoogleSignInSwift
 import AuthenticationServices
 import CryptoKit
@@ -50,6 +51,7 @@ struct RootView: View {
                     AlarmListView()
                         .task {
                             registerDeviceTokenToAPI()
+                            TimeZoneSyncManager.syncCurrentTimeZone()
                             CurrentLocationManager.shared.refreshAndSaveIfAuthorized(env: env)
                             AppleCalendarService.shared.syncIfNeeded()
                         }
@@ -66,6 +68,9 @@ struct RootView: View {
         .onChange(of: viewModel.isLoggedIn) { _, isLoggedIn in
             if isLoggedIn {
                 configurePurchasesIfPossible()
+            } else {
+                env.user = nil
+                env.onboardingStep = .loading
             }
         }
         .onChange(of: subscriptionManager.entitlement?.isActive) { _, _ in
@@ -76,6 +81,7 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, viewModel.isLoggedIn, env.onboardingStep == .completed else { return }
+            TimeZoneSyncManager.syncCurrentTimeZone()
             CurrentLocationManager.shared.refreshAndSaveIfAuthorized(env: env)
             AppleCalendarService.shared.syncIfNeeded()
         }
@@ -145,6 +151,8 @@ class AuthViewModel: ObservableObject {
 
     func signOut() {
         DeviceTokenManager.shared.invalidateRegistration()
+        GIDSignIn.sharedInstance.signOut()
+        AuthTokenManager.shared.idToken = nil
         try? Auth.auth().signOut()
         isLoggedIn = false
     }

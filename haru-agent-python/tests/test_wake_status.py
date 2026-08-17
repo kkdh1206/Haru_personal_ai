@@ -16,8 +16,11 @@ from agent import (
     get_realtime_language_code,
     get_silence_nudge_reference,
     get_test_call_farewell,
+    get_user_silence_nudge_seconds,
     infer_wake_status,
     is_assistant_goodbye,
+    is_briefing_offer,
+    is_briefing_request,
     is_explicit_hangup_request,
     resolve_realtime_language_code,
     safe_hangup,
@@ -32,10 +35,12 @@ def test_call_cost_guardrail_defaults_and_minimums(monkeypatch):
     monkeypatch.delenv("NO_ANSWER_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("CALL_WRAP_UP_SECONDS", raising=False)
     monkeypatch.delenv("MAX_CALL_DURATION_SECONDS", raising=False)
+    monkeypatch.delenv("USER_SILENCE_NUDGE_SECONDS", raising=False)
 
     assert get_no_answer_timeout_seconds() == 30
     assert get_call_wrap_up_seconds() == 270
     assert get_max_call_duration_seconds() == 300
+    assert get_user_silence_nudge_seconds() == 8.0
 
     monkeypatch.setenv("NO_ANSWER_TIMEOUT_SECONDS", "1")
     monkeypatch.setenv("CALL_WRAP_UP_SECONDS", "20")
@@ -160,9 +165,19 @@ def test_english_and_japanese_wake_phrases_are_recognized():
 
 def test_korean_greeting_is_not_mistaken_for_a_goodbye():
     assert is_assistant_goodbye("안녕, 이제 일어날 시간이야") is False
+    assert is_assistant_goodbye("좋은 하루를 보내려면 물부터 마셔") is False
+    assert is_assistant_goodbye("그럼 오늘 하루 잘 보내!") is True
     assert is_assistant_goodbye("좋아, 이제 끊을게. 좋은 하루 보내") is True
     assert is_assistant_goodbye("Got it. I'll hang up now. Have a good one.") is True
     assert is_assistant_goodbye("じゃあ電話切るね。今日もいってらっしゃい。") is True
+
+
+def test_briefing_offer_and_direct_request_are_recognized():
+    assert is_briefing_offer("깬 거 확인했어. 짧게 브리핑해줄까?") is True
+    assert is_briefing_offer("Okay, you're up. Want a quick briefing?") is True
+    assert is_briefing_offer("今日の予定、サクッと聞く?") is True
+    assert is_briefing_offer("오늘 하루 잘 보내") is False
+    assert is_briefing_request("응, 오늘 일정 알려줘") is True
 
 
 def test_farewell_uses_configured_call_language():

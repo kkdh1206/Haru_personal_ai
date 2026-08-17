@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   OnModuleInit,
   UnauthorizedException,
@@ -11,7 +12,7 @@ import { UserService } from 'src/user/user.service';
 import { ApnsService } from 'src/apns/apns.service';
 import { Queue } from 'bullmq';
 import { InjectQueue } from '@nestjs/bullmq';
-import { DateTime } from 'luxon';
+import { DateTime, IANAZone } from 'luxon';
 import { LivekitService } from 'src/livekit/livekit.service';
 import { PromptService } from 'src/prompt/prompt.service';
 import { TestCallDto } from './dto/test-call.dto';
@@ -125,6 +126,14 @@ export class AlarmService implements OnModuleInit {
       .toFormat('yyyy-MM-dd');
   }
 
+  private requireValidTimeZone(timeZone?: string) {
+    const normalized = timeZone?.trim();
+    if (!normalized || !IANAZone.isValidZone(normalized)) {
+      throw new BadRequestException(`Invalid IANA time zone: ${timeZone}`);
+    }
+    return normalized;
+  }
+
   private fallbackPrompt(
     language?: string,
     name?: string,
@@ -149,7 +158,10 @@ export class AlarmService implements OnModuleInit {
   }
 
   private async resetDailyRetryStateIfNeeded(alarm: AlarmDocument) {
-    const todayKey = this.getLocalDateKey(alarm.timeZone || 'Asia/Seoul');
+    const user = await this.userService.findOne(alarm.userId as Types.ObjectId);
+    const todayKey = this.getLocalDateKey(
+      user?.timeZone || alarm.timeZone || 'Asia/Seoul',
+    );
     if (alarm.retryTrackingDate === todayKey) {
       return todayKey;
     }
@@ -209,9 +221,11 @@ export class AlarmService implements OnModuleInit {
   }
 
   async createAlarm(userId: string, dto: AlarmDto) {
+    const timeZone = this.requireValidTimeZone(dto.timeZone);
+    await this.syncUserTimeZone(userId, timeZone);
     const alarm = await this.alarmModel.create({
       userId,
-      ...this.normalizeAlarmPayload(dto),
+      ...this.normalizeAlarmPayload({ ...dto, timeZone }),
     });
     await this.scheduleAlarm(alarm);
     return this.serializeAlarm(alarm.toObject());
@@ -229,16 +243,48 @@ export class AlarmService implements OnModuleInit {
     if (alarm.userId.toString() !== userId) {
       throw new UnauthorizedException('Unauthorized');
     }
+    const timeZone = this.requireValidTimeZone(dto.timeZone);
     const updatedAlarm = await this.alarmModel.findByIdAndUpdate(
       id,
-      this.normalizeAlarmPayload(dto),
+      this.normalizeAlarmPayload({ ...dto, timeZone }),
       {
         new: true,
       },
     );
     await this.clearJobs(id);
     await this.scheduleAlarm(updatedAlarm);
+    await this.syncUserTimeZone(userId, timeZone);
     return this.serializeAlarm(updatedAlarm?.toObject());
+  }
+
+  async syncUserTimeZone(userId: string, requestedTimeZone: string) {
+    const timeZone = this.requireValidTimeZone(requestedTimeZone);
+    const alarms = await this.alarmModel.find({ userId });
+    let updatedAlarms = 0;
+
+    await this.userService.updateTimeZone(userId, timeZone);
+
+    for (const alarm of alarms) {
+      if (alarm.timeZone === timeZone) {
+        continue;
+      }
+
+      await this.clearJobs(alarm._id.toString(), 'time zone changed');
+      alarm.timeZone = timeZone;
+
+      const localDate = this.getLocalDateKey(timeZone);
+      if (alarm.retryTrackingDate !== localDate) {
+        alarm.retryTrackingDate = localDate;
+        alarm.dailyRetryCount = 0;
+        alarm.retryLimitNoticeDate = null;
+      }
+
+      await alarm.save();
+      await this.scheduleAlarm(alarm);
+      updatedAlarms += 1;
+    }
+
+    return { timeZone, updatedAlarms };
   }
 
   async deleteAlarm(userId: string, id: string) {
@@ -687,6 +733,7 @@ export class AlarmService implements OnModuleInit {
       console.warn(`[Billing] skipped prewarm for inactive user=${userId}`);
       return { prepared: false, reason: 'subscription_required' };
     }
+    await this.resetDailyRetryStateIfNeeded(alarm);
     const prompt = await this.buildPromptForAlarm(
       normalizedAlarm,
       callType,
@@ -731,8 +778,9 @@ export class AlarmService implements OnModuleInit {
       throw new Error(`Device token not found for user ${userId}`);
     }
 
+    const user = await this.userService.findOne(userId as any);
     const dateKey = this.getLocalDateKey(
-      normalizedAlarm.timeZone || 'Asia/Seoul',
+      user?.timeZone || normalizedAlarm.timeZone || 'Asia/Seoul',
     );
     const reservation = await this.userService.reserveDailyCallSlot(
       userId,

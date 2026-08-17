@@ -91,6 +91,16 @@ export class UserService {
       .lean();
   }
 
+  updateTimeZone(userId: string, timeZone: string) {
+    return this.userModel
+      .findByIdAndUpdate(
+        { _id: userId },
+        { $set: { timeZone } },
+        { new: true },
+      )
+      .lean();
+  }
+
   async updateCustomMessage(
     userId: string,
     newMessage: string,
