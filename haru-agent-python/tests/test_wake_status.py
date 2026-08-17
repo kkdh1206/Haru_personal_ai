@@ -22,6 +22,7 @@ from agent import (
     is_briefing_offer,
     is_briefing_request,
     is_explicit_hangup_request,
+    is_wake_confirmation_question,
     resolve_realtime_language_code,
     safe_hangup,
 )
@@ -100,13 +101,27 @@ def test_awkward_feet_phrase_is_not_required_to_mark_awake():
 
 def test_filler_or_mumbled_short_responses_stay_not_awake():
     assert infer_wake_status([user_message("응"), user_message("어어")]) == (
-        "awake",
+        "not_awake",
         True,
     )
     assert infer_wake_status([user_message("어"), user_message("어")]) == (
-        "awake",
+        "not_awake",
         True,
     )
+
+
+def test_natural_wake_question_requires_an_answer_before_confirmation():
+    question = {
+        "role": "assistant",
+        "content": "목소리가 아직 잠긴 것 같은데, 일어난 거 맞아?",
+    }
+
+    assert is_wake_confirmation_question(question["content"]) is True
+    assert infer_wake_status([user_message("알았어"), question]) == (
+        "not_awake",
+        True,
+    )
+    assert infer_wake_status([question, user_message("응")]) == ("awake", True)
     assert infer_wake_status([user_message("음")]) == (
         "not_awake",
         True,

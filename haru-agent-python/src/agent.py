@@ -597,6 +597,12 @@ def infer_wake_status(
     if not user_texts:
         return "no_response", False
 
+    wake_confirmation_status = get_wake_confirmation_status(messages)
+    if wake_confirmation_status == "affirmed":
+        return "awake", True
+    if wake_confirmation_status == "pending":
+        return "not_awake", True
+
     math_checks = (
         (("7 곱하기 8", "7곱하기8", "7 x 8", "7x8"), ("56", "오십육", "쉰여섯")),
         (("3 더하기 4", "3더하기4", "3 + 4", "3+4"), ("7", "칠")),
@@ -745,15 +751,12 @@ def infer_wake_status(
 
     filler_word_set = {word.lower() for word in filler_words}
     if all(text in filler_word_set for text in user_texts):
-        return ("awake", True) if len(user_texts) >= 2 else ("not_awake", True)
+        return "not_awake", True
 
     if total_response_chars <= 4 and len(user_texts) <= 1:
         return "not_awake", True
 
-    if len(user_texts) >= 2 and total_response_chars >= 4:
-        return "awake", True
-
-    return "awake", True
+    return "not_awake", True
 
 
 def is_explicit_hangup_request(text: str) -> bool:
@@ -778,6 +781,65 @@ def is_explicit_hangup_request(text: str) -> bool:
         "終わりにして",
     )
     return any(pattern in normalized for pattern in hangup_patterns)
+
+
+def is_wake_confirmation_question(text: str) -> bool:
+    normalized = " ".join((text or "").strip().lower().split())
+    if not normalized:
+        return False
+
+    question_patterns = (
+        "일어났어?",
+        "일어났나?",
+        "인났어?",
+        "인났나?",
+        "일어난 거 맞아?",
+        "일어난거 맞아?",
+        "깼어?",
+        "깨어 있어?",
+        "깨어있어?",
+        "정신 들었어?",
+        "are you up?",
+        "are you awake?",
+        "もう起きた?",
+        "起きてる?",
+    )
+    return any(pattern in normalized for pattern in question_patterns)
+
+
+def get_wake_confirmation_status(messages: list[dict]) -> str | None:
+    affirmative_answers = {
+        "응",
+        "어",
+        "네",
+        "웅",
+        "맞아",
+        "yes",
+        "yeah",
+        "yep",
+        "うん",
+        "はい",
+    }
+
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get("role") != "assistant" or not is_wake_confirmation_question(
+            message.get("content") or ""
+        ):
+            continue
+
+        later_user_texts = [
+            " ".join((later.get("content") or "").strip().lower().split())
+            for later in messages[index + 1 :]
+            if later.get("role") == "user" and (later.get("content") or "").strip()
+        ]
+        if not later_user_texts:
+            return "pending"
+        if later_user_texts[-1] in affirmative_answers:
+            return "affirmed"
+        return "answered"
+
+    return None
 
 
 def is_assistant_goodbye(text: str) -> bool:
@@ -1245,6 +1307,8 @@ async def entrypoint(ctx: JobContext):
     wake_confirmed = False
     briefing_offered = False
     briefing_answered = False
+    user_turn_sequence = 0
+    assistant_response_user_turn = 0
     session: AgentSession
     session_started = asyncio.Event()
     greeting_lock = asyncio.Lock()
@@ -1769,7 +1833,7 @@ async def entrypoint(ctx: JobContext):
         return False
 
     async def wait_for_or_clear_existing_generation(
-        message_count_after_user: int,
+        user_turn_id: int,
         *,
         label: str,
     ) -> bool:
@@ -1780,10 +1844,7 @@ async def entrypoint(ctx: JobContext):
         while asyncio.get_running_loop().time() < deadline:
             if hangup_requested or user_is_speaking or agent_is_speaking:
                 return True
-            if any(
-                message.get("role") == "assistant"
-                for message in conversation_messages[message_count_after_user:]
-            ):
+            if assistant_response_user_turn >= user_turn_id:
                 return True
             if not realtime_generation_is_in_progress():
                 return False
@@ -1798,7 +1859,7 @@ async def entrypoint(ctx: JobContext):
         return agent_is_speaking or user_is_speaking
 
     async def ensure_assistant_followup_after_user(
-        message_count_after_user: int,
+        user_turn_id: int,
         user_text: str,
     ):
         nonlocal wake_confirmed, briefing_offered
@@ -1813,15 +1874,11 @@ async def entrypoint(ctx: JobContext):
         ):
             return
 
-        assistant_replied = any(
-            message.get("role") == "assistant"
-            for message in conversation_messages[message_count_after_user:]
-        )
-        if assistant_replied:
+        if assistant_response_user_turn >= user_turn_id:
             return
 
         if await wait_for_or_clear_existing_generation(
-            message_count_after_user,
+            user_turn_id,
             label="assistant follow-up",
         ):
             return
@@ -1976,6 +2033,8 @@ async def entrypoint(ctx: JobContext):
                 wake_status, had_user_response = infer_wake_status(
                     conversation_messages
                 )
+                if wake_confirmed or briefing_answered:
+                    wake_status = "awake"
                 outcome_result = await report_call_outcome_once(
                     wake_status,
                     had_user_response=had_user_response,
@@ -2060,6 +2119,7 @@ async def entrypoint(ctx: JobContext):
     def _on_conversation_item_added(ev):
         nonlocal assistant_said_goodbye, wake_confirmed
         nonlocal briefing_offered, briefing_answered
+        nonlocal user_turn_sequence, assistant_response_user_turn
         nonlocal test_reply_hangup_scheduled, test_user_replied_at
         nonlocal test_waiting_for_final_speech, test_final_speech_handle
 
@@ -2075,11 +2135,22 @@ async def entrypoint(ctx: JobContext):
         append_conversation_message(conversation_messages, role, text)
 
         if role == "assistant":
+            assistant_response_user_turn = max(
+                assistant_response_user_turn,
+                user_turn_sequence,
+            )
             assistant_said_goodbye = is_assistant_goodbye(text)
             if is_briefing_offer(text):
                 briefing_offered = True
+            if is_wake_confirmation_question(text):
+                wake_confirmed = False
+                logger.info(
+                    "😴 Wake confirmation remains pending after assistant check"
+                )
             logger.info(f"🤖 Gemini says: {text}")
         else:
+            user_turn_sequence += 1
+            current_user_turn = user_turn_sequence
             assistant_said_goodbye = False
             clear_waiting_for_user_response()
             if briefing_offered or is_briefing_request(text):
@@ -2090,8 +2161,7 @@ async def entrypoint(ctx: JobContext):
                 test_user_replied_at = asyncio.get_running_loop().time()
             else:
                 wake_status, _ = infer_wake_status(conversation_messages)
-                if wake_status == "awake":
-                    wake_confirmed = True
+                wake_confirmed = wake_status == "awake" or is_briefing_request(text)
             logger.info(f"👤 User said: {text}")
             if not hangup_requested and is_explicit_hangup_request(text):
                 _trigger_hangup(
@@ -2248,26 +2318,35 @@ async def entrypoint(ctx: JobContext):
 
             start_background_task(
                 ensure_assistant_followup_after_user(
-                    len(conversation_messages),
+                    current_user_turn,
                     text,
                 ),
-                name="assistant_followup_after_user",
+                name=f"assistant_followup_after_user_{current_user_turn}",
             )
 
     @session.on("agent_state_changed")
     def _on_agent_state_changed(ev):
         nonlocal agent_is_speaking, assistant_said_goodbye
+        nonlocal assistant_response_user_turn
 
         old_state = getattr(ev, "old_state", None)
         new_state = getattr(ev, "new_state", None)
         agent_is_speaking = new_state == "speaking"
 
         if new_state == "speaking":
+            assistant_response_user_turn = max(
+                assistant_response_user_turn,
+                user_turn_sequence,
+            )
             stop_active_local_nudge("agent_speaking")
             agent_speech_finished_event.clear()
             agent_speech_started_event.set()
 
         if old_state == "speaking" and new_state != "speaking":
+            assistant_response_user_turn = max(
+                assistant_response_user_turn,
+                user_turn_sequence,
+            )
             agent_speech_finished_event.set()
             if (
                 call_type != "test"
