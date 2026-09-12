@@ -1022,7 +1022,13 @@ def build_apple_calendar_context(payload: dict | None) -> str:
     """Use a call-only device snapshot; unavailable is different from empty."""
     heading = "\n\n# 이번 통화의 Apple Calendar 조회 결과\n"
     if not payload or payload.get("status") != "ok":
-        return heading + "조회하지 못했다. 일정이 없다고 단정하지 말고, 요청 시 확인하지 못했다고 짧게 안내한다."
+        status = (payload or {}).get("status", "unavailable")
+        reason = {
+            "permission_denied": "iPhone의 캘린더 읽기 권한이 없다.",
+            "not_connected": "현재 계정의 Apple Calendar 연결이 확인되지 않았다.",
+            "timeout": "기기에서 조회 응답이 아직 도착하지 않았다.",
+        }.get(status, "기기 조회 결과를 확인하지 못했다.")
+        return heading + f"조회하지 못했다. {reason} 일정이 없다고 단정하지 않는다."
     try:
         zone = ZoneInfo(payload["timeZone"])
         datetime.strptime(payload["date"], "%Y-%m-%d")
@@ -1085,6 +1091,7 @@ class Assistant(Agent):
         retry_count: int = 0,
         conversation_language: str = "한국어",
         on_call_outcome_reported=None,
+        on_calendar_query=None,
         enable_tools: bool = True,
     ):
         super().__init__(instructions=instructions)
@@ -1092,6 +1099,9 @@ class Assistant(Agent):
             # LiveKit also discovers decorated tools after applying the tools argument.
             self._tools = []
             self._chat_ctx = self._chat_ctx.copy(tools=[])
+        elif on_calendar_query is None:
+            self._tools = [tool for tool in self._tools if tool.info.name != "get_today_schedule"]
+            self._chat_ctx = self._chat_ctx.copy(tools=self._tools)
         self._on_hangup = on_hangup
         self._api_client = api_client
         self._user_id = user_id
@@ -1102,6 +1112,18 @@ class Assistant(Agent):
         self._retry_count = retry_count
         self._conversation_language = conversation_language
         self._on_call_outcome_reported = on_call_outcome_reported
+        self._on_calendar_query = on_calendar_query
+
+    @function_tool
+    async def get_today_schedule(self, context: RunContext):
+        """Read today's Apple Calendar from the connected iPhone when the initial snapshot is unavailable."""
+        if self._on_calendar_query is None:
+            return {"status": "unavailable"}
+        snapshot = await self._on_calendar_query(timeout_seconds=6.0)
+        return {
+            "status": (snapshot or {}).get("status", "unavailable"),
+            "schedule": build_apple_calendar_context(snapshot),
+        }
 
     @function_tool
     async def request_hangup(
@@ -1482,6 +1504,7 @@ async def entrypoint(ctx: JobContext):
     active_local_nudge_request_id: str | None = None
     apple_calendar_request_id: str | None = None
     apple_calendar_result = asyncio.get_running_loop().create_future()
+    apple_calendar_query_lock = asyncio.Lock()
 
     def start_background_task(coro, *, name: str | None = None) -> asyncio.Task:
         task = asyncio.create_task(coro, name=name)
@@ -1510,6 +1533,45 @@ async def entrypoint(ctx: JobContext):
             reliable=True,
             topic=CALL_END_TOPIC,
         )
+
+    async def query_apple_calendar(*, timeout_seconds: float = 2.5) -> dict:
+        nonlocal apple_calendar_request_id, apple_calendar_result
+        async with apple_calendar_query_lock:
+            if hangup_requested:
+                return {"status": "call_ending"}
+            if apple_calendar_result.done():
+                previous = apple_calendar_result.result()
+                if previous.get("status") == "ok":
+                    return previous
+                # Allow a fresh request after permission/connection recovery.
+                apple_calendar_result = asyncio.get_running_loop().create_future()
+                apple_calendar_request_id = None
+            if apple_calendar_request_id is None:
+                apple_calendar_request_id = f"calendar-{int(asyncio.get_running_loop().time() * 1000)}"
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            attempts = 0
+            while not hangup_requested:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                attempts += 1
+                try:
+                    await asyncio.wait_for(publish_call_control({
+                        "type": "calendar.today.query", "requestId": apple_calendar_request_id,
+                    }), timeout=remaining)
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    # Participant-connected can precede the device's data channel.
+                    # Retry the same request without losing its late response.
+                    return await asyncio.wait_for(
+                        asyncio.shield(apple_calendar_result), timeout=min(0.8, max(remaining, 0.01))
+                    )
+                except TimeoutError:
+                    continue
+                except Exception as e:
+                    logger.warning("📅 Calendar query send failed: %s", type(e).__name__)
+                    break
+            logger.warning("📅 Apple Calendar response timeout: attempts=%s", attempts)
+            return {"status": "timeout"}
 
     def stop_active_local_nudge(reason: str):
         request_id = active_local_nudge_request_id
@@ -1626,6 +1688,8 @@ async def entrypoint(ctx: JobContext):
             payload = json.loads(packet.data.decode("utf-8"))
         except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
             return
+        if not isinstance(payload, dict):
+            return
 
         event_type = payload.get("type")
         request_id = payload.get("requestId")
@@ -1634,12 +1698,19 @@ async def entrypoint(ctx: JobContext):
 
         if event_type == "calendar.today.result":
             participant = getattr(packet, "participant", None)
+            if getattr(participant, "identity", None) != user_id:
+                logger.warning("📅 Ignored calendar reply: sender does not match this call's user")
+                return
             if (
                 request_id == apple_calendar_request_id
-                and getattr(participant, "identity", None) == user_id
                 and not apple_calendar_result.done()
             ):
                 apple_calendar_result.set_result(payload)
+                logger.info(
+                    "📅 Device calendar reply: status=%s date=%s zone=%s events=%s",
+                    payload.get("status"), payload.get("date"), payload.get("timeZone"),
+                    len(payload.get("events", [])) if isinstance(payload.get("events"), list) else "invalid",
+                )
             return
 
         if event_type == "local_audio.started":
@@ -2775,22 +2846,18 @@ async def entrypoint(ctx: JobContext):
             await ctx.room.disconnect()
             return
 
+    apple_calendar_needs_retry = False
     if call_type != "test" and "[APPLE_CALENDAR_ON_CALL]" in initial_instructions:
-        apple_calendar_request_id = f"calendar-{int(asyncio.get_running_loop().time() * 1000)}"
-        snapshot = None
-        try:
-            async def query_calendar():
-                await publish_call_control({
-                    "type": "calendar.today.query", "requestId": apple_calendar_request_id,
-                })
-                return await asyncio.shield(apple_calendar_result)
-
-            snapshot = await asyncio.wait_for(query_calendar(), timeout=2.5)
-        except TimeoutError:
-            logger.warning("📅 Connected-device calendar query timed out; schedule unavailable")
-        except Exception as e:
-            logger.warning(f"📅 Connected-device calendar query failed: {e}")
+        snapshot = await query_apple_calendar()
         merged_instructions += build_apple_calendar_context(snapshot)
+        if snapshot.get("status") != "ok":
+            apple_calendar_needs_retry = True
+            merged_instructions += (
+                "\n통화 시작 시점 조회는 아직 성공하지 않았다. 사용자가 브리핑을 요청하거나 수락하면 "
+                "get_today_schedule을 한 번 호출해서 다시 확인한 뒤 답한다. "
+                "도구 조회 결과를 받기 전에는 작별 인사를 하지 않는다. "
+                "이 도구의 성공 결과는 앞의 초기 조회 실패 안내보다 우선한다."
+            )
         logger.info("📅 Call-only Apple Calendar snapshot: status=%s", (snapshot or {}).get("status", "unavailable"))
 
     agent = Assistant(
@@ -2805,6 +2872,9 @@ async def entrypoint(ctx: JobContext):
         retry_count=retry_count,
         conversation_language=conversation_language,
         on_call_outcome_reported=_mark_call_outcome_reported,
+        on_calendar_query=(
+            query_apple_calendar if apple_calendar_needs_retry else None
+        ),
         enable_tools=call_type != "test",
     )
 

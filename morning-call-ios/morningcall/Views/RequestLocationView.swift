@@ -83,7 +83,7 @@ class CurrentLocationManager: NSObject, ObservableObject, CLLocationManagerDeleg
             return
         }
 
-        CLGeocoder().reverseGeocodeLocation(location) { placemarks, _ in
+        CLGeocoder().reverseGeocodeLocation(location, preferredLocale: Locale(identifier: "en_US")) { placemarks, _ in
             DispatchQueue.main.async {
                 self.isLoading = false
                 guard let placemark = placemarks?.first else { return }
@@ -111,7 +111,8 @@ class CurrentLocationManager: NSObject, ObservableObject, CLLocationManagerDeleg
     private static func formatLocation(placemark: CLPlacemark) -> String {
         let city = placemark.locality ?? placemark.subLocality ?? ""
         let province = placemark.administrativeArea ?? ""
-        return [city, province]
+        let country = placemark.isoCountryCode ?? ""
+        return [city, province, country]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: ", ")

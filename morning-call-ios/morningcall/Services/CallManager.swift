@@ -144,6 +144,7 @@ final actor CallManager: NSObject, ObservableObject {
     private var audioRouteObserver: NSObjectProtocol?
     private var expectedSpeakerRoute: (speaker: Bool, expiresAt: Date)?
     private var callIsEnding = false
+    private var calendarSnapshotTasks: [String: Task<Data?, Never>] = [:]
 
     // MARK: - Init
 
@@ -462,6 +463,8 @@ final actor CallManager: NSObject, ObservableObject {
     }
 
     private func resetAudioRouteForNewCall() {
+        calendarSnapshotTasks.values.forEach { $0.cancel() }
+        calendarSnapshotTasks.removeAll()
         userPrefersSpeaker = false
         userDidChooseAudioRoute = false
         localNudgeForcedSpeaker = false
@@ -745,6 +748,8 @@ final actor CallManager: NSObject, ObservableObject {
     /// LiveKit Room 연결을 해제 후 상태를 초기화
     private func disconnectRoom() async {
         callIsEnding = true
+        calendarSnapshotTasks.values.forEach { $0.cancel() }
+        calendarSnapshotTasks.removeAll()
         clearLocalNudgePlayback()
         let endedAlarmID = alarmId
         let answered = wasAnswered
@@ -777,15 +782,31 @@ final actor CallManager: NSObject, ObservableObject {
     }
 
     private func sendCalendarSnapshot(requestID: String, sourceRoom: Room) async {
-        guard let uuid = currentCallUUID, sourceRoom === room, !callIsEnding else { return }
-        let data = await withCheckedContinuation { continuation in
-            AppleCalendarService.shared.fetchMorningCallSnapshot(requestID: requestID) {
-                continuation.resume(returning: $0)
-            }
+        guard let uuid = currentCallUUID, sourceRoom === room, !callIsEnding else {
+            print("📅 Ignored calendar query: call is not active")
+            return
         }
+        // Repeated requests during data-channel startup share the EventKit read.
+        let snapshotTask: Task<Data?, Never>
+        if let existing = calendarSnapshotTasks[requestID] {
+            snapshotTask = existing
+        } else {
+            // Bound temporary state to the most recent request for this call.
+            calendarSnapshotTasks.removeAll()
+            snapshotTask = Task {
+                await withCheckedContinuation { continuation in
+                    AppleCalendarService.shared.fetchMorningCallSnapshot(requestID: requestID) {
+                        continuation.resume(returning: $0)
+                    }
+                }
+            }
+            calendarSnapshotTasks[requestID] = snapshotTask
+        }
+        let data = await snapshotTask.value
         guard currentCallUUID == uuid, !callIsEnding, let data else { return }
         do {
             try await sourceRoom.localParticipant.publish(data: data, options: DataPublishOptions(topic: "haru.call.control", reliable: true))
+            print("📅 Sent calendar snapshot to the connected agent")
         } catch {
             print("⚠️ Failed to deliver Apple Calendar snapshot: \(error.localizedDescription)")
         }

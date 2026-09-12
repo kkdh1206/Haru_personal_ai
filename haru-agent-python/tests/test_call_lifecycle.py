@@ -251,3 +251,87 @@ async def test_calendar_is_loaded_over_connected_room_before_session_start(
         "일정이 없는 것이 확인"
         in rt.session.start.call_args.kwargs["agent"].instructions
     )
+    assert rt.session.start.call_args.kwargs["agent"].on_calendar_query is None
+
+
+async def test_calendar_retries_when_the_first_startup_query_is_lost(call_runtime):
+    rt = call_runtime
+    rt.ctx.job.metadata = json.dumps(
+        {
+            "user_id": "user-id",
+            "alarm_id": "alarm-id",
+            "prompt": "[APPLE_CALENDAR_ON_CALL]",
+        }
+    )
+    request_ids = []
+
+    async def publish(data, **kwargs):
+        command = json.loads(data)
+        if command["type"] != "calendar.today.query":
+            return
+        request_ids.append(command["requestId"])
+        if len(request_ids) == 2:
+            rt.room.emit(
+                "data_received",
+                SimpleNamespace(
+                    topic=agent.CALL_END_TOPIC,
+                    participant=SimpleNamespace(identity="user-id"),
+                    data=json.dumps(
+                        {
+                            "type": "calendar.today.result",
+                            "requestId": command["requestId"],
+                            "status": "ok",
+                            "timeZone": "America/Toronto",
+                            "date": "2026-09-12",
+                            "events": [],
+                        }
+                    ).encode(),
+                ),
+            )
+
+    rt.room.local_participant.publish_data.side_effect = publish
+    await agent.entrypoint(rt.ctx)
+    assert len(request_ids) == 2
+    assert request_ids[0] == request_ids[1]
+    assert (
+        "일정이 없는 것이 확인"
+        in rt.session.start.call_args.kwargs["agent"].instructions
+    )
+
+
+async def test_a_late_calendar_response_can_recover_after_initial_timeout(call_runtime):
+    rt = call_runtime
+    rt.ctx.job.metadata = json.dumps(
+        {
+            "user_id": "user-id",
+            "alarm_id": "alarm-id",
+            "prompt": "[APPLE_CALENDAR_ON_CALL]",
+        }
+    )
+    await agent.entrypoint(rt.ctx)
+    assistant = rt.session.start.call_args.kwargs["agent"]
+    assert "get_today_schedule" in assistant.instructions
+    command = json.loads(
+        rt.room.local_participant.publish_data.call_args_list[0].args[0]
+    )
+    rt.room.emit(
+        "data_received",
+        SimpleNamespace(
+            topic=agent.CALL_END_TOPIC,
+            participant=SimpleNamespace(identity="user-id"),
+            data=json.dumps(
+                {
+                    "type": "calendar.today.result",
+                    "requestId": command["requestId"],
+                    "status": "ok",
+                    "timeZone": "America/Toronto",
+                    "date": "2026-09-12",
+                    "events": [],
+                }
+            ).encode(),
+        ),
+    )
+    publishes_before_retry = rt.room.local_participant.publish_data.call_count
+    recovered = await assistant.on_calendar_query(timeout_seconds=1.0)
+    assert recovered["status"] == "ok"
+    assert rt.room.local_participant.publish_data.call_count == publishes_before_retry

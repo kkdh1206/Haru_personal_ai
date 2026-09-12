@@ -59,16 +59,20 @@ struct WeatherSection: View {
                 .frame(alignment: .center) // 가운데 정렬
             }
         }
-        .task {
+        .task(id: env.user?.location) {
+            weather = nil
             loadData()
         }
     }
 
     private func loadData() {
         guard let loc = env.user?.location, !loc.isEmpty else { return }
+        let pathCharacters = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#%"))
+        guard let encodedLocation = loc.addingPercentEncoding(withAllowedCharacters: pathCharacters) else { return }
 
-        APIClient.request(path: "/information/weather/\(loc)", method: .GET) { (result: Result<Weather, Error>) in
+        APIClient.request(path: "/information/weather/\(encodedLocation)", method: .GET) { (result: Result<Weather, Error>) in
             DispatchQueue.main.async {
+                guard env.user?.location == loc else { return }
                 switch result {
                 case .success(let data):
                     self.weather = data

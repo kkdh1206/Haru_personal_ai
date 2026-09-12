@@ -341,6 +341,20 @@ def test_test_call_agent_disables_all_function_tools():
 
     assert test_agent.tools == []
     assert len(regular_agent.tools) > 0
+    assert "get_today_schedule" not in {tool.info.name for tool in regular_agent.tools}
+
+
+def test_calendar_retry_tool_is_exposed_only_when_needed():
+    async def query(**kwargs):
+        return {"status": "ok", "events": []}
+
+    calendar_agent = Assistant(
+        on_hangup=None,
+        instructions="calendar retry",
+        conversation_id="calendar-test",
+        on_calendar_query=query,
+    )
+    assert "get_today_schedule" in {tool.info.name for tool in calendar_agent.tools}
 
 
 def test_test_call_audio_confirmation_recognizes_supported_languages():

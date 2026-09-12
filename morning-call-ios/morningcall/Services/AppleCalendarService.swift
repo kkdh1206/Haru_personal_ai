@@ -98,6 +98,26 @@ final class AppleCalendarService {
     /// One snapshot for the connected call. No HTTP upload or persistent cache.
     func fetchMorningCallSnapshot(requestID: String, completion: @escaping (Data?) -> Void) {
         let accountID = Auth.auth().currentUser?.uid
+        // After reinstall/login the server may still be connected while this
+        // account's local provider preference has not yet been loaded by Settings.
+        if accountID != nil, CalendarProviderStore.selected == nil {
+            APIClient.request(path: "/user/calendar-status", method: .GET) {
+                [weak self] (result: Result<AppleCalendarConnectionResponse, Error>) in
+                guard let self else { completion(nil); return }
+                guard accountID == Auth.auth().currentUser?.uid else { completion(nil); return }
+                if case .success(let status) = result,
+                   status.connected, status.provider == "apple",
+                   CalendarProviderStore.selected == nil {
+                    CalendarProviderStore.selected = .apple
+                }
+                self.readMorningCallSnapshot(requestID: requestID, accountID: accountID, completion: completion)
+            }
+            return
+        }
+        readMorningCallSnapshot(requestID: requestID, accountID: accountID, completion: completion)
+    }
+
+    private func readMorningCallSnapshot(requestID: String, accountID: String?, completion: @escaping (Data?) -> Void) {
         stateQueue.async { [weak self] in
             guard let self else { completion(nil); return }
             var calendar = Calendar(identifier: .gregorian)
@@ -132,6 +152,7 @@ final class AppleCalendarService {
                     ]
                 }
             }
+            print("📅 Apple Calendar snapshot: status=\(payload["status"] ?? "unknown") date=\(payload["date"] ?? "") zone=\(calendar.timeZone.identifier) events=\((payload["events"] as? [[String: Any]])?.count ?? 0)")
             completion(try? JSONSerialization.data(withJSONObject: payload))
         }
     }
