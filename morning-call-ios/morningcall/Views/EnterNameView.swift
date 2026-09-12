@@ -20,7 +20,8 @@ struct EnterNameView: View {
 
             GeometryReader { proxy in
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("프로필")
+                    // Before language selection, use English with Korean/Japanese hints for key actions.
+                    Text(verbatim: "Profile")
                         .font(.system(.headline, design: .rounded).weight(.semibold))
                         .foregroundStyle(Color.black.opacity(0.56))
                         .lineLimit(1)
@@ -31,16 +32,19 @@ struct EnterNameView: View {
 
                     VStack(alignment: .leading, spacing: 18) {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("뭐라고 불러드릴까요?")
+                            Text(verbatim: "What should I call you?")
                                 .font(.system(.title, design: .rounded).weight(.bold))
                                 .foregroundStyle(Color.black.opacity(0.92))
 
-                            Text("첫 대화부터 자연스럽게 이름을 불러드릴게요.")
+                            Text(verbatim: "뭐라고 불러드릴까요?\nなんとお呼びすればいいですか？")
                                 .font(.system(.subheadline, design: .rounded))
                                 .foregroundStyle(Color.black.opacity(0.58))
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
-                        TextField("예: 원빈", text: $name)
+                        TextField(text: $name) {
+                            Text(verbatim: "Your name")
+                        }
                             .textInputAutocapitalization(.never)
                             .padding(16)
                             .background(Color.white.opacity(0.88), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -52,13 +56,13 @@ struct EnterNameView: View {
                             }
 
                         if showNameError {
-                            Text("이름을 입력해야 다음으로 넘어갈 수 있어요.")
+                            Text(verbatim: "Please enter your name to continue.")
                                 .font(.system(.footnote, design: .rounded).weight(.semibold))
                                 .foregroundStyle(Color.red.opacity(0.82))
                         }
 
                         if showSaveError {
-                            Text("프로필 저장에 실패했어요. 다시 시도해 주세요.")
+                            Text(verbatim: "Couldn't save your profile. Please try again.")
                                 .font(.system(.footnote, design: .rounded).weight(.semibold))
                                 .foregroundStyle(Color.red.opacity(0.82))
                         }
@@ -70,7 +74,7 @@ struct EnterNameView: View {
                     Button {
                         goNext()
                     } label: {
-                        Text(LocalizedStringKey(isSaving ? "저장 중..." : "다음"))
+                        Text(verbatim: isSaving ? "Saving..." : "Next")
                     }
                     .disabled(isSaving)
                     .buttonStyle(PrimaryButtonStyle())
