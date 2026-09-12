@@ -1,5 +1,5 @@
 "CFBundleDisplayName" = "Haru";
-"NSAlarmKitUsageDescription" = "Used to play a wake-up alarm even when a call cannot arrive because there is no internet connection.";
+"NSAlarmKitUsageDescription" = "Used to play a wake-up alarm when a call cannot arrive or the call does not confirm that you are awake.";
 "NSCameraUsageDescription" = "The camera is used only when you choose a capture feature yourself.";
 "NSLocationWhenInUseUsageDescription" = "Used to set weather and regional information based on your current location.";
 "NSMicrophoneUsageDescription" = "Used to transmit your voice during wake-up calls.";

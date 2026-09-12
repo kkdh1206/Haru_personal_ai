@@ -341,8 +341,18 @@ final actor CallManager: NSObject, ObservableObject {
         cancelIfOngoing()
     }
 
-    private func endCurrentCallFromRemote() async {
+    private func endCurrentCallFromRemote(
+        startLocalAlarm: Bool = false,
+        requestedAlarmID: String? = nil
+    ) async {
         guard let uuid = currentCallUUID else { return }
+        let endedAlarmID = requestedAlarmID ?? alarmId
+        if startLocalAlarm, let endedAlarmID {
+            await LocalCallFallbackScheduler.shared.startPostCallWakeAlarm(
+                alarmId: endedAlarmID,
+                role: currentCallerName
+            )
+        }
         provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
         await disconnectRoomIfCurrent(uuid: uuid)
     }
@@ -705,9 +715,17 @@ extension CallManager: RoomDelegate {
 
         switch type {
         case "call.end":
-            print("📴 서버에서 통화 종료 신호를 받았습니다.")
+            let startLocalAlarm = payload["startLocalAlarm"] as? Bool ?? false
+            let requestedAlarmID = payload["alarmId"] as? String
+            print(
+                "📴 서버에서 통화 종료 신호를 받았습니다. "
+                + "startLocalAlarm=\(startLocalAlarm)"
+            )
             Task {
-                await self.endCurrentCallFromRemote()
+                await self.endCurrentCallFromRemote(
+                    startLocalAlarm: startLocalAlarm,
+                    requestedAlarmID: requestedAlarmID
+                )
             }
         case "local_audio.play":
             guard let requestID = payload["requestId"] as? String,

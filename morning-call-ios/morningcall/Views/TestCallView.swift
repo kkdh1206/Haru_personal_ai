@@ -13,11 +13,11 @@ struct TestCallView: View {
     var body: some View {
         NavigationView {
             List {
-                Section(localized("하루")) {
+                Section(localized("하리")) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(localized("친구처럼 챙겨주는 Haru"))
+                        Text(localized("친구처럼 챙겨주는 Hari"))
                             .font(.headline)
-                        Text(localized("테스트 통화에서도 Haru가 먼저 인사하고 깨워요."))
+                        Text(localized("테스트 통화에서도 Hari가 먼저 인사하고 깨워요."))
                             .font(.subheadline)
                             .foregroundColor(.gray)
                     }
@@ -64,7 +64,7 @@ struct TestCallView: View {
     }
 
     private func testCall() {
-        let character = CharacterPreferenceStore.current
+        let character = CharacterPreference.hari
         APIClient.request(path: "/alarm/test-call", method: .POST, body: [
             "wakeIntensity": wakeIntensity,
             "voice": character.voiceName,

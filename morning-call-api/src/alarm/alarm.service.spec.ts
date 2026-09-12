@@ -106,7 +106,7 @@ describe('AlarmService scheduling', () => {
       get: jest.fn((path: string) => {
         const values = {
           'alarm.prewarmLeadSeconds': '20',
-          'alarm.retryMinutes': '2',
+          'alarm.retryMinutes': '5',
           'alarm.maxDailyRetryCalls': '1',
           'alarm.callAgentCheckTimeoutMs': '1000',
         };
@@ -194,6 +194,38 @@ describe('AlarmService scheduling', () => {
     );
   });
 
+  it('schedules a Toronto alarm from local wall time and stores the queue time in UTC', async () => {
+    const now = Date.parse('2026-08-24T00:00:00.000Z');
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    Settings.now = () => now;
+    const { service, queue, userService } = makeService();
+    const expectedCallAt = Date.parse('2026-08-24T11:30:00.000Z');
+
+    await service.createAlarm('user-id', {
+      time: '07:30',
+      targetDate: null,
+      timeZone: 'America/Toronto',
+      isOn: true,
+      repeatDays: [1],
+    } as any);
+
+    expect(queue.add).toHaveBeenCalledWith(
+      'trigger',
+      expect.objectContaining({ action: 'call', day: 1 }),
+      expect.objectContaining({
+        jobId: `alarm-id-1-${expectedCallAt}-call`,
+        delay: expectedCallAt - now,
+      }),
+    );
+    expect(new Date(expectedCallAt).toISOString()).toBe(
+      '2026-08-24T11:30:00.000Z',
+    );
+    expect(userService.updateTimeZone).toHaveBeenCalledWith(
+      'user-id',
+      'America/Toronto',
+    );
+  });
+
   it('migrates existing alarms and queue jobs to the current IANA time zone', async () => {
     const alarm = makeAlarm({
       timeZone: 'Asia/Seoul',
@@ -222,9 +254,7 @@ describe('AlarmService scheduling', () => {
       'trigger',
       expect.objectContaining({ action: 'call' }),
       expect.objectContaining({
-        jobId: `alarm-id-once-${Date.parse(
-          '2026-06-29T16:00:00.000Z',
-        )}-call`,
+        jobId: `alarm-id-once-${Date.parse('2026-06-29T16:00:00.000Z')}-call`,
       }),
     );
   });
@@ -255,7 +285,7 @@ describe('AlarmService scheduling', () => {
     expect(alarm.personality).toBe('gentle');
   });
 
-  it('defaults new alarms to Hari while preserving explicit Haru selection', async () => {
+  it('always uses Hari for new alarms even when a legacy Haru value is sent', async () => {
     const { service } = makeService();
     const baseAlarm = {
       time: '09:00',
@@ -276,11 +306,11 @@ describe('AlarmService scheduling', () => {
       expect.objectContaining({ role: '하리', voice: 'Leda' }),
     );
     expect(haruAlarm).toEqual(
-      expect.objectContaining({ role: '하루', voice: 'Achird' }),
+      expect.objectContaining({ role: '하리', voice: 'Leda' }),
     );
   });
 
-  it('defaults retry calls to two minutes with a prewarm job first', async () => {
+  it('defaults retry calls to five minutes with a prewarm job first', async () => {
     const alarm = makeAlarm();
     const alarmModel = { findById: jest.fn().mockResolvedValue(alarm) };
     const { service, queue } = makeService({ alarmModel });
@@ -294,11 +324,11 @@ describe('AlarmService scheduling', () => {
       expect.objectContaining({
         action: 'prewarm',
         retry: true,
-        retryMinutes: 2,
+        retryMinutes: 5,
       }),
       expect.objectContaining({
-        jobId: `alarm-id-retry-${fixedNow + 120000}-1-prewarm`,
-        delay: 100000,
+        jobId: `alarm-id-retry-${fixedNow + 300000}-1-prewarm`,
+        delay: 280000,
       }),
     );
     expect(queue.add).toHaveBeenNthCalledWith(
@@ -307,11 +337,11 @@ describe('AlarmService scheduling', () => {
       expect.objectContaining({
         action: 'call',
         retry: true,
-        retryMinutes: 2,
+        retryMinutes: 5,
       }),
       expect.objectContaining({
-        jobId: `alarm-id-retry-${fixedNow + 120000}-1-call`,
-        delay: 120000,
+        jobId: `alarm-id-retry-${fixedNow + 300000}-1-call`,
+        delay: 300000,
       }),
     );
   });
@@ -331,7 +361,7 @@ describe('AlarmService scheduling', () => {
       1000,
     );
     expect(fcmService.sendCallPush).toHaveBeenCalledWith('device-token', {
-      caller: '하루',
+      caller: '하리',
       lkUrl: 'wss://livekit.test',
       lkToken: 'lk-token',
       alarmId: 'alarm-id',
@@ -368,9 +398,7 @@ describe('AlarmService scheduling', () => {
 
   it('charges daily calls using the canonical user time zone', async () => {
     const userService = {
-      findOne: jest
-        .fn()
-        .mockResolvedValue({ timeZone: 'America/Los_Angeles' }),
+      findOne: jest.fn().mockResolvedValue({ timeZone: 'America/Los_Angeles' }),
     };
     const { service, userService: effectiveUserService } = makeService({
       userService,
@@ -458,7 +486,7 @@ describe('AlarmService scheduling', () => {
     expect(livekit.ensureAgentReadyForTest).toHaveBeenCalledWith(
       `${user._id}_onboarding_test_${fixedNow}`,
       'test prompt',
-      'Achird',
+      'Leda',
       user._id,
       'Asia/Seoul',
       undefined,
@@ -472,7 +500,7 @@ describe('AlarmService scheduling', () => {
         action: 'onboarding-test-call',
         userId: user._id,
         roomName: `${user._id}_onboarding_test_${fixedNow}`,
-        role: '하루',
+        role: '하리',
       },
       expect.objectContaining({
         delay: 10000,
@@ -541,7 +569,7 @@ describe('AlarmService scheduling', () => {
     );
 
     expect(fcmService.sendCallPush).toHaveBeenCalledWith('device-token', {
-      caller: '하루',
+      caller: '하리',
       lkUrl: 'wss://livekit.test',
       lkToken: 'lk-token',
       alarmId: 'onboarding-test',

@@ -120,7 +120,7 @@ class CurrentLocationManager: NSObject, ObservableObject, CLLocationManagerDeleg
     private func saveLocation(_ location: String, env: AppEnvironment?) {
         APIClient.request(path: "/user/location", method: .PATCH, body: [
             "location": location,
-            "timeZone": TimeZone.current.identifier
+            "timeZone": TimeZone.autoupdatingCurrent.identifier
         ]) { (result: Result<UserInfo, Error>) in
             DispatchQueue.main.async {
                 switch result {

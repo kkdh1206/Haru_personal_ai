@@ -133,24 +133,74 @@ export class ApnsService implements OnModuleDestroy {
     return res;
   }
 
-  async sendAppleCalendarSyncPush(
+  async sendAppleCalendarCreateEventPush(
     token: string,
+    payload: {
+      eventId: string;
+      title: string;
+      startTime: string;
+      endTime: string;
+      description: string;
+      location: string;
+      allDay: boolean;
+      timeZone: string;
+    },
     environment?: ApnsEnvironment,
   ) {
     const note = new apn.Notification();
     note.topic = this.cs.getOrThrow<string>('apns.bundleId');
     note.priority = 5;
-    note.expiry = Math.floor(Date.now() / 1000) + 3600;
+    note.expiry = Math.floor(Date.now() / 1000) + 120;
     note.aps = { 'content-available': 1 };
-    note.payload = { type: 'apple_calendar_pending' };
+    note.payload = {
+      type: 'apple_calendar_create_event',
+      ...payload,
+    };
     this.applyPushHeaders(note, 'background');
 
     const selectedEnvironment = this.resolveEnvironment(environment);
     const res = await this.getProvider(selectedEnvironment).send(note, token);
-    console.log(res.sent.length ? '✅ calendar sync sent' : '❌ calendar sync failed', {
-      environment: selectedEnvironment,
-      ...summarizeApnsResult(res),
-    });
+    console.log(
+      res.sent.length ? '✅ calendar event sent' : '❌ calendar event failed',
+      {
+        environment: selectedEnvironment,
+        ...summarizeApnsResult(res),
+      },
+    );
+    return res;
+  }
+
+  async sendAppleCalendarQueryPush(
+    token: string,
+    payload: {
+      requestId: string;
+      rangeStart: string;
+      rangeEnd: string;
+    },
+    environment?: ApnsEnvironment,
+  ) {
+    const note = new apn.Notification();
+    note.topic = this.cs.getOrThrow<string>('apns.bundleId');
+    note.priority = 5;
+    note.expiry = Math.floor(Date.now() / 1000) + 30;
+    note.aps = { 'content-available': 1 };
+    note.payload = {
+      type: 'apple_calendar_morning_call_query',
+      requestId: payload.requestId,
+      rangeStart: payload.rangeStart,
+      rangeEnd: payload.rangeEnd,
+    };
+    this.applyPushHeaders(note, 'background');
+
+    const selectedEnvironment = this.resolveEnvironment(environment);
+    const res = await this.getProvider(selectedEnvironment).send(note, token);
+    console.log(
+      res.sent.length ? '✅ calendar query sent' : '❌ calendar query failed',
+      {
+        environment: selectedEnvironment,
+        ...summarizeApnsResult(res),
+      },
+    );
     return res;
   }
 

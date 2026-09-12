@@ -61,6 +61,9 @@ This is a short onboarding call-delivery test.
 
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-live-preview"
 DEFAULT_NO_ANSWER_TIMEOUT_SECONDS = 30
+DEFAULT_INITIAL_GREETING_READY_GRACE_SECONDS = 2.0
+DEFAULT_INITIAL_GREETING_START_TIMEOUT_SECONDS = 6.0
+DEFAULT_INITIAL_GREETING_VAD_SETTLE_SECONDS = 1.5
 DEFAULT_CALL_WRAP_UP_SECONDS = 270
 DEFAULT_MAX_CALL_DURATION_SECONDS = 300
 DEFAULT_HANGUP_GRACE_SECONDS = 0.1
@@ -70,7 +73,7 @@ DEFAULT_MAX_CONVERSATION_MESSAGES = 6
 DEFAULT_MAX_RETRY_CALLS = 2
 DEFAULT_USER_SILENCE_NUDGE_SECONDS = 8.0
 DEFAULT_MAX_USER_SILENCE_NUDGES = 3
-DEFAULT_NO_RESPONSE_RETRY_MINUTES = 2
+DEFAULT_NO_RESPONSE_RETRY_MINUTES = 5
 DEFAULT_FAREWELL_PLAYOUT_TIMEOUT_SECONDS = 8.0
 DEFAULT_FAREWELL_HANGUP_GRACE_SECONDS = 1.0
 DEFAULT_TEST_FAREWELL_PLAYOUT_TIMEOUT_SECONDS = 20.0
@@ -408,6 +411,64 @@ def get_conversation_phrases(language: str | None) -> dict[str, str]:
     }
 
 
+def get_retry_scheduled_farewell(
+    language: str | None,
+    retry_minutes: int,
+) -> str:
+    minutes = min(max(int(retry_minutes), 1), 30)
+    language_code = get_realtime_language_code(language)
+    if language_code == "ja-JP":
+        return (
+            f"返事がないから、いったん切って{minutes}分後にもう一度電話して確認するね。"
+            "次はちゃんと起きてね。"
+        )
+    if language_code == "en-US":
+        unit = "minute" if minutes == 1 else "minutes"
+        return (
+            f"I'm not hearing you, so I'll hang up and call again in {minutes} {unit} "
+            "to check on you. Be ready to get up then."
+        )
+    return (
+        f"대답이 없어서 일단 끊고 {minutes}분 뒤에 다시 전화해서 확인할게. "
+        "그때는 진짜 일어나야 해."
+    )
+
+
+def get_retry_limit_alarm_farewell(language: str | None) -> str:
+    language_code = get_realtime_language_code(language)
+    if language_code == "ja-JP":
+        return (
+            "返事がないね。もう電話はできないから、切ったあともアラームを鳴らすよ。"
+            "自分で止めて、今度こそ起きてね。"
+        )
+    if language_code == "en-US":
+        return (
+            "I'm not hearing you, and I can't call again. The alarm will keep ringing "
+            "after I hang up, so stop it yourself and get up now."
+        )
+    return (
+        "대답이 없네. 이제 더 전화할 수 없어서 끊고 나서도 알람을 계속 울릴게. "
+        "직접 끄고 진짜 일어나야 해."
+    )
+
+
+def build_call_end_message(
+    *,
+    reason: str = "completed",
+    start_local_alarm: bool = False,
+    alarm_id: str | None = None,
+) -> str:
+    payload: dict[str, str | bool] = {
+        "type": "call.end",
+        "reason": reason,
+    }
+    if start_local_alarm:
+        payload["startLocalAlarm"] = True
+        if alarm_id:
+            payload["alarmId"] = alarm_id
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
 def get_silence_nudge_reference(language: str | None, index: int) -> str:
     language_code = get_realtime_language_code(language)
     if language_code == "ja-JP":
@@ -524,6 +585,7 @@ def build_farewell_reply_request(
     instructions = (
         f"이제 통화를 종료해야 한다. 다른 질문을 하지 말고, {conversation_language}로 한 문장만 말해. "
         "아래 참고 문구의 언어와 의미를 유지하고 자연스러운 구어체로 말해. "
+        "참고 문구에 시간이나 횟수 같은 숫자가 있으면 그 숫자는 반드시 그대로 말해. "
         "통화를 지금 종료한다는 뜻이 분명히 들어가야 해. "
         f"사용할 마무리 멘트: {normalized_farewell}"
     )
@@ -1147,6 +1209,7 @@ async def safe_hangup(
     *,
     speech_playout_timeout_seconds: float | None = None,
     send_call_end_signal: bool = False,
+    call_end_message: str = CALL_END_MESSAGE,
     shutdown_step_timeout_seconds: float | None = None,
 ):
     if speech_handle is not None:
@@ -1174,7 +1237,7 @@ async def safe_hangup(
         try:
             await asyncio.wait_for(
                 ctx.room.local_participant.publish_data(
-                    CALL_END_MESSAGE,
+                    call_end_message,
                     reliable=True,
                     topic=CALL_END_TOPIC,
                 ),
@@ -1492,6 +1555,7 @@ async def entrypoint(ctx: JobContext):
         *,
         exact_farewell: bool = False,
         delay_seconds: float | None = None,
+        start_local_alarm_after_call: bool = False,
     ):
         nonlocal hangup_requested, session
         if hangup_requested:
@@ -1563,6 +1627,15 @@ async def entrypoint(ctx: JobContext):
                     else None
                 ),
                 send_call_end_signal=True,
+                call_end_message=build_call_end_message(
+                    reason=(
+                        "retry_limit_reached"
+                        if start_local_alarm_after_call
+                        else "completed"
+                    ),
+                    start_local_alarm=start_local_alarm_after_call,
+                    alarm_id=alarm_id,
+                ),
                 shutdown_step_timeout_seconds=(
                     DEFAULT_SHUTDOWN_STEP_TIMEOUT_SECONDS
                     if call_type == "test"
@@ -1961,7 +2034,19 @@ async def entrypoint(ctx: JobContext):
                     "Gemini realtime session is not ready"
                 )
 
-            await asyncio.sleep(0.25)
+            # The realtime WebSocket can become active before RoomIO has attached the
+            # participant's microphone stream. Sending the synthetic opening in that
+            # short window has intermittently been discarded without reaching Gemini.
+            await asyncio.sleep(DEFAULT_INITIAL_GREETING_READY_GRACE_SECONDS)
+
+            if user_turn_sequence > 0:
+                greeted_user = True
+                logger.info(
+                    "🗣️ User transcript arrived while the initial greeting was "
+                    "settling; skipping the synthetic opening"
+                )
+                return
+
             if call_type == "test":
                 initial_greeting_instructions = (
                     "이번 통화는 온보딩 수신 테스트다. 저장된 대화 언어와 캐릭터 말투로 "
@@ -1994,7 +2079,29 @@ async def entrypoint(ctx: JobContext):
                     f"지금 바로 {conversation_language}로 다음 문장을 참고해 짧고 자연스럽게 시작해: "
                     f"{conversation_phrases['initial_opening']}"
                 )
-            for attempt in range(1, 4):
+
+            async def wait_for_real_user_turn_or_vad_settle() -> bool:
+                deadline = (
+                    asyncio.get_running_loop().time()
+                    + DEFAULT_INITIAL_GREETING_VAD_SETTLE_SECONDS
+                )
+                while (
+                    user_is_speaking
+                    and user_turn_sequence == 0
+                    and asyncio.get_running_loop().time() < deadline
+                ):
+                    await asyncio.sleep(0.1)
+                return user_turn_sequence > 0
+
+            for attempt in range(1, 3):
+                if user_turn_sequence > 0:
+                    greeted_user = True
+                    logger.info(
+                        "🗣️ User transcript arrived before the initial greeting; "
+                        "skipping the synthetic opening"
+                    )
+                    return
+
                 agent_speech_started_event.clear()
                 if request_agent_reply(
                     initial_greeting_instructions,
@@ -2003,7 +2110,7 @@ async def entrypoint(ctx: JobContext):
                     try:
                         await asyncio.wait_for(
                             agent_speech_started_event.wait(),
-                            timeout=2.5,
+                            timeout=DEFAULT_INITIAL_GREETING_START_TIMEOUT_SECONDS,
                         )
                         greeted_user = True
                         logger.info(
@@ -2012,15 +2119,74 @@ async def entrypoint(ctx: JobContext):
                         )
                         return
                     except TimeoutError:
+                        if agent_is_speaking:
+                            greeted_user = True
+                            logger.info(
+                                f"🗣️ Initial greeting started at timeout boundary "
+                                f"after {trigger} (attempt {attempt})"
+                            )
+                            return
                         logger.warning(
                             "⚠️ Initial greeting requested but speech did not start "
                             f"(attempt {attempt})"
                         )
 
-                await asyncio.sleep(0.25)
+                if any(
+                    message.get("role") == "assistant"
+                    for message in conversation_messages
+                ):
+                    greeted_user = True
+                    logger.info(
+                        "🗣️ Initial greeting transcript arrived after the start timeout"
+                    )
+                    return
+
+                if user_turn_sequence > 0:
+                    greeted_user = True
+                    logger.info(
+                        "🗣️ User transcript arrived before the initial greeting; "
+                        "skipping greeting retry"
+                    )
+                    return
+
+                if attempt < 2:
+                    if user_is_speaking:
+                        logger.info(
+                            "⏳ Waiting briefly for initial user VAD to settle before "
+                            "greeting retry"
+                        )
+                        if await wait_for_real_user_turn_or_vad_settle():
+                            greeted_user = True
+                            logger.info(
+                                "🗣️ User transcript arrived while waiting; "
+                                "skipping greeting retry"
+                            )
+                            return
+                        if user_is_speaking:
+                            logger.warning(
+                                "⚠️ Initial user VAD stayed active without a transcript; "
+                                "continuing greeting retry"
+                            )
+                        else:
+                            logger.info(
+                                "🎙️ Initial user VAD settled without a transcript; "
+                                "continuing greeting retry"
+                            )
+
+                    if realtime_generation_is_in_progress():
+                        logger.warning(
+                            "⚠️ Cancelling stalled initial greeting before its only retry"
+                        )
+                        try:
+                            await session.interrupt(force=True)
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to cancel stalled initial greeting: {e}"
+                            )
+                    await asyncio.sleep(0.25)
 
             logger.warning(
-                "⚠️ Initial greeting skipped after retries: session is not running"
+                "⚠️ Initial greeting did not produce speech after both attempts"
             )
 
     shutdown_saved = False
@@ -2551,17 +2717,34 @@ async def entrypoint(ctx: JobContext):
                 return
 
             if silence_nudge_count >= max_nudges:
+                retry_minutes = get_no_response_retry_minutes()
                 result = await schedule_retry_after_user_silence()
                 if result and result.get("action") == "retry_limit_reached":
-                    farewell_text = conversation_phrases["retry_limit_farewell"]
+                    farewell_text = get_retry_limit_alarm_farewell(
+                        conversation_language
+                    )
+                    start_local_alarm_after_call = True
                 elif result and result.get("action") == "retry_scheduled":
-                    farewell_text = conversation_phrases["retry_scheduled_farewell"]
+                    retry_minutes = int(
+                        result.get("retryMinutes", retry_minutes) or retry_minutes
+                    )
+                    farewell_text = get_retry_scheduled_farewell(
+                        conversation_language,
+                        retry_minutes,
+                    )
+                    start_local_alarm_after_call = False
                 else:
-                    farewell_text = conversation_phrases["silence_farewell"]
+                    # If the backend cannot guarantee another call, prefer the local
+                    # alarm safety net instead of leaving a sleeping user unattended.
+                    farewell_text = get_retry_limit_alarm_farewell(
+                        conversation_language
+                    )
+                    start_local_alarm_after_call = True
 
                 _trigger_hangup(
                     "📵 User remained silent after max nudges; ending call",
                     farewell_text,
+                    start_local_alarm_after_call=start_local_alarm_after_call,
                 )
                 return
 

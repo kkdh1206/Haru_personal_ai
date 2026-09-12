@@ -23,13 +23,11 @@ import { resolveSpeechStyle } from 'src/prompt/speech-style';
 import { CancelOnboardingTestCallDto } from './dto/cancel-onboarding-test-call.dto';
 import { BillingService } from 'src/billing/billing.service';
 
-const HARU_NAME = '하루';
 const HARI_NAME = '하리';
-const HARU_VOICE = 'Achird';
 const HARI_VOICE = 'Leda';
 const DEFAULT_WAKE_INTENSITY = 'gentle';
 const DEFAULT_PREWARM_LEAD_SECONDS = 20;
-const DEFAULT_RETRY_MINUTES = 2;
+const DEFAULT_RETRY_MINUTES = 5;
 const MAX_DAILY_RETRY_CALLS = 2;
 const MAX_DAILY_CALLS = 3;
 const DEFAULT_CALL_AGENT_CHECK_TIMEOUT_MS = 1000;
@@ -105,13 +103,12 @@ export class AlarmService implements OnModuleInit {
 
   private normalizeAlarmPayload(dto: Partial<AlarmDto | TestCallDto>) {
     const wakeIntensity = this.normalizeWakeIntensity(dto.wakeIntensity);
-    const role = dto.role === HARU_NAME ? HARU_NAME : HARI_NAME;
 
     return {
       ...dto,
       personality: wakeIntensity,
-      role,
-      voice: role === HARI_NAME ? HARI_VOICE : HARU_VOICE,
+      role: HARI_NAME,
+      voice: HARI_VOICE,
       wakeIntensity,
     };
   }
@@ -186,12 +183,10 @@ export class AlarmService implements OnModuleInit {
     const wakeIntensity = this.normalizeWakeIntensity(
       alarmObject.wakeIntensity,
     );
-    const role = alarmObject.role === HARU_NAME ? HARU_NAME : HARI_NAME;
-
     return {
       ...alarmObject,
-      role,
-      voice: role === HARI_NAME ? HARI_VOICE : HARU_VOICE,
+      role: HARI_NAME,
+      voice: HARI_VOICE,
       personality: wakeIntensity,
       wakeIntensity,
     };
@@ -1063,7 +1058,7 @@ export class AlarmService implements OnModuleInit {
   async sendOnboardingTestCall(
     userId: string,
     roomName: string,
-    role = HARI_NAME,
+    _legacyRole = HARI_NAME,
   ) {
     const deviceToken = await this.userService.getUserDeviceToken(userId);
     if (!deviceToken?.deviceToken) {
@@ -1081,7 +1076,7 @@ export class AlarmService implements OnModuleInit {
     const pushResult =
       deviceToken.deviceType === 'android'
         ? await this.fcmService.sendCallPush(deviceToken.deviceToken, {
-            caller: role,
+            caller: HARI_NAME,
             lkUrl: this.livekitUrl,
             lkToken: tokenClient,
             alarmId,
@@ -1089,7 +1084,7 @@ export class AlarmService implements OnModuleInit {
         : await this.apnsService.sendVoipPush(
             deviceToken.deviceToken,
             {
-              caller: role,
+              caller: HARI_NAME,
               livekitToken: tokenClient,
               alarmId,
             },

@@ -4,6 +4,8 @@ enum AlarmDateFormatter {
     static let time: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ko_KR")
+        formatter.calendar = .autoupdatingCurrent
+        formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "HH:mm"
         return formatter
     }()
@@ -26,7 +28,7 @@ enum AlarmDateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = .current
+        formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
@@ -58,7 +60,9 @@ struct AlarmTabView: View {
     @State private var alarms: [Alarm] = []
     @State private var isLoading = false
     @State private var editorContext: AlarmEditorContext?
-    @State private var selectedCharacter = CharacterPreferenceStore.current
+    @State private var pendingWeekdaySaves: Set<Int> = []
+    @State private var showAlarmSaveError = false
+    private let character = CharacterPreference.hari
     @State private var now = Date()
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -81,7 +85,7 @@ struct AlarmTabView: View {
     }
 
     private var nextAlarmSummary: NextAlarmSummary? {
-        let calendar = Calendar.current
+        let calendar = Calendar.autoupdatingCurrent
 
         let candidates: [(Date, Alarm)] = alarms.compactMap { alarm in
             guard alarm.isOn else { return nil }
@@ -165,14 +169,13 @@ struct AlarmTabView: View {
                 )
             }
             .task {
-                selectedCharacter = CharacterPreferenceStore.current
                 loadAlarms()
-            }
-            .onAppear {
-                selectedCharacter = CharacterPreferenceStore.current
             }
             .onReceive(ticker) { date in
                 now = date
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.NSSystemTimeZoneDidChange)) { _ in
+                loadAlarms()
             }
         }
     }
@@ -212,10 +215,10 @@ struct AlarmTabView: View {
             HStack {
                 Spacer()
 
-                Image(selectedCharacter.assetName(for: currentDayPeriod))
+                Image(character.assetName(for: currentDayPeriod))
                     .resizable()
                     .scaledToFit()
-                    .frame(width: selectedCharacter == .haru ? 246 : 210)
+                    .frame(width: 210)
                     .shadow(color: Color.black.opacity(0.10), radius: 18, y: 14)
 
                 Spacer()
@@ -232,6 +235,8 @@ struct AlarmTabView: View {
                 WeekdayAlarmCard(
                     slot: slot,
                     isToday: slot.day == todayWeekday,
+                    isPending: pendingWeekdaySaves.contains(slot.day),
+                    isDisabled: !pendingWeekdaySaves.isEmpty,
                     onTap: {
                         handleWeekdayTap(slot)
                     }
@@ -244,6 +249,11 @@ struct AlarmTabView: View {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .fill(Color.white.opacity(0.90))
         )
+        .alert(localized("알람 저장 실패"), isPresented: $showAlarmSaveError) {
+            Button(localized("확인"), role: .cancel) {}
+        } message: {
+            Text(localized("알람 저장에 실패했어요. 네트워크를 확인하고 다시 시도해 주세요."))
+        }
     }
 
     private func countdownLabel(_ text: String) -> some View {
@@ -296,7 +306,7 @@ struct AlarmTabView: View {
     }
 
     private var todayWeekday: Int {
-        Calendar.current.component(.weekday, from: Date()) - 1
+        Calendar.autoupdatingCurrent.component(.weekday, from: Date()) - 1
     }
 
     private func makeWeekdayContext(for day: Int, existingAlarm: Alarm?) -> AlarmEditorContext {
@@ -357,7 +367,7 @@ struct AlarmTabView: View {
                 isOn: !updatedDays.isEmpty && alarm.isOn,
                 wakeIntensity: alarm.wakeIntensity,
                 personality: alarm.personality
-            ) {
+            ) { _ in
                 loadAlarms()
             }
             return
@@ -371,19 +381,49 @@ struct AlarmTabView: View {
             isOn: value,
             wakeIntensity: alarm.wakeIntensity,
             personality: alarm.personality
-        ) {
+        ) { _ in
             loadAlarms()
         }
     }
 
     private func handleWeekdayTap(_ slot: WeekdaySlot) {
+        guard pendingWeekdaySaves.isEmpty else { return }
         editorContext = makeWeekdayContext(for: slot.day, existingAlarm: slot.alarm)
     }
 
     private func saveWeekdayAlarm(day: Int, context: AlarmEditorContext, result: AlarmEditorResult) {
+        guard pendingWeekdaySaves.isEmpty else { return }
+
         let time = AlarmDateFormatter.time.string(from: result.time)
         let wakeIntensity = wakeIntensityValue(for: result.wakeStyle)
         let personality = result.wakeStyle
+        let previousAlarms = alarms
+
+        applyOptimisticWeekdaySave(
+            day: day,
+            existing: context.existingAlarm,
+            time: time,
+            wakeIntensity: wakeIntensity,
+            personality: personality
+        )
+        pendingWeekdaySaves.insert(day)
+
+        let finish: (Result<Alarm, Error>) -> Void = { result in
+            pendingWeekdaySaves.remove(day)
+            switch result {
+            case .success(let savedAlarm):
+                alarms.removeAll {
+                    $0.id.hasPrefix("pending-") && $0.repeatDays.contains(day)
+                }
+                replaceAlarm(savedAlarm)
+                loadAlarms()
+            case .failure(let error):
+                alarms = previousAlarms
+                showAlarmSaveError = true
+                print("❌ 알람 저장 실패: \(error)")
+                loadAlarms()
+            }
+        }
 
         if let existing = context.existingAlarm {
             if existing.repeatDays == [day] || Set(existing.repeatDays) == Set([day]) {
@@ -395,9 +435,7 @@ struct AlarmTabView: View {
                     isOn: true,
                     wakeIntensity: wakeIntensity,
                     personality: personality
-                ) {
-                    loadAlarms()
-                }
+                ) { finish($0) }
             } else {
                 let remainingDays = existing.repeatDays.filter { $0 != day }
                 updateAlarm(
@@ -408,7 +446,11 @@ struct AlarmTabView: View {
                     isOn: existing.isOn,
                     wakeIntensity: existing.wakeIntensity,
                     personality: existing.personality
-                ) {
+                ) { updateResult in
+                    guard case .success = updateResult else {
+                        finish(updateResult)
+                        return
+                    }
                     createAlarm(
                         time: time,
                         repeatDays: [day],
@@ -416,9 +458,7 @@ struct AlarmTabView: View {
                         isOn: true,
                         wakeIntensity: wakeIntensity,
                         personality: personality
-                    ) { _ in
-                        loadAlarms()
-                    }
+                    ) { finish($0) }
                 }
             }
         } else {
@@ -429,10 +469,52 @@ struct AlarmTabView: View {
                 isOn: true,
                 wakeIntensity: wakeIntensity,
                 personality: personality
-            ) { _ in
-                loadAlarms()
-            }
+            ) { finish($0) }
         }
+    }
+
+    private func applyOptimisticWeekdaySave(
+        day: Int,
+        existing: Alarm?,
+        time: String,
+        wakeIntensity: String,
+        personality: String
+    ) {
+        if var existing {
+            if existing.repeatDays.count == 1, existing.repeatDays.contains(day) {
+                existing.time = time
+                existing.isOn = true
+                existing.wakeIntensity = wakeIntensity
+                existing.personality = personality
+                replaceAlarm(existing)
+                return
+            }
+
+            var remainingAlarm = existing
+            remainingAlarm.repeatDays.removeAll { $0 == day }
+            replaceAlarm(remainingAlarm)
+        }
+
+        alarms.append(
+            Alarm(
+                id: "pending-\(UUID().uuidString)",
+                time: time,
+                isOn: true,
+                repeatDays: [day],
+                personality: personality,
+                voice: character.voiceName,
+                role: character.roleName,
+                wakeIntensity: wakeIntensity
+            )
+        )
+    }
+
+    private func replaceAlarm(_ alarm: Alarm) {
+        guard let index = alarms.firstIndex(where: { $0.id == alarm.id }) else {
+            alarms.append(alarm)
+            return
+        }
+        alarms[index] = alarm
     }
 
     private func loadAlarms() {
@@ -443,8 +525,7 @@ struct AlarmTabView: View {
                 switch result {
                 case .success(let data):
                     alarms = data
-                    let recurring = data.filter { ($0.targetDate ?? "").isEmpty }
-                    LocalCallFallbackScheduler.shared.syncFallbacks(with: recurring)
+                    LocalCallFallbackScheduler.shared.syncFallbacks(with: data)
                 case .failure(let error):
                     print("❌ 알람 가져오기 실패: \(error)")
                 }
@@ -462,10 +543,10 @@ struct AlarmTabView: View {
         personality: String,
         completion: @escaping (Result<Alarm, Error>) -> Void
     ) {
-        let character = CharacterPreferenceStore.current
+        let character = CharacterPreference.hari
         var body: [String: Any] = [
             "time": time,
-            "timeZone": TimeZone.current.identifier,
+            "timeZone": TimeZone.autoupdatingCurrent.identifier,
             "repeatDays": repeatDays,
             "isOn": isOn,
             "wakeIntensity": wakeIntensity,
@@ -495,12 +576,12 @@ struct AlarmTabView: View {
         isOn: Bool,
         wakeIntensity: String,
         personality: String,
-        completion: @escaping () -> Void
+        completion: @escaping (Result<Alarm, Error>) -> Void
     ) {
-        let character = CharacterPreferenceStore.current
+        let character = CharacterPreference.hari
         var body: [String: Any] = [
             "time": time,
-            "timeZone": TimeZone.current.identifier,
+            "timeZone": TimeZone.autoupdatingCurrent.identifier,
             "repeatDays": repeatDays,
             "isOn": isOn,
             "wakeIntensity": wakeIntensity,
@@ -521,7 +602,7 @@ struct AlarmTabView: View {
                 if case .success(let updatedAlarm) = result {
                     LocalCallFallbackScheduler.shared.rescheduleFallback(for: updatedAlarm)
                 }
-                completion()
+                completion(result)
             }
         }
     }
@@ -555,7 +636,7 @@ struct AlarmTabView: View {
     }
 
     private func merge(date: Date, time: String) -> Date {
-        let calendar = Calendar.current
+        let calendar = Calendar.autoupdatingCurrent
         let components = time.split(separator: ":").compactMap { Int($0) }
         let hour = components.first ?? 7
         let minute = components.count > 1 ? components[1] : 30
@@ -598,7 +679,7 @@ struct AlarmTabView: View {
             return AppLocalizer.string("내일은 알람이 없어요.", language: language)
         }
 
-        let calendar = Calendar.current
+        let calendar = Calendar.autoupdatingCurrent
         let dayText: String
         if calendar.isDateInToday(date) {
             dayText = AppLocalizer.string("오늘", language: language)
@@ -711,6 +792,8 @@ private struct SettingsGlassModifier: ViewModifier {
 private struct WeekdayAlarmCard: View {
     let slot: WeekdaySlot
     let isToday: Bool
+    let isPending: Bool
+    let isDisabled: Bool
     let onTap: () -> Void
 
     var body: some View {
@@ -735,6 +818,15 @@ private struct WeekdayAlarmCard: View {
                 .fill(isToday ? Color(red: 0.41, green: 0.63, blue: 0.95).opacity(0.92) : Color.clear)
         )
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(alignment: .topTrailing) {
+            if isPending {
+                ProgressView()
+                    .controlSize(.mini)
+                    .padding(3)
+            }
+        }
+        .opacity(isDisabled && !isPending ? 0.62 : 1)
+        .allowsHitTesting(!isDisabled)
         .onTapGesture(perform: onTap)
     }
 }

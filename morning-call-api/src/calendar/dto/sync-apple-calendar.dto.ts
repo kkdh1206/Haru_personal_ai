@@ -32,27 +32,22 @@ export class AppleCalendarEventDto {
   @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
-  description?: string;
-
-  @ApiProperty({ required: false })
-  @IsString()
-  @IsOptional()
   location?: string;
 
   @ApiProperty({ required: false, default: false })
   @IsBoolean()
   @IsOptional()
   allDay?: boolean;
-
-  @ApiProperty({ required: false })
-  @IsString()
-  @IsOptional()
-  calendarTitle?: string;
 }
 
-export class SyncAppleCalendarDto {
+export class MorningCallAppleCalendarDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  requestId: string;
+
   @ApiProperty({ type: [AppleCalendarEventDto] })
   @IsArray()
-  @ArrayMaxSize(2000)
+  @ArrayMaxSize(200)
   events: AppleCalendarEventDto[];
 }

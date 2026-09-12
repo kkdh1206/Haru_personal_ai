@@ -53,7 +53,6 @@ struct RootView: View {
                             registerDeviceTokenToAPI()
                             TimeZoneSyncManager.syncCurrentTimeZone()
                             CurrentLocationManager.shared.refreshAndSaveIfAuthorized(env: env)
-                            AppleCalendarService.shared.syncIfNeeded()
                         }
                 }
             } else {
@@ -83,7 +82,6 @@ struct RootView: View {
             guard phase == .active, viewModel.isLoggedIn, env.onboardingStep == .completed else { return }
             TimeZoneSyncManager.syncCurrentTimeZone()
             CurrentLocationManager.shared.refreshAndSaveIfAuthorized(env: env)
-            AppleCalendarService.shared.syncIfNeeded()
         }
         .environment(\.locale, env.appLanguage.locale)
         .environmentObject(viewModel)
@@ -147,9 +145,13 @@ class AuthViewModel: ObservableObject {
 
     func checkAuthState() {
         isLoggedIn = Auth.auth().currentUser != nil
+        if !isLoggedIn {
+            LocalCallFallbackScheduler.shared.resetAllFallbacks()
+        }
     }
 
     func signOut() {
+        LocalCallFallbackScheduler.shared.resetAllFallbacks()
         DeviceTokenManager.shared.invalidateRegistration()
         GIDSignIn.sharedInstance.signOut()
         AuthTokenManager.shared.idToken = nil

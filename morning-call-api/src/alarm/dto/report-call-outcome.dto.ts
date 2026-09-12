@@ -32,10 +32,10 @@ export class ReportCallOutcomeDto {
   @IsBoolean()
   hadUserResponse?: boolean = false;
 
-  @ApiProperty({ required: false, default: 2, minimum: 1, maximum: 30 })
+  @ApiProperty({ required: false, default: 5, minimum: 1, maximum: 30 })
   @IsOptional()
   @IsInt()
   @Min(1)
   @Max(30)
-  retryMinutes?: number = 2;
+  retryMinutes?: number = 5;
 }

@@ -68,6 +68,7 @@ project.xcworkspace
 google-services.json
 GoogleService-Info.plist
 *.json
+!morning-call-ios/morningcall/Assets.xcassets/**/Contents.json
 !morning-call-api/package.json
 !morning-call-api/tsconfig.json
 !morning-call-api/tsconfig.build.json

@@ -42,7 +42,7 @@ export default () => ({
   // Alarm
   alarm: {
     prewarmLeadSeconds: process.env.ALARM_CALL_LEAD_SECONDS || '20',
-    retryMinutes: process.env.ALARM_RETRY_MINUTES || '2',
+    retryMinutes: process.env.ALARM_RETRY_MINUTES || '5',
     maxDailyRetryCalls: process.env.ALARM_MAX_DAILY_RETRY_CALLS || '2',
     callAgentCheckTimeoutMs:
       process.env.ALARM_CALL_AGENT_CHECK_TIMEOUT_MS || '1000',

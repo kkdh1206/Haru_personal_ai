@@ -191,8 +191,8 @@ struct FeatureIntroView: View {
         ),
         FeatureIntroItem(
             iconName: "waveform",
-            title: "목소리와 캐릭터를 고를 수 있어요",
-            description: "기상 전화에 어울리는 목소리와 캐릭터를 설정할 수 있어요."
+            title: "하리가 아침마다 전화해요",
+            description: "밝고 명랑한 하리가 기상 전화를 걸어 깨워드려요."
         ),
         FeatureIntroItem(
             iconName: "moon.zzz.fill",

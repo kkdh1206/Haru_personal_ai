@@ -243,7 +243,7 @@ class BackendApiClient:
             return {"success": False, "message": f"일정 저장 실패: {e!s}"}
 
     async def request_retry_call(
-        self, alarm_id: str, retry_minutes: int = 3
+        self, alarm_id: str, retry_minutes: int = 5
     ) -> dict[str, Any]:
         try:
             response = await self.client.post(

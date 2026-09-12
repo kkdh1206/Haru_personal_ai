@@ -1,36 +1,34 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
-import { Model } from 'mongoose';
+import { randomUUID } from 'node:crypto';
 import { ApnsService } from 'src/apns/apns.service';
 import { UserService } from 'src/user/user.service';
-import { CompleteAppleCalendarEventDto } from './dto/complete-apple-calendar-event.dto';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import {
   AppleCalendarEventDto,
-  SyncAppleCalendarDto,
+  MorningCallAppleCalendarDto,
 } from './dto/sync-apple-calendar.dto';
-import {
-  AppleCalendarEvent,
-  AppleCalendarEventDocument,
-} from './schemas/apple-calendar-event.schema';
-import {
-  PendingAppleCalendarEvent,
-  PendingAppleCalendarEventDocument,
-} from './schemas/pending-apple-calendar-event.schema';
 
 @Injectable()
 export class CalendarService {
+  private readonly appleCalendarQueryTimeoutMs = 5000;
+  private readonly pendingAppleCalendarQueries = new Map<
+    string,
+    {
+      userId: string;
+      resolve: (
+        events: ReturnType<CalendarService['normalizeAppleEvents']>,
+      ) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
+
   constructor(
     private readonly userService: UserService,
     private readonly cs: ConfigService,
     private readonly apnsService: ApnsService,
-    @InjectModel(AppleCalendarEvent.name)
-    private readonly appleEventModel: Model<AppleCalendarEventDocument>,
-    @InjectModel(PendingAppleCalendarEvent.name)
-    private readonly pendingAppleEventModel: Model<PendingAppleCalendarEventDocument>,
   ) {}
 
   private getCalendarErrorMessage(error: unknown) {
@@ -121,19 +119,20 @@ export class CalendarService {
     return { timeZone, allDay, resolvedEndTime };
   }
 
-  async getTodayEvents(userId: string) {
+  async getTodayEvents(
+    userId: string,
+    options: { requestAppleCalendar?: boolean } = {},
+  ) {
     const provider = await this.userService.getCalendarProvider(userId);
     if (provider === 'apple') {
-      const user = await this.userService.findOne(userId as any);
-      const timeZone = user?.timeZone || 'Asia/Seoul';
-      const today = DateTime.now().setZone(timeZone).toISODate();
-      return this.getAppleSchedule(userId, today, timeZone);
+      return options.requestAppleCalendar
+        ? this.requestMorningCallAppleCalendar(userId)
+        : [];
     }
     if (provider !== 'google') return [];
 
     try {
-      const { calendar, timeZone } =
-        await this.getGoogleCalendarClient(userId);
+      const { calendar, timeZone } = await this.getGoogleCalendarClient(userId);
       const now = DateTime.now().setZone(timeZone);
 
       const res = await calendar.events.list({
@@ -166,7 +165,8 @@ export class CalendarService {
     const timeZone = user?.timeZone || 'Asia/Seoul';
 
     if (provider === 'apple') {
-      return this.getAppleSchedule(userId, date, timeZone);
+      // Apple EventKit data is intentionally fetched only for a morning call.
+      return [];
     }
     if (provider !== 'google') return [];
 
@@ -198,37 +198,10 @@ export class CalendarService {
     }
   }
 
-  private async getAppleSchedule(
-    userId: string,
-    date: string,
-    timeZone: string,
-  ) {
-    const target = DateTime.fromISO(date, { zone: timeZone });
-    if (!target.isValid) return [];
-
-    const events = await this.appleEventModel
-      .find({
-        userId,
-        startAt: { $lt: target.endOf('day').toUTC().toJSDate() },
-        endAt: { $gt: target.startOf('day').toUTC().toJSDate() },
-      })
-      .sort({ allDay: -1, startAt: 1 })
-      .lean();
-
-    return events.map((event) => ({
-      id: event.externalId,
-      summary: event.summary,
-      description: event.description,
-      start: event.start,
-      end: event.end,
-      location: event.location,
-    }));
-  }
-
   async createEvent(userId: string, dto: CreateCalendarEventDto) {
     const provider = await this.userService.getCalendarProvider(userId);
     if (provider === 'apple') {
-      return this.queueAppleCalendarEvent(userId, dto);
+      return this.sendAppleCalendarEventToDevice(userId, dto);
     }
     if (provider !== 'google') {
       return {
@@ -297,113 +270,106 @@ export class CalendarService {
   async disconnectAppleCalendar(userId: string) {
     const user = await this.userService.disconnectAppleCalendar(userId);
     if (!user) throw new NotFoundException('User not found');
-    await Promise.all([
-      this.appleEventModel.deleteMany({ userId }),
-      this.pendingAppleEventModel.deleteMany({ userId, status: 'pending' }),
-    ]);
     return this.userService.getCalendarStatus(userId);
   }
 
-  async syncAppleCalendar(userId: string, dto: SyncAppleCalendarDto) {
-    const status = await this.userService.getCalendarStatus(userId);
-    if (!status.appleConnected) {
-      throw new NotFoundException('Apple Calendar is not connected');
-    }
-
+  private async requestMorningCallAppleCalendar(userId: string) {
     const user = await this.userService.findOne(userId as any);
     const timeZone = user?.timeZone || 'Asia/Seoul';
+    const device = await this.userService.getUserDeviceToken(userId);
+    if (device?.deviceType !== 'ios' || !device.notificationToken) {
+      console.warn(
+        `[Calendar] Apple morning-call query skipped: notification token missing user=${userId}`,
+      );
+      return [];
+    }
+
+    const now = DateTime.now().setZone(timeZone);
+    const requestId = randomUUID();
+    const rangeStart = now.startOf('day').toUTC().toISO();
+    const rangeEnd = now.endOf('day').toUTC().toISO();
+    if (!rangeStart || !rangeEnd) return [];
+
+    const eventsPromise = new Promise<
+      ReturnType<CalendarService['normalizeAppleEvents']>
+    >((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingAppleCalendarQueries.delete(requestId);
+        console.warn(
+          `[Calendar] Apple morning-call query timed out user=${userId}`,
+        );
+        resolve([]);
+      }, this.appleCalendarQueryTimeoutMs);
+
+      this.pendingAppleCalendarQueries.set(requestId, {
+        userId: userId.toString(),
+        resolve,
+        timeout,
+      });
+    });
+
+    try {
+      const pushResult = await this.apnsService.sendAppleCalendarQueryPush(
+        device.notificationToken,
+        { requestId, rangeStart, rangeEnd },
+        device.apnsEnvironment,
+      );
+      if (!pushResult.sent.length) {
+        this.resolveAppleCalendarQuery(requestId, []);
+      }
+    } catch (error) {
+      console.warn('[Calendar] Apple morning-call query push failed', error);
+      this.resolveAppleCalendarQuery(requestId, []);
+    }
+
+    return eventsPromise;
+  }
+
+  receiveMorningCallAppleCalendar(
+    userId: string,
+    dto: MorningCallAppleCalendarDto,
+  ) {
+    const pending = this.pendingAppleCalendarQueries.get(dto.requestId);
+    if (!pending || pending.userId !== userId.toString()) {
+      return { accepted: false, reason: 'request_expired' };
+    }
+
+    const events = this.normalizeAppleEvents(dto.events || []);
+    this.resolveAppleCalendarQuery(dto.requestId, events);
+    return { accepted: true, received: events.length };
+  }
+
+  private normalizeAppleEvents(events: AppleCalendarEventDto[]) {
     const uniqueEvents = new Map<string, AppleCalendarEventDto>();
-    for (const event of dto.events || []) {
+    for (const event of events.slice(0, 200)) {
       if (event.externalId && event.title && event.startTime && event.endTime) {
         uniqueEvents.set(event.externalId, event);
       }
     }
 
-    const documents = Array.from(uniqueEvents.values())
-      .map((event) => this.appleEventDocument(userId, event, timeZone))
-      .filter(Boolean);
-
-    await this.appleEventModel.deleteMany({ userId });
-    if (documents.length) {
-      await this.appleEventModel.insertMany(documents, { ordered: false });
-    }
-
-    const syncedAt = new Date();
-    await this.userService.markAppleCalendarSynced(userId, syncedAt);
-    return { synced: documents.length, syncedAt: syncedAt.toISOString() };
-  }
-
-  private appleEventDocument(
-    userId: string,
-    event: AppleCalendarEventDto,
-    timeZone: string,
-  ) {
-    const allDay =
-      Boolean(event.allDay) ||
-      this.isAllDayValue(event.startTime) ||
-      this.isAllDayValue(event.endTime);
-    const start = DateTime.fromISO(event.startTime, { zone: timeZone });
-    const end = DateTime.fromISO(event.endTime, { zone: timeZone });
-    if (!start.isValid || !end.isValid || end <= start) return null;
-
-    return {
-      userId,
-      externalId: event.externalId,
+    return Array.from(uniqueEvents.values()).map((event) => ({
+      id: event.externalId,
       summary: event.title,
-      description: event.description || null,
+      description: null,
       start: event.startTime,
       end: event.endTime,
-      startAt: start.toUTC().toJSDate(),
-      endAt: end.toUTC().toJSDate(),
       location: event.location || null,
-      allDay,
-      calendarTitle: event.calendarTitle || null,
-    };
-  }
-
-  async getPendingAppleCalendarEvents(userId: string) {
-    const events = await this.pendingAppleEventModel
-      .find({ userId, status: 'pending' })
-      .sort({ createdAt: 1 })
-      .limit(50)
-      .lean();
-
-    return events.map((event) => ({
-      id: event._id.toString(),
-      title: event.title,
-      startTime: event.startTime,
-      endTime: event.endTime,
-      description: event.description,
-      location: event.location,
-      allDay: event.allDay,
-      timeZone: event.timeZone,
     }));
   }
 
-  async completePendingAppleCalendarEvent(
-    userId: string,
-    eventId: string,
-    dto: CompleteAppleCalendarEventDto,
+  private resolveAppleCalendarQuery(
+    requestId: string,
+    events: ReturnType<CalendarService['normalizeAppleEvents']>,
   ) {
-    const event = await this.pendingAppleEventModel
-      .findOneAndUpdate(
-        { _id: eventId, userId, status: 'pending' },
-        {
-          $set: {
-            status: dto.success ? 'completed' : 'failed',
-            deviceEventId: dto.eventIdentifier || null,
-            errorMessage: dto.errorMessage || null,
-            completedAt: new Date(),
-          },
-        },
-        { new: true },
-      )
-      .lean();
-    if (!event) throw new NotFoundException('Pending calendar event not found');
-    return { completed: dto.success };
+    const pending = this.pendingAppleCalendarQueries.get(requestId);
+    if (!pending) return;
+
+    clearTimeout(pending.timeout);
+    this.pendingAppleCalendarQueries.delete(requestId);
+    pending.resolve(events);
   }
 
-  private async queueAppleCalendarEvent(
+  private async sendAppleCalendarEventToDevice(
     userId: string,
     dto: CreateCalendarEventDto,
   ) {
@@ -412,38 +378,55 @@ export class CalendarService {
       dto,
       user?.timeZone || 'Asia/Seoul',
     );
-    const event = await this.pendingAppleEventModel.create({
-      userId,
-      title: dto.title,
-      startTime: dto.startTime,
-      endTime: resolvedEndTime,
-      description: dto.description || null,
-      location: dto.location || null,
-      allDay,
-      timeZone,
-    });
-
-    try {
-      const device = await this.userService.getUserDeviceToken(userId);
-      if (device?.deviceType === 'ios' && device.notificationToken) {
-        await this.apnsService.sendAppleCalendarSyncPush(
-          device.notificationToken,
-          device.apnsEnvironment,
-        );
-      }
-    } catch (error) {
-      console.warn('[Calendar] Apple Calendar sync push failed', error);
+    const device = await this.userService.getUserDeviceToken(userId);
+    if (device?.deviceType !== 'ios' || !device.notificationToken) {
+      return {
+        success: false,
+        message:
+          'iPhone에 연결할 수 없어 Apple Calendar에 일정을 추가하지 못했습니다.',
+      };
     }
 
-    return {
-      success: true,
-      pending: true,
-      eventId: event._id.toString(),
-      start: dto.startTime,
-      end: resolvedEndTime,
-      timeZone,
-      allDay,
-      message: 'iPhone의 Apple Calendar에 일정을 추가하도록 요청했습니다.',
-    };
+    try {
+      const eventId = randomUUID();
+      const pushResult =
+        await this.apnsService.sendAppleCalendarCreateEventPush(
+          device.notificationToken,
+          {
+            eventId,
+            title: dto.title,
+            startTime: dto.startTime,
+            endTime: resolvedEndTime,
+            description: dto.description || '',
+            location: dto.location || '',
+            allDay,
+            timeZone,
+          },
+          device.apnsEnvironment,
+        );
+      if (!pushResult.sent.length) {
+        return {
+          success: false,
+          message: 'iPhone에 일정 추가 요청을 전달하지 못했습니다.',
+        };
+      }
+
+      return {
+        success: true,
+        pending: true,
+        eventId,
+        start: dto.startTime,
+        end: resolvedEndTime,
+        timeZone,
+        allDay,
+        message: 'iPhone의 Apple Calendar에 일정을 추가하도록 요청했습니다.',
+      };
+    } catch (error) {
+      console.warn('[Calendar] Apple Calendar event push failed', error);
+      return {
+        success: false,
+        message: 'iPhone에 일정 추가 요청을 전달하지 못했습니다.',
+      };
+    }
   }
 }

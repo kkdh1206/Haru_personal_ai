@@ -34,7 +34,7 @@ final class LocalCallFallbackScheduler {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = .current
+        formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
@@ -172,21 +172,62 @@ final class LocalCallFallbackScheduler {
         }
     }
 
-    private func cancelAllFallbacks() {
-        let dueAlarmIds = markDueFallbacksForPushIgnore()
+    func resetAllFallbacks(completion: (() -> Void)? = nil) {
+        monitorQueue.async { [weak self] in
+            guard let self else {
+                DispatchQueue.main.async { completion?() }
+                return
+            }
 
-        center.getPendingNotificationRequests { [weak self] requests in
-            guard let self else { return }
+            let cachedAlarmsToCancel = self.cachedAlarms
+            self.cachedAlarms.removeAll()
+            self.cancelAlarmKitFallbacks(for: cachedAlarmsToCancel)
+            self.cancelAllRememberedAlarmKitFallbacks()
+            self.clearScheduledFallbackFireDates()
+            self.defaults.removeObject(forKey: self.ignoredPushAlarmIdsKey)
 
-            let pendingIds = requests
-                .map(\.identifier)
-                .filter { $0.hasPrefix(self.identifierPrefix) }
+            self.center.getPendingNotificationRequests { requests in
+                let pendingIds = requests
+                    .map(\.identifier)
+                    .filter { $0.hasPrefix(self.identifierPrefix) }
 
-            self.center.removePendingNotificationRequests(withIdentifiers: pendingIds)
-            self.removeDeliveredFallbacks()
+                self.center.removePendingNotificationRequests(withIdentifiers: pendingIds)
+                self.center.getDeliveredNotifications { notifications in
+                    let deliveredIds = notifications
+                        .map(\.request.identifier)
+                        .filter { $0.hasPrefix(self.identifierPrefix) }
+
+                    self.center.removeDeliveredNotifications(withIdentifiers: deliveredIds)
+                    print("🧹 Cleared all Haru local fallback alarms")
+                    DispatchQueue.main.async { completion?() }
+                }
+            }
         }
-        cancelAlarmKitFallbacks(for: cachedAlarms.filter { !dueAlarmIds.contains($0.id) })
-        clearScheduledFallbackFireDates()
+    }
+
+    /// Starts a local wake alarm after the final unanswered call. AlarmKit keeps
+    /// alerting until the user stops it; older iOS versions receive an immediate
+    /// notification plus a repeating reminder as a best-effort fallback.
+    func startPostCallWakeAlarm(alarmId: String, role: String) async {
+        guard !alarmId.isEmpty else { return }
+
+        if #available(iOS 26.0, *) {
+            do {
+                let state = try await ensureAlarmKitAuthorization()
+                if state == .authorized {
+                    try await scheduleAlarmKitPostCallWakeAlarm(
+                        alarmId: alarmId,
+                        role: role
+                    )
+                    return
+                }
+                print("⚠️ AlarmKit is not authorized. Using notification wake alarm:", state)
+            } catch {
+                print("❌ Post-call AlarmKit alarm failed:", error.localizedDescription)
+            }
+        }
+
+        schedulePostCallWakeNotifications(alarmId: alarmId, role: role)
     }
 
     private func scheduleFallback(for alarm: Alarm) {
@@ -285,7 +326,7 @@ final class LocalCallFallbackScheduler {
         }
 
         let fireDate = alarmDate.addingTimeInterval(fallbackDelay)
-        let fireWeekdayIndex = Calendar.current.component(.weekday, from: fireDate) - 1
+        let fireWeekdayIndex = Calendar.autoupdatingCurrent.component(.weekday, from: fireDate) - 1
         guard
             let fireWeekday = localeWeekday(for: fireWeekdayIndex),
             let fireTime = alarmKitTime(from: fireDate)
@@ -310,8 +351,37 @@ final class LocalCallFallbackScheduler {
     }
 
     @available(iOS 26.0, *)
+    private func scheduleAlarmKitPostCallWakeAlarm(
+        alarmId: String,
+        role: String
+    ) async throws {
+        let id = alarmKitId(for: "\(alarmId).post-call")
+        try? AlarmManager.shared.stop(id: id)
+        try? AlarmManager.shared.cancel(id: id)
+
+        _ = try await AlarmManager.shared.schedule(
+            id: id,
+            configuration: .alarm(
+                schedule: .fixed(Date().addingTimeInterval(3)),
+                attributes: alarmKitAttributes(alarmId: alarmId, role: role),
+                sound: .default
+            )
+        )
+        rememberAlarmKitFallback(id: id, alarmId: alarmId)
+        print("🚨 Scheduled persistent post-call AlarmKit alarm:", id)
+    }
+
+    @available(iOS 26.0, *)
     private func alarmKitAttributes(for alarm: Alarm) -> AlarmAttributes<HaruAlarmMetadata> {
-        let role = alarm.role.isEmpty ? "Haru" : alarm.role
+        alarmKitAttributes(alarmId: alarm.id, role: alarm.role)
+    }
+
+    @available(iOS 26.0, *)
+    private func alarmKitAttributes(
+        alarmId: String,
+        role requestedRole: String
+    ) -> AlarmAttributes<HaruAlarmMetadata> {
+        let role = requestedRole.isEmpty ? "Haru" : requestedRole
         let alert = AlarmPresentation.Alert(
             title: "\(role) 알람",
             stopButton: AlarmButton(
@@ -323,9 +393,50 @@ final class LocalCallFallbackScheduler {
 
         return AlarmAttributes(
             presentation: AlarmPresentation(alert: alert),
-            metadata: HaruAlarmMetadata(alarmId: alarm.id, role: role),
+            metadata: HaruAlarmMetadata(alarmId: alarmId, role: role),
             tintColor: Color(red: 0.41, green: 0.63, blue: 0.95)
         )
+    }
+
+    private func schedulePostCallWakeNotifications(alarmId: String, role: String) {
+        let prefix = fallbackPrefix(for: alarmId)
+        let identifiers = ["\(prefix)post-call-now", "\(prefix)post-call-repeat"]
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+
+        let content = UNMutableNotificationContent()
+        content.title = "\(role.isEmpty ? "Haru" : role) 알람"
+        content.body = "아직 일어나지 않았어요. 알람을 직접 꺼 주세요."
+        content.sound = UNNotificationSound(named: UNNotificationSoundName("IU_morningcall.wav"))
+        content.categoryIdentifier = Self.categoryIdentifier
+        content.userInfo = [
+            "alarmId": alarmId,
+            "type": "callFallback",
+        ]
+
+        if #available(iOS 15.0, *) {
+            content.interruptionLevel = .timeSensitive
+        }
+
+        let immediateRequest = UNNotificationRequest(
+            identifier: identifiers[0],
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        )
+        let repeatingRequest = UNNotificationRequest(
+            identifier: identifiers[1],
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 60, repeats: true)
+        )
+
+        [immediateRequest, repeatingRequest].forEach { request in
+            center.add(request) { error in
+                if let error {
+                    print("❌ Failed to schedule post-call wake notification:", error.localizedDescription)
+                } else {
+                    print("🚨 Scheduled post-call wake notification:", request.identifier)
+                }
+            }
+        }
     }
 
     private func scheduleOneTimeFallback(for alarm: Alarm, targetDate: String) {
@@ -341,7 +452,7 @@ final class LocalCallFallbackScheduler {
 
         rememberScheduledFallbackFireDate(for: alarm.id, fireDate: fireDate)
 
-        let components = Calendar.current.dateComponents(
+        let components = Calendar.autoupdatingCurrent.dateComponents(
             [.year, .month, .day, .hour, .minute, .second],
             from: fireDate
         )
@@ -357,7 +468,7 @@ final class LocalCallFallbackScheduler {
     private func scheduleWeeklyFallback(for alarm: Alarm, weekday: Int) {
         guard (0...6).contains(weekday) else { return }
 
-        let calendar = Calendar.current
+        let calendar = Calendar.autoupdatingCurrent
         let now = Date()
         let today = calendar.startOfDay(for: now)
         let todayWeekday = calendar.component(.weekday, from: today) - 1
@@ -443,7 +554,7 @@ final class LocalCallFallbackScheduler {
 
     @available(iOS 26.0, *)
     private func alarmKitTime(from date: Date) -> AlarmKit.Alarm.Schedule.Relative.Time? {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let components = Calendar.autoupdatingCurrent.dateComponents([.hour, .minute], from: date)
         guard let hour = components.hour, let minute = components.minute else { return nil }
         return .init(hour: hour, minute: minute)
     }
@@ -465,7 +576,7 @@ final class LocalCallFallbackScheduler {
     private func nextLocalDate(for weekday: Int, time: String) -> Date? {
         guard (0...6).contains(weekday) else { return nil }
 
-        let calendar = Calendar.current
+        let calendar = Calendar.autoupdatingCurrent
         let now = Date()
         let today = calendar.startOfDay(for: now)
         for offset in 0..<8 {
@@ -528,6 +639,11 @@ final class LocalCallFallbackScheduler {
         let idMap = alarmKitFallbackIdMap()
         guard let alarmId = idMap[id.uuidString] else { return }
 
+        if id == alarmKitId(for: "\(alarmId).post-call") {
+            print("🚨 Post-call AlarmKit alarm is alerting:", alarmId)
+            return
+        }
+
         var ignoredAlarmIds = pendingIgnoredPushAlarmIds()
         ignoredAlarmIds.insert(alarmId)
         savePendingIgnoredPushAlarmIds(ignoredAlarmIds)
@@ -543,7 +659,7 @@ final class LocalCallFallbackScheduler {
     private func cancelAlarmKitFallbacks(for alarmId: String) {
         guard #available(iOS 26.0, *) else { return }
 
-        let keys = ["\(alarmId).once"] + (0...6).compactMap { day -> String? in
+        let keys = ["\(alarmId).once", "\(alarmId).post-call"] + (0...6).compactMap { day -> String? in
             guard let weekday = localeWeekday(for: day) else { return nil }
             return "\(alarmId).weekday-\(weekday.rawValue)"
         }
@@ -554,6 +670,20 @@ final class LocalCallFallbackScheduler {
             try? AlarmManager.shared.cancel(id: id)
             removeAlarmKitFallback(id: id)
         }
+    }
+
+    private func cancelAllRememberedAlarmKitFallbacks() {
+        guard #available(iOS 26.0, *) else {
+            defaults.removeObject(forKey: alarmKitIdMapKey)
+            return
+        }
+
+        let ids = alarmKitFallbackIdMap().keys.compactMap(UUID.init(uuidString:))
+        ids.forEach { id in
+            try? AlarmManager.shared.stop(id: id)
+            try? AlarmManager.shared.cancel(id: id)
+        }
+        defaults.removeObject(forKey: alarmKitIdMapKey)
     }
 
     private func rememberAlarmKitFallback(id: UUID, alarmId: String) {
@@ -649,7 +779,7 @@ final class LocalCallFallbackScheduler {
         guard let hour = parts.first else { return nil }
 
         let minute = parts.count > 1 ? parts[1] : 0
-        return Calendar.current.date(
+        return Calendar.autoupdatingCurrent.date(
             bySettingHour: hour,
             minute: minute,
             second: 0,

@@ -75,23 +75,33 @@ struct EventSection: View {
 
     // MARK: - Networking
     private func loadData() {
+        if CalendarProviderStore.selected == .apple {
+            AppleCalendarService.shared.fetchTodayEvents { data in
+                apply(data)
+            }
+            return
+        }
+
         APIClient.request(path: "/calendar/today", method: .GET) { (result: Result<[Event], Error>) in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let data):
-                    // 정렬: 종일 먼저, 그 다음 시작 시간(파싱 실패 시 뒤로)
-                    let sorted = data.sorted { a, b in
-                        if a.isAllDay != b.isAllDay { return a.isAllDay && !b.isAllDay }
-                        let aStart = a.startDate ?? .distantFuture
-                        let bStart = b.startDate ?? .distantFuture
-                        return aStart < bStart
-                    }
-                    self.events = sorted
+                    apply(data)
                 case .failure(let error):
                     print("❌ 일정 가져오기 실패: \(error)")
                     self.events = []
                 }
             }
         }
+    }
+
+    private func apply(_ data: [Event]) {
+        let sorted = data.sorted { a, b in
+            if a.isAllDay != b.isAllDay { return a.isAllDay && !b.isAllDay }
+            let aStart = a.startDate ?? .distantFuture
+            let bStart = b.startDate ?? .distantFuture
+            return aStart < bStart
+        }
+        events = sorted
     }
 }

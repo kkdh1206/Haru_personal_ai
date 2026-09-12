@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -5,15 +6,22 @@ import pytest
 from agent import (
     CALL_END_MESSAGE,
     CALL_END_TOPIC,
+    DEFAULT_INITIAL_GREETING_READY_GRACE_SECONDS,
+    DEFAULT_INITIAL_GREETING_START_TIMEOUT_SECONDS,
+    DEFAULT_INITIAL_GREETING_VAD_SETTLE_SECONDS,
     DEFAULT_TEST_HANGUP_DELAY_SECONDS,
     Assistant,
+    build_call_end_message,
     build_farewell_reply_request,
     classify_test_audio_confirmation,
     get_call_wrap_up_seconds,
     get_conversation_phrases,
     get_max_call_duration_seconds,
     get_no_answer_timeout_seconds,
+    get_no_response_retry_minutes,
     get_realtime_language_code,
+    get_retry_limit_alarm_farewell,
+    get_retry_scheduled_farewell,
     get_silence_nudge_reference,
     get_test_call_farewell,
     get_user_silence_nudge_seconds,
@@ -37,11 +45,16 @@ def test_call_cost_guardrail_defaults_and_minimums(monkeypatch):
     monkeypatch.delenv("CALL_WRAP_UP_SECONDS", raising=False)
     monkeypatch.delenv("MAX_CALL_DURATION_SECONDS", raising=False)
     monkeypatch.delenv("USER_SILENCE_NUDGE_SECONDS", raising=False)
+    monkeypatch.delenv("NO_RESPONSE_RETRY_MINUTES", raising=False)
 
     assert get_no_answer_timeout_seconds() == 30
     assert get_call_wrap_up_seconds() == 270
     assert get_max_call_duration_seconds() == 300
     assert get_user_silence_nudge_seconds() == 8.0
+    assert get_no_response_retry_minutes() == 5
+    assert DEFAULT_INITIAL_GREETING_READY_GRACE_SECONDS == 2.0
+    assert DEFAULT_INITIAL_GREETING_START_TIMEOUT_SECONDS == 6.0
+    assert DEFAULT_INITIAL_GREETING_VAD_SETTLE_SECONDS == 1.5
 
     monkeypatch.setenv("NO_ANSWER_TIMEOUT_SECONDS", "1")
     monkeypatch.setenv("CALL_WRAP_UP_SECONDS", "20")
@@ -160,6 +173,29 @@ def test_followup_phrases_match_the_conversation_language():
     assert english["hangup"] == "Got it. I'll hang up now. Have a good one."
     assert "can't call again" in english["retry_limit_farewell"]
     assert korean["briefing"] == "깬 거 확인했어. 짧게 브리핑해줄까?"
+
+
+def test_silence_retry_farewells_explain_the_next_safety_step():
+    assert "5분 뒤에 다시 전화" in get_retry_scheduled_farewell("한국어", 5)
+    assert "5 minutes" in get_retry_scheduled_farewell("English", 5)
+    assert "5分後" in get_retry_scheduled_farewell("日本語", 5)
+    assert "알람을 계속 울릴게" in get_retry_limit_alarm_farewell("한국어")
+
+
+def test_call_end_message_only_requests_local_alarm_for_the_final_call():
+    assert build_call_end_message() == CALL_END_MESSAGE
+    assert json.loads(
+        build_call_end_message(
+            reason="retry_limit_reached",
+            start_local_alarm=True,
+            alarm_id="alarm-id",
+        )
+    ) == {
+        "type": "call.end",
+        "reason": "retry_limit_reached",
+        "startLocalAlarm": True,
+        "alarmId": "alarm-id",
+    }
 
 
 def test_silence_nudges_match_the_conversation_language():

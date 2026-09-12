@@ -69,13 +69,54 @@ final class PushDelegate: NSObject, UIApplicationDelegate, PKPushRegistryDelegat
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
-        guard userInfo["type"] as? String == "apple_calendar_pending" else {
+        guard let type = userInfo["type"] as? String else {
             completionHandler(.noData)
             return
         }
 
-        AppleCalendarService.shared.handleCalendarPush { success in
-            completionHandler(success ? .newData : .failed)
+        switch type {
+        case "apple_calendar_create_event":
+            guard
+                let eventID = userInfo["eventId"] as? String,
+                let title = userInfo["title"] as? String,
+                let startTime = userInfo["startTime"] as? String,
+                let endTime = userInfo["endTime"] as? String,
+                let timeZone = userInfo["timeZone"] as? String
+            else {
+                completionHandler(.failed)
+                return
+            }
+            let event = IncomingAppleCalendarEvent(
+                id: eventID,
+                title: title,
+                startTime: startTime,
+                endTime: endTime,
+                description: userInfo["description"] as? String,
+                location: userInfo["location"] as? String,
+                allDay: userInfo["allDay"] as? Bool ?? false,
+                timeZone: timeZone
+            )
+            AppleCalendarService.shared.handleCreateEventPush(event) { success in
+                completionHandler(success ? .newData : .failed)
+            }
+        case "apple_calendar_morning_call_query":
+            guard
+                let requestID = userInfo["requestId"] as? String,
+                let rangeStart = userInfo["rangeStart"] as? String,
+                let rangeEnd = userInfo["rangeEnd"] as? String
+            else {
+                completionHandler(.failed)
+                return
+            }
+            AppleCalendarService.shared.handleMorningCallQuery(
+                requestID: requestID,
+                rangeStart: rangeStart,
+                rangeEnd: rangeEnd
+            ) { success in
+                completionHandler(success ? .newData : .failed)
+            }
+        default:
+            completionHandler(.noData)
         }
     }
 

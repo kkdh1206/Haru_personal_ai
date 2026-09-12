@@ -58,12 +58,12 @@ private struct AppleCalendarConnectionResponse: Decodable {
     let provider: String?
 }
 
-private struct AppleCalendarSyncResponse: Decodable {
-    let synced: Int
-    let syncedAt: String
+private struct AppleCalendarQueryResponse: Decodable {
+    let accepted: Bool
+    let received: Int?
 }
 
-private struct PendingAppleCalendarEvent: Decodable {
+struct IncomingAppleCalendarEvent {
     let id: String
     let title: String
     let startTime: String
@@ -74,16 +74,11 @@ private struct PendingAppleCalendarEvent: Decodable {
     let timeZone: String
 }
 
-private struct PendingAppleCalendarCompletionResponse: Decodable {
-    let completed: Bool
-}
-
 final class AppleCalendarService {
     static let shared = AppleCalendarService()
 
     private let eventStore = EKEventStore()
     private let stateQueue = DispatchQueue(label: "com.poapper.morningcall.apple-calendar-state")
-    private var isSyncing = false
     private var eventStoreObserver: NSObjectProtocol?
 
     private init() {
@@ -157,7 +152,6 @@ final class AppleCalendarService {
                 DispatchQueue.main.async {
                     CalendarProviderStore.selected = .apple
                     completion(.connected)
-                    self.syncIfNeeded()
                 }
             case .success, .failure:
                 self.complete(.failed, completion: completion)
@@ -174,7 +168,109 @@ final class AppleCalendarService {
         }
     }
 
-    func syncIfNeeded(completion: @escaping (Bool) -> Void = { _ in }) {
+    private func scheduleSyncAfterEventStoreChange() {
+        guard CalendarProviderStore.selected == .apple else { return }
+        stateQueue.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard self != nil else { return }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .haruCalendarDidSync, object: nil)
+            }
+        }
+    }
+
+    func handleMorningCallQuery(
+        requestID: String,
+        rangeStart: String,
+        rangeEnd: String,
+        completion: @escaping (Bool) -> Void
+    ) {
+        guard
+            CalendarProviderStore.selected == .apple,
+            hasFullAccess,
+            let start = Self.isoFormatterWithFraction.date(from: rangeStart)
+                ?? Self.isoFormatter.date(from: rangeStart),
+            let end = Self.isoFormatterWithFraction.date(from: rangeEnd)
+                ?? Self.isoFormatter.date(from: rangeEnd),
+            end > start
+        else {
+            completion(false)
+            return
+        }
+
+        stateQueue.async { [weak self] in
+            guard let self else {
+                completion(false)
+                return
+            }
+
+            let predicate = self.eventStore.predicateForEvents(
+                withStart: start,
+                end: end,
+                calendars: nil
+            )
+            let events = self.eventStore.events(matching: predicate)
+                .prefix(200)
+                .map(self.morningCallEventPayload)
+
+            APIClient.request(
+                path: "/calendar/apple/morning-call-events",
+                method: .PUT,
+                body: [
+                    "requestId": requestID,
+                    "events": Array(events),
+                ]
+            ) { (result: Result<AppleCalendarQueryResponse, Error>) in
+                switch result {
+                case .success(let response):
+                    print("✅ 모닝콜용 Apple Calendar 일정 \(response.received ?? 0)개 전달")
+                    completion(response.accepted)
+                case .failure(let error):
+                    print("❌ 모닝콜용 Apple Calendar 조회 전달 실패: \(error)")
+                    completion(false)
+                }
+            }
+        }
+    }
+
+    func fetchTodayEvents(completion: @escaping ([Event]) -> Void) {
+        guard hasFullAccess else {
+            DispatchQueue.main.async { completion([]) }
+            return
+        }
+
+        stateQueue.async { [weak self] in
+            guard let self else {
+                DispatchQueue.main.async { completion([]) }
+                return
+            }
+
+            let calendar = Calendar.autoupdatingCurrent
+            let now = Date()
+            let start = calendar.startOfDay(for: now)
+            let end = calendar.date(byAdding: .day, value: 1, to: start)
+                ?? start.addingTimeInterval(86_400)
+            let predicate = self.eventStore.predicateForEvents(
+                withStart: start,
+                end: end,
+                calendars: nil
+            )
+            let events = self.eventStore.events(matching: predicate).map { event in
+                let payload = self.eventValues(event)
+                return Event(
+                    id: payload.id,
+                    summary: payload.title,
+                    start: payload.start,
+                    end: payload.end
+                )
+            }
+            DispatchQueue.main.async { completion(events) }
+        }
+    }
+
+    func handleCreateEventPush(
+        _ incoming: IncomingAppleCalendarEvent,
+        completion: @escaping (Bool) -> Void
+    ) {
         guard CalendarProviderStore.selected == .apple, hasFullAccess else {
             completion(false)
             return
@@ -185,87 +281,20 @@ final class AppleCalendarService {
                 completion(false)
                 return
             }
-            guard !self.isSyncing else {
+            do {
+                _ = try self.saveIncomingEvent(incoming)
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: .haruCalendarDidSync, object: nil)
+                }
                 completion(true)
-                return
-            }
-            self.isSyncing = true
-            self.processPendingEvents {
-                self.uploadEventSnapshot { success in
-                    self.stateQueue.async {
-                        self.isSyncing = false
-                        DispatchQueue.main.async {
-                            if success {
-                                NotificationCenter.default.post(name: .haruCalendarDidSync, object: nil)
-                            }
-                            completion(success)
-                        }
-                    }
-                }
+            } catch {
+                print("❌ Apple Calendar 일정 추가 실패: \(error)")
+                completion(false)
             }
         }
     }
 
-    func handleCalendarPush(completion: @escaping (Bool) -> Void) {
-        syncIfNeeded(completion: completion)
-    }
-
-    private func scheduleSyncAfterEventStoreChange() {
-        guard CalendarProviderStore.selected == .apple else { return }
-        stateQueue.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.syncIfNeeded()
-        }
-    }
-
-    private func processPendingEvents(completion: @escaping () -> Void) {
-        APIClient.request(
-            path: "/calendar/apple/pending",
-            method: .GET
-        ) { [weak self] (result: Result<[PendingAppleCalendarEvent], Error>) in
-            guard let self else {
-                completion()
-                return
-            }
-            self.stateQueue.async {
-                switch result {
-                case .success(let events):
-                    self.processPendingEvents(events, index: 0, completion: completion)
-                case .failure(let error):
-                    print("❌ Apple Calendar 대기 일정 조회 실패: \(error)")
-                    completion()
-                }
-            }
-        }
-    }
-
-    private func processPendingEvents(
-        _ events: [PendingAppleCalendarEvent],
-        index: Int,
-        completion: @escaping () -> Void
-    ) {
-        guard index < events.count else {
-            completion()
-            return
-        }
-
-        let pending = events[index]
-        do {
-            let identifier = try savePendingEvent(pending)
-            completePendingEvent(pending.id, success: true, eventIdentifier: identifier) {
-                self.processPendingEvents(events, index: index + 1, completion: completion)
-            }
-        } catch {
-            completePendingEvent(
-                pending.id,
-                success: false,
-                errorMessage: error.localizedDescription
-            ) {
-                self.processPendingEvents(events, index: index + 1, completion: completion)
-            }
-        }
-    }
-
-    private func savePendingEvent(_ pending: PendingAppleCalendarEvent) throws -> String? {
+    private func saveIncomingEvent(_ incoming: IncomingAppleCalendarEvent) throws -> String? {
         guard
             let calendar = eventStore.defaultCalendarForNewEvents,
             calendar.allowsContentModifications
@@ -273,26 +302,26 @@ final class AppleCalendarService {
             throw AppleCalendarError.noWritableCalendar
         }
         guard
-            let startDate = parse(pending.startTime, allDay: pending.allDay, timeZone: pending.timeZone),
-            let endDate = parse(pending.endTime, allDay: pending.allDay, timeZone: pending.timeZone)
+            let startDate = parse(incoming.startTime, allDay: incoming.allDay, timeZone: incoming.timeZone),
+            let endDate = parse(incoming.endTime, allDay: incoming.allDay, timeZone: incoming.timeZone)
         else {
             throw AppleCalendarError.invalidDate
         }
 
-        let marker = "[Haru-ID:\(pending.id)]"
+        let marker = "[Haru-ID:\(incoming.id)]"
         if let existing = existingEvent(with: marker, startDate: startDate, endDate: endDate) {
             return existing.eventIdentifier
         }
 
         let event = EKEvent(eventStore: eventStore)
         event.calendar = calendar
-        event.title = pending.title
+        event.title = incoming.title
         event.startDate = startDate
         event.endDate = endDate
-        event.isAllDay = pending.allDay
-        event.location = pending.location
-        event.timeZone = TimeZone(identifier: pending.timeZone)
-        event.notes = [pending.description, marker]
+        event.isAllDay = incoming.allDay
+        event.location = incoming.location
+        event.timeZone = TimeZone(identifier: incoming.timeZone)
+        event.notes = [incoming.description, marker]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
@@ -310,57 +339,7 @@ final class AppleCalendarService {
         return eventStore.events(matching: predicate).first { $0.notes?.contains(marker) == true }
     }
 
-    private func completePendingEvent(
-        _ id: String,
-        success: Bool,
-        eventIdentifier: String? = nil,
-        errorMessage: String? = nil,
-        completion: @escaping () -> Void
-    ) {
-        var body: [String: Any?] = ["success": success]
-        body["eventIdentifier"] = eventIdentifier
-        body["errorMessage"] = errorMessage
-
-        APIClient.request(
-            path: "/calendar/apple/pending/\(id)",
-            method: .PATCH,
-            body: body
-        ) { (result: Result<PendingAppleCalendarCompletionResponse, Error>) in
-            if case .failure(let error) = result {
-                print("❌ Apple Calendar 일정 처리 응답 실패: \(error)")
-            }
-            self.stateQueue.async {
-                completion()
-            }
-        }
-    }
-
-    private func uploadEventSnapshot(completion: @escaping (Bool) -> Void) {
-        let calendar = Calendar.autoupdatingCurrent
-        let now = Date()
-        let start = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now)) ?? now
-        let end = calendar.date(byAdding: .day, value: 45, to: start) ?? now.addingTimeInterval(45 * 86_400)
-        let predicate = eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
-        let events = eventStore.events(matching: predicate)
-        let payload = events.prefix(2000).map(eventPayload)
-
-        APIClient.request(
-            path: "/calendar/apple/events",
-            method: .PUT,
-            body: ["events": payload]
-        ) { (result: Result<AppleCalendarSyncResponse, Error>) in
-            switch result {
-            case .success(let response):
-                print("✅ Apple Calendar 일정 \(response.synced)개 동기화")
-                completion(true)
-            case .failure(let error):
-                print("❌ Apple Calendar 동기화 실패: \(error)")
-                completion(false)
-            }
-        }
-    }
-
-    private func eventPayload(_ event: EKEvent) -> [String: Any] {
+    private func eventValues(_ event: EKEvent) -> (id: String, title: String, start: String, end: String) {
         let startValue = event.isAllDay
             ? dayString(from: event.startDate, timeZone: event.timeZone)
             : Self.isoFormatter.string(from: event.startDate)
@@ -369,29 +348,27 @@ final class AppleCalendarService {
             : Self.isoFormatter.string(from: event.endDate)
         let occurrenceKey = Self.isoFormatter.string(from: event.startDate)
 
-        return [
-            "externalId": "\(event.calendarItemIdentifier)|\(occurrenceKey)",
-            "title": event.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        return (
+            id: "\(event.calendarItemIdentifier)|\(occurrenceKey)",
+            title: event.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                 ? event.title!
                 : "(제목 없음)",
-            "startTime": startValue,
-            "endTime": endValue,
-            "description": sanitizedNotes(event.notes),
-            "location": event.location ?? "",
-            "allDay": event.isAllDay,
-            "calendarTitle": event.calendar.title
-        ]
+            start: startValue,
+            end: endValue
+        )
     }
 
-    private func sanitizedNotes(_ notes: String?) -> String {
-        guard let notes else { return "" }
-        return notes
-            .replacingOccurrences(
-                of: #"\n*\[Haru-ID:[^\]]+\]"#,
-                with: "",
-                options: .regularExpression
-            )
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    private func morningCallEventPayload(_ event: EKEvent) -> [String: Any] {
+        let values = eventValues(event)
+
+        return [
+            "externalId": values.id,
+            "title": values.title,
+            "startTime": values.start,
+            "endTime": values.end,
+            "location": event.location ?? "",
+            "allDay": event.isAllDay
+        ]
     }
 
     private func dayString(from date: Date, timeZone: TimeZone?) -> String {

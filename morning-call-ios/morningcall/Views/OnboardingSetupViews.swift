@@ -22,14 +22,13 @@ struct OnboardingAlarmSetupView: View {
     @State private var time = Self.defaultAlarmTime
     @State private var repeatDays: Set<Int> = [1, 2, 3, 4, 5]
     @State private var wakeIntensity = OnboardingCallPreferencesStore.wakeIntensity
-    @State private var selectedCharacter = CharacterPreferenceStore.current
     @State private var existingAlarm: Alarm?
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var showSaveError = false
 
     private static var defaultAlarmTime: Date {
-        Calendar.current.date(bySettingHour: 7, minute: 30, second: 0, of: Date()) ?? Date()
+        Calendar.autoupdatingCurrent.date(bySettingHour: 7, minute: 30, second: 0, of: Date()) ?? Date()
     }
 
     var body: some View {
@@ -107,58 +106,6 @@ struct OnboardingAlarmSetupView: View {
                     }
                     .onboardingPanel()
 
-                    VStack(alignment: .leading, spacing: 14) {
-                        Label("목소리와 캐릭터", systemImage: "waveform")
-                            .font(.system(.headline, design: .rounded).weight(.semibold))
-
-                        HStack(spacing: 10) {
-                            ForEach(CharacterPreference.allCases, id: \.self) { character in
-                                Button {
-                                    selectedCharacter = character
-                                } label: {
-                                    VStack(spacing: 8) {
-                                        Image(character.assetName(for: .morning))
-                                            .resizable()
-                                            .scaledToFit()
-                                            .frame(height: 72)
-
-                                        Text(character.localizedDisplayName(language: env.appLanguage))
-                                            .font(.system(.subheadline, design: .rounded).weight(.bold))
-                                            .foregroundStyle(Color.black.opacity(0.82))
-
-                                        Text(character.localizedDescription(language: env.appLanguage))
-                                            .font(.system(.caption2, design: .rounded).weight(.medium))
-                                            .foregroundStyle(Color.black.opacity(0.54))
-                                            .multilineTextAlignment(.center)
-                                            .lineLimit(2)
-                                            .frame(height: 34, alignment: .top)
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(12)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                            .fill(
-                                                selectedCharacter == character
-                                                ? Color.white.opacity(0.96)
-                                                : Color.white.opacity(0.58)
-                                            )
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                                    .stroke(
-                                                        selectedCharacter == character
-                                                        ? Color(red: 0.35, green: 0.52, blue: 0.84)
-                                                        : Color.clear,
-                                                        lineWidth: 2
-                                                    )
-                                            )
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                    .onboardingPanel()
-
                     if showSaveError {
                         Text("알람 저장에 실패했어요. 네트워크를 확인하고 다시 시도해 주세요.")
                             .font(.system(.footnote, design: .rounded).weight(.semibold))
@@ -214,11 +161,6 @@ struct OnboardingAlarmSetupView: View {
                 time = AlarmDateFormatter.time.date(from: alarm.time) ?? time
                 repeatDays = Set(alarm.repeatDays)
                 wakeIntensity = alarm.wakeIntensity
-                if let savedCharacter = CharacterPreference.allCases.first(
-                    where: { $0.roleName == alarm.role }
-                ) {
-                    selectedCharacter = savedCharacter
-                }
             }
         }
     }
@@ -228,19 +170,20 @@ struct OnboardingAlarmSetupView: View {
 
         showSaveError = false
         isSaving = true
-        CharacterPreferenceStore.current = selectedCharacter
+        let character = CharacterPreference.hari
+        CharacterPreferenceStore.current = character
         OnboardingCallPreferencesStore.wakeIntensity = wakeIntensity
-        AppIconManager.apply(for: selectedCharacter)
+        AppIconManager.apply(for: character)
 
         let body: [String: Any?] = [
             "time": AlarmDateFormatter.time.string(from: time),
-            "timeZone": TimeZone.current.identifier,
+            "timeZone": TimeZone.autoupdatingCurrent.identifier,
             "repeatDays": Array(repeatDays).sorted(),
             "isOn": true,
             "wakeIntensity": wakeIntensity,
             "personality": wakeIntensity,
-            "voice": selectedCharacter.voiceName,
-            "role": selectedCharacter.roleName,
+            "voice": character.voiceName,
+            "role": character.roleName,
         ]
         let path = existingAlarm.map { "/alarm/\($0.id)" } ?? "/alarm"
         let method: HTTPMethod = existingAlarm == nil ? .POST : .PUT
@@ -884,7 +827,7 @@ struct OnboardingTestCallView: View {
                 return
             }
 
-            let character = CharacterPreferenceStore.current
+            let character = CharacterPreference.hari
             APIClient.request(
                 path: "/alarm/onboarding-test-call",
                 method: .POST,

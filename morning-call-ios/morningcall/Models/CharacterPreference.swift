@@ -5,7 +5,7 @@ enum HaruDayPeriod: String {
     case afternoon
     case night
 
-    static func current(date: Date = Date(), calendar: Calendar = .current) -> HaruDayPeriod {
+    static func current(date: Date = Date(), calendar: Calendar = .autoupdatingCurrent) -> HaruDayPeriod {
         let hour = calendar.component(.hour, from: date)
         switch hour {
         case 5..<12:
@@ -23,16 +23,10 @@ enum HaruDayPeriod: String {
 }
 
 enum CharacterPreference: String, CaseIterable, Codable {
-    case haru
     case hari
 
     var displayName: String {
-        switch self {
-        case .haru:
-            return "하루"
-        case .hari:
-            return "하리"
-        }
+        "하리"
     }
 
     func localizedDisplayName(language: AppLanguage = AppLanguageStore.current) -> String {
@@ -40,48 +34,23 @@ enum CharacterPreference: String, CaseIterable, Codable {
     }
 
     var roleName: String {
-        switch self {
-        case .haru:
-            return "하루"
-        case .hari:
-            return "하리"
-        }
+        "하리"
     }
 
     var voiceName: String {
-        switch self {
-        case .haru:
-            return "Achird"
-        case .hari:
-            return "Leda"
-        }
+        "Leda"
     }
 
     var alternateAppIconName: String? {
-        switch self {
-        case .haru:
-            return nil
-        case .hari:
-            return "HariAppIcon"
-        }
+        nil
     }
 
     func assetName(for period: HaruDayPeriod = .current()) -> String {
-        switch self {
-        case .haru:
-            return "Haru_\(period.rawValue)"
-        case .hari:
-            return "Hari_\(period.rawValue)"
-        }
+        "Hari_\(period.rawValue)"
     }
 
     var description: String {
-        switch self {
-        case .haru:
-            return "차분하고 안정감 있는 톤"
-        case .hari:
-            return "밝고 명랑한 에너지 톤"
-        }
+        "밝고 명랑한 에너지 톤"
     }
 
     func localizedDescription(language: AppLanguage = AppLanguageStore.current) -> String {
@@ -94,16 +63,13 @@ enum CharacterPreferenceStore {
 
     static var current: CharacterPreference {
         get {
-            guard
-                let raw = UserDefaults.standard.string(forKey: key),
-                let value = CharacterPreference(rawValue: raw)
-            else {
-                return .hari
+            if UserDefaults.standard.string(forKey: key) != CharacterPreference.hari.rawValue {
+                UserDefaults.standard.set(CharacterPreference.hari.rawValue, forKey: key)
             }
-            return value
+            return .hari
         }
         set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: key)
+            UserDefaults.standard.set(CharacterPreference.hari.rawValue, forKey: key)
         }
     }
 }

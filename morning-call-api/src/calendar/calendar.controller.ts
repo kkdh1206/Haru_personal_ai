@@ -3,8 +3,6 @@ import {
   Controller,
   Delete,
   Get,
-  Param,
-  Patch,
   Post,
   Put,
   Req,
@@ -14,8 +12,7 @@ import { CalendarService } from './calendar.service';
 import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from 'src/auth/auth.guard';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
-import { SyncAppleCalendarDto } from './dto/sync-apple-calendar.dto';
-import { CompleteAppleCalendarEventDto } from './dto/complete-apple-calendar-event.dto';
+import { MorningCallAppleCalendarDto } from './dto/sync-apple-calendar.dto';
 
 @Controller('calendar')
 export class CalendarController {
@@ -35,7 +32,8 @@ export class CalendarController {
   @Post('event')
   @ApiOperation({
     summary: '캘린더 일정 생성',
-    description: '사용자가 선택한 Google 또는 Apple 캘린더에 일정을 추가합니다.',
+    description:
+      '사용자가 선택한 Google 또는 Apple 캘린더에 일정을 추가합니다.',
   })
   async createEvent(@Body() dto: CreateCalendarEventDto) {
     return this.calendarService.createEvent(dto.userId, dto);
@@ -57,34 +55,16 @@ export class CalendarController {
     return this.calendarService.disconnectAppleCalendar(req.user._id);
   }
 
-  @Put('apple/events')
+  @Put('apple/morning-call-events')
   @UseGuards(AuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Apple Calendar 일정 스냅샷 동기화' })
-  async syncAppleCalendar(@Req() req, @Body() dto: SyncAppleCalendarDto) {
-    return this.calendarService.syncAppleCalendar(req.user._id, dto);
-  }
-
-  @Get('apple/pending')
-  @UseGuards(AuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'iPhone에 추가할 Apple Calendar 일정 조회' })
-  async getPendingAppleCalendarEvents(@Req() req) {
-    return this.calendarService.getPendingAppleCalendarEvents(req.user._id);
-  }
-
-  @Patch('apple/pending/:eventId')
-  @UseGuards(AuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Apple Calendar 일정 추가 결과 처리' })
-  async completePendingAppleCalendarEvent(
+  @ApiOperation({ summary: '모닝콜 직전 Apple Calendar 일정 일회성 전달' })
+  async receiveMorningCallAppleCalendar(
     @Req() req,
-    @Param('eventId') eventId: string,
-    @Body() dto: CompleteAppleCalendarEventDto,
+    @Body() dto: MorningCallAppleCalendarDto,
   ) {
-    return this.calendarService.completePendingAppleCalendarEvent(
+    return this.calendarService.receiveMorningCallAppleCalendar(
       req.user._id,
-      eventId,
       dto,
     );
   }

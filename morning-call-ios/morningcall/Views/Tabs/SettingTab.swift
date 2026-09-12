@@ -17,7 +17,6 @@ struct UserSettings: Codable {
 private struct CalendarConnectionStatus: Decodable {
     let connected: Bool
     let provider: String?
-    let lastSyncedAt: String?
 }
 
 private struct DailyCallUsage: Decodable {
@@ -46,7 +45,6 @@ struct SettingView: View {
     @State private var userName: String = ""
     @State private var selectedAppLanguage: AppLanguage = AppLanguageStore.current
     @State private var selectedLanguage: String = "한국어"
-    @State private var selectedCharacter: CharacterPreference = CharacterPreferenceStore.current
     @State private var isCalendarConnected = false
     @State private var calendarProvider: CalendarProvider?
     @State private var isCalendarStatusLoading = false
@@ -76,7 +74,6 @@ struct SettingView: View {
                 appLanguageSection
                 callSection
                 dailyCallSection
-                characterSection
                 calendarSection
                 logoutSection
             }
@@ -307,51 +304,6 @@ struct SettingView: View {
         }
     }
 
-    private var characterSection: some View {
-        settingsCard(title: "통화 시 캐릭터") {
-            VStack(spacing: 12) {
-                ForEach(CharacterPreference.allCases, id: \.rawValue) { character in
-                    Button {
-                        applyCharacterPreference(character)
-                    } label: {
-                        HStack(spacing: 14) {
-                            Image(character.assetName())
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 44, height: 44)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(character.localizedDisplayName(language: env.appLanguage))
-                                    .font(.system(.body, design: .rounded).weight(.semibold))
-                                    .foregroundStyle(.black)
-                                Text(character.localizedDescription(language: env.appLanguage))
-                                    .font(.system(.footnote, design: .rounded))
-                                    .foregroundStyle(Color.black.opacity(0.58))
-                                    .multilineTextAlignment(.leading)
-                            }
-
-                            Spacer()
-
-                            Image(systemName: selectedCharacter == character ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 22, weight: .semibold))
-                                .foregroundStyle(
-                                    selectedCharacter == character
-                                    ? Color(red: 0.47, green: 0.61, blue: 0.92)
-                                    : Color.secondary.opacity(0.45)
-                                )
-                        }
-                        .padding(18)
-                        .background(
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .fill(selectedCharacter == character ? Color.white.opacity(0.9) : Color.white.opacity(0.58))
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
     private var calendarSection: some View {
         settingsCard(title: "캘린더") {
             VStack(alignment: .leading, spacing: 12) {
@@ -562,7 +514,6 @@ struct SettingView: View {
         self.userName = env.user?.name ?? ""
         self.selectedAppLanguage = env.appLanguage
         self.selectedLanguage = normalizedLanguage(env.user?.language)
-        self.selectedCharacter = CharacterPreferenceStore.current
     }
 
     private func normalizedLanguage(_ language: String?) -> String {
@@ -588,9 +539,6 @@ struct SettingView: View {
                     CalendarProviderStore.selected = calendarProvider
                     isCalendarConnected = status.connected
                         && (calendarProvider != .apple || AppleCalendarService.shared.hasFullAccess)
-                    if calendarProvider == .apple {
-                        AppleCalendarService.shared.syncIfNeeded()
-                    }
                 case .failure(let error):
                     print("❌ 캘린더 상태 확인 실패: \(error)")
                 }
@@ -718,40 +666,4 @@ struct SettingView: View {
         }
     }
 
-    private func applyCharacterPreference(_ character: CharacterPreference) {
-        selectedCharacter = character
-        CharacterPreferenceStore.current = character
-        AppIconManager.apply(for: character)
-
-        APIClient.request(path: "/alarm", method: .GET) { (result: Result<[Alarm], Error>) in
-            guard case .success(let alarms) = result else { return }
-
-            alarms.forEach { alarm in
-                var body: [String: Any] = [
-                    "time": alarm.time,
-                    "timeZone": TimeZone.current.identifier,
-                    "repeatDays": alarm.repeatDays,
-                    "isOn": alarm.isOn,
-                    "wakeIntensity": alarm.wakeIntensity,
-                    "personality": alarm.personality,
-                    "voice": character.voiceName,
-                    "role": character.roleName,
-                ]
-
-                if let targetDate = alarm.targetDate, !targetDate.isEmpty {
-                    body["targetDate"] = targetDate
-                }
-
-                APIClient.request(
-                    path: "/alarm/\(alarm.id)",
-                    method: .PUT,
-                    body: body
-                ) { (updateResult: Result<Alarm, Error>) in
-                    if case .success(let updatedAlarm) = updateResult {
-                        LocalCallFallbackScheduler.shared.rescheduleFallback(for: updatedAlarm)
-                    }
-                }
-            }
-        }
-    }
 }

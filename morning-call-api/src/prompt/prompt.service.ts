@@ -136,7 +136,9 @@ export class PromptService {
 
     // 1. 구글 캘린더 일정 조회
     const schedules = this.normalizeSchedules(
-      await this.calendarService.getTodayEvents(user._id),
+      await this.calendarService.getTodayEvents(user._id, {
+        requestAppleCalendar: true,
+      }),
       timeZone,
     );
 
@@ -149,7 +151,7 @@ export class PromptService {
     // 3. 일정, 날씨를 바탕으로 프롬프트 구성
     const prompt = buildMorningCallPrompt({
       name: user.name,
-      assistantName: alarm.role || '하루',
+      assistantName: alarm.role || '하리',
       language: user.language,
       speechStyle: user.speechStyle,
       timeZone,
