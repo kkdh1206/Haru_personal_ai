@@ -67,7 +67,7 @@ struct SettingView: View {
     ]
     
     var body: some View {
-        ScrollView {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 20) {
                 profileSection
                 subscriptionSection
@@ -77,10 +77,12 @@ struct SettingView: View {
                 calendarSection
                 logoutSection
             }
-            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 20)
             .padding(.bottom, 36)
         }
+        .contentMargins(.horizontal, 20, for: .scrollContent)
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
         .background(Color(red: 0.97, green: 0.96, blue: 0.93).ignoresSafeArea())
         .navigationTitle(localized("설정"))
         .navigationBarTitleDisplayMode(.inline)
