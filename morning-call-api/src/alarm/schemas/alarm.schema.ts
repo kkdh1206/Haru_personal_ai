@@ -61,6 +61,10 @@ export class Alarm {
     | 'rejected'
     | null;
 
+  // Independent of lastWakeStatus: a delayed negative outcome cannot undo it.
+  @Prop({ default: null })
+  lastAwakeAt: Date | null;
+
   @Prop({ default: null })
   lastRetryScheduledAt: Date | null;
 

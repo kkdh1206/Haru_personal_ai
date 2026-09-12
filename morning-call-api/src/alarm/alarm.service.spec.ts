@@ -35,6 +35,7 @@ describe('AlarmService scheduling', () => {
       dailyRetryCount: 0,
       retryTrackingDate: '2026-06-28',
       retryLimitNoticeDate: null,
+      lastAwakeAt: null as Date | null,
       save: jest.fn().mockResolvedValue(undefined),
       toObject() {
         const { save, toObject, ...alarm } = this as any;
@@ -344,6 +345,79 @@ describe('AlarmService scheduling', () => {
         delay: 300000,
       }),
     );
+  });
+
+  it('cancels queued retries after awake and ignores a late no-response outcome', async () => {
+    jest.useFakeTimers({ now: fixedNow });
+    try {
+      const alarm = makeAlarm();
+      const retryJob = { id: 'alarm-id-retry-123-1-call', getState: jest.fn().mockResolvedValue('delayed'), remove: jest.fn() };
+      const { service, queue } = makeService({ alarmModel: { findById: jest.fn().mockResolvedValue(alarm) } });
+      queue.getJobs.mockResolvedValue([retryJob]);
+      queue.getJob.mockImplementation(async (id) => id === retryJob.id ? retryJob : null);
+      await service.handleCallOutcome({ alarmId: 'alarm-id', callType: 'initial', wakeStatus: 'awake' });
+      expect(retryJob.remove).toHaveBeenCalled();
+      expect(alarm.lastAwakeAt).toEqual(new Date(fixedNow));
+
+      await expect(service.handleCallOutcome({ alarmId: 'alarm-id', callType: 'initial', wakeStatus: 'no_response' }))
+        .resolves.toMatchObject({ action: 'none', wakeStatus: 'awake' });
+      await expect(service.scheduleRetryCall('alarm-id')).resolves.toMatchObject({ alreadyAwake: true });
+      expect(queue.add).not.toHaveBeenCalled();
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('does not dispatch an active retry worker once awake is confirmed', async () => {
+    const alarm = makeAlarm({ lastAwakeAt: new Date(fixedNow), lastWakeStatus: 'no_response' });
+    const { service, livekit, fcmService, userService } = makeService({ alarmModel: { findById: jest.fn().mockResolvedValue(alarm) } });
+    await expect(service.prewarmCall(alarm, { callType: 'retry' })).resolves.toMatchObject({ reason: 'already_awake' });
+    await expect(service.call(alarm, { callType: 'retry' })).resolves.toMatchObject({ reason: 'already_awake' });
+    expect(livekit.prewarmAgent).not.toHaveBeenCalled();
+    expect(fcmService.sendCallPush).not.toHaveBeenCalled();
+    expect(userService.reserveDailyCallSlot).not.toHaveBeenCalled();
+  });
+
+  it('rechecks awake after retry connection preparation and releases the unused call slot', async () => {
+    const alarm = makeAlarm();
+    const model = { findById: jest.fn().mockResolvedValue(alarm) };
+    const { service, livekit, fcmService, userService } = makeService({ alarmModel: model });
+    livekit.generateLivkitToken.mockImplementation(async () => {
+      alarm.lastAwakeAt = new Date(fixedNow);
+      return 'lk-token';
+    });
+    await expect(service.call(alarm, { callType: 'retry' })).resolves.toMatchObject({ reason: 'already_awake' });
+    expect(fcmService.sendCallPush).not.toHaveBeenCalled();
+    expect(userService.releaseDailyCallSlot).toHaveBeenCalledWith('user-id', '2026-06-28');
+  });
+
+  it('removes a retry scheduled concurrently with an awake report', async () => {
+    const alarm = makeAlarm();
+    const { service, queue } = makeService({ alarmModel: { findById: jest.fn().mockResolvedValue(alarm) } });
+    const jobs = new Map<string, any>();
+    queue.getJobs.mockImplementation(async () => Array.from(jobs.values()));
+    queue.getJob.mockImplementation(async (id) => jobs.get(id) || null);
+    queue.add.mockImplementation(async (_name, _data, options) => {
+      alarm.lastAwakeAt = new Date(fixedNow);
+      const job = {
+        id: options.jobId,
+        getState: jest.fn().mockResolvedValue('delayed'),
+        remove: jest.fn(async () => { jobs.delete(options.jobId); }),
+      };
+      jobs.set(options.jobId, job);
+      return job;
+    });
+    await expect(service.scheduleRetryCall('alarm-id')).resolves.toMatchObject({ alreadyAwake: true });
+    expect(jobs.size).toBe(0);
+  });
+
+  it('allows retries again on the next local day, including Canada', async () => {
+    // Same UTC date, but the previous local date in Toronto.
+    const alarm = makeAlarm({ timeZone: 'America/Toronto', retryTrackingDate: '2026-06-26', lastAwakeAt: new Date('2026-06-27T01:00:00Z') });
+    const { service } = makeService({
+      alarmModel: { findById: jest.fn().mockResolvedValue(alarm) },
+      userService: { findOne: jest.fn().mockResolvedValue({ timeZone: 'America/Toronto' }) },
+    });
+    await expect(service.scheduleRetryCall('alarm-id')).resolves.toMatchObject({ success: true });
+    expect(alarm.retryTrackingDate).toBe('2026-06-27');
   });
 
   it('does not build prompt or dispatch agent on the on-time call path', async () => {

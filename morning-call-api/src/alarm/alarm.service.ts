@@ -170,6 +170,31 @@ export class AlarmService implements OnModuleInit {
     return todayKey;
   }
 
+  private async isAwakeToday(alarm: AlarmDocument) {
+    const confirmedAt = alarm.lastAwakeAt ||
+      (alarm.lastWakeStatus === 'awake' ? alarm.lastTriggeredAt : null);
+    if (!confirmedAt) return false;
+    const user = await this.userService.findOne(alarm.userId as Types.ObjectId);
+    const zone = user?.timeZone || alarm.timeZone || 'Asia/Seoul';
+    return DateTime.fromJSDate(new Date(confirmedAt)).setZone(zone).toISODate() ===
+      this.getLocalDateKey(zone);
+  }
+
+  private async retryStoppedByWakeConfirmation(alarmId: string) {
+    const latest = await this.alarmModel.findById(alarmId);
+    return latest ? this.isAwakeToday(latest) : true;
+  }
+
+  private awakeRetryResult(alarmId: string) {
+    return {
+      success: false,
+      alreadyAwake: true,
+      limitReached: false,
+      alarmId,
+      message: 'User is already awake. Retry flow stopped.',
+    };
+  }
+
   private serializeAlarm<T extends Record<string, any>>(
     alarm: (T & { toObject?: () => Record<string, any> }) | null | undefined,
   ) {
@@ -623,7 +648,7 @@ export class AlarmService implements OnModuleInit {
       .populate({
         path: 'user',
         select:
-          '_id name email language speechStyle timeZone interest location customMessage',
+          '_id name email language speechStyle timeZone interest location customMessage calendarProvider appleCalendarConnected',
       })
       .lean();
     return this.serializeAlarm(alarm);
@@ -724,6 +749,9 @@ export class AlarmService implements OnModuleInit {
     const retryCount = options.retryCount ?? 0;
     const alarmId = normalizedAlarm._id.toString();
     const userId = normalizedAlarm.userId.toString();
+    if (callType === 'retry' && await this.retryStoppedByWakeConfirmation(alarmId)) {
+      return { prepared: false, reason: 'already_awake' };
+    }
     if (!(await this.billingService.canUseMorningCall(userId))) {
       console.warn(`[Billing] skipped prewarm for inactive user=${userId}`);
       return { prepared: false, reason: 'subscription_required' };
@@ -762,6 +790,9 @@ export class AlarmService implements OnModuleInit {
     // 0. 유저 ID 가져오기
     const alarmId = normalizedAlarm._id.toString();
     const userId = normalizedAlarm.userId.toString();
+    if (options.callType === 'retry' && await this.retryStoppedByWakeConfirmation(alarmId)) {
+      return { sent: false, reason: 'already_awake' };
+    }
     if (!(await this.billingService.canUseMorningCall(userId))) {
       console.warn(`[Billing] skipped call for inactive user=${userId}`);
       return { sent: false, reason: 'subscription_required' };
@@ -813,6 +844,13 @@ export class AlarmService implements OnModuleInit {
       // 4. 유저 용 Livekit 토큰 생성
       const room = alarmId;
       const tokenClient = await this.livekit.generateLivkitToken(room, userId);
+
+      // A retry worker may already be active when the awake outcome removes
+      // queued jobs. Recheck after the awaited room/token work, before APNs/FCM.
+      if (options.callType === 'retry' && await this.retryStoppedByWakeConfirmation(alarmId)) {
+        await this.userService.releaseDailyCallSlot(userId, dateKey);
+        return { sent: false, reason: 'already_awake' };
+      }
 
       // 5. 플랫폼별 푸시 보내기
       const pushResult =
@@ -1135,6 +1173,11 @@ export class AlarmService implements OnModuleInit {
     );
     await this.resetDailyRetryStateIfNeeded(alarm);
 
+    if (await this.retryStoppedByWakeConfirmation(alarm._id.toString())) {
+      await this.clearRetryJobs(alarm._id.toString());
+      return this.awakeRetryResult(alarm._id.toString());
+    }
+
     if (alarm.dailyRetryCount >= this.maxDailyRetryCalls) {
       return {
         success: false,
@@ -1170,6 +1213,12 @@ export class AlarmService implements OnModuleInit {
     alarm.lastCallType = 'retry';
     await alarm.save();
 
+    // Also cover an awake report arriving while queue.add/save were in flight.
+    if (await this.retryStoppedByWakeConfirmation(alarmId)) {
+      await this.clearRetryJobs(alarmId);
+      return this.awakeRetryResult(alarmId);
+    }
+
     return {
       success: true,
       alarmId,
@@ -1187,9 +1236,21 @@ export class AlarmService implements OnModuleInit {
 
     await this.resetDailyRetryStateIfNeeded(alarm);
 
+    if (dto.wakeStatus !== 'awake' && await this.isAwakeToday(alarm)) {
+      await this.clearRetryJobs(dto.alarmId);
+      return {
+        success: true, action: 'none', wakeStatus: 'awake',
+        message: 'User is already awake. Late retry outcome ignored.',
+      };
+    }
+
     alarm.lastCallType = dto.callType;
     alarm.lastWakeStatus = dto.wakeStatus;
     alarm.lastTriggeredAt = new Date();
+    if (dto.wakeStatus === 'awake') {
+      alarm.lastAwakeAt = new Date();
+      alarm.lastRetryScheduledAt = null;
+    }
     await alarm.save();
 
     if (dto.wakeStatus === 'awake') {
@@ -1207,6 +1268,10 @@ export class AlarmService implements OnModuleInit {
       alarm,
       retryMinutes,
     );
+
+    if ('alreadyAwake' in retryResult && retryResult.alreadyAwake) {
+      return { success: true, action: 'none', wakeStatus: 'awake', message: retryResult.message };
+    }
 
     if (retryResult.success) {
       return {

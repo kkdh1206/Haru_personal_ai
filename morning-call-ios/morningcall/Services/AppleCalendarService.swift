@@ -95,6 +95,47 @@ final class AppleCalendarService {
         EKEventStore.authorizationStatus(for: .event) == .fullAccess
     }
 
+    /// One snapshot for the connected call. No HTTP upload or persistent cache.
+    func fetchMorningCallSnapshot(requestID: String, completion: @escaping (Data?) -> Void) {
+        let accountID = Auth.auth().currentUser?.uid
+        stateQueue.async { [weak self] in
+            guard let self else { completion(nil); return }
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = .autoupdatingCurrent
+            let start = calendar.startOfDay(for: Date())
+            let end = calendar.date(byAdding: .day, value: 1, to: start)!
+            var payload: [String: Any] = [
+                "type": "calendar.today.result",
+                "requestId": requestID,
+                "timeZone": calendar.timeZone.identifier,
+                "date": self.dayString(from: start, timeZone: calendar.timeZone),
+                "events": []
+            ]
+            if accountID == nil || accountID != Auth.auth().currentUser?.uid
+                || CalendarProviderStore.selected != .apple {
+                payload["status"] = "not_connected"
+            } else if !self.hasFullAccess {
+                payload["status"] = "permission_denied"
+            } else {
+                let predicate = self.eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
+                let events = self.eventStore.events(matching: predicate)
+                    .sorted { $0.startDate < $1.startDate }
+                payload["status"] = "ok"
+                payload["truncated"] = events.count > 30
+                // Keep the reliable data packet small and omit notes/descriptions.
+                payload["events"] = events.prefix(30).map { event -> [String: Any] in
+                    let values = self.eventValues(event)
+                    return [
+                        "title": String(values.title.prefix(80)),
+                        "start": values.start, "end": values.end,
+                        "allDay": event.isAllDay
+                    ]
+                }
+            }
+            completion(try? JSONSerialization.data(withJSONObject: payload))
+        }
+    }
+
     func connect(completion: @escaping (CalendarConnectionResult) -> Void) {
         switch EKEventStore.authorizationStatus(for: .event) {
         case .fullAccess, .authorized:
@@ -209,6 +250,7 @@ final class AppleCalendarService {
                 calendars: nil
             )
             let events = self.eventStore.events(matching: predicate)
+                .sorted { $0.startDate < $1.startDate }
                 .prefix(200)
                 .map(self.morningCallEventPayload)
 
@@ -244,7 +286,8 @@ final class AppleCalendarService {
                 return
             }
 
-            let calendar = Calendar.autoupdatingCurrent
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = .autoupdatingCurrent
             let now = Date()
             let start = calendar.startOfDay(for: now)
             let end = calendar.date(byAdding: .day, value: 1, to: start)
@@ -254,7 +297,8 @@ final class AppleCalendarService {
                 end: end,
                 calendars: nil
             )
-            let events = self.eventStore.events(matching: predicate).map { event in
+            let events = self.eventStore.events(matching: predicate)
+                .sorted { $0.startDate < $1.startDate }.map { event in
                 let payload = self.eventValues(event)
                 return Event(
                     id: payload.id,
@@ -303,7 +347,8 @@ final class AppleCalendarService {
         }
         guard
             let startDate = parse(incoming.startTime, allDay: incoming.allDay, timeZone: incoming.timeZone),
-            let endDate = parse(incoming.endTime, allDay: incoming.allDay, timeZone: incoming.timeZone)
+            let endDate = parse(incoming.endTime, allDay: incoming.allDay, timeZone: incoming.timeZone),
+            endDate > startDate
         else {
             throw AppleCalendarError.invalidDate
         }

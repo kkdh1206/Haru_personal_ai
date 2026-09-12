@@ -139,7 +139,11 @@ final actor CallManager: NSObject, ObservableObject {
     private var localNudgeRequestID: String?
     private var localNudgeAsset: String?
     private var userPrefersSpeaker = false
+    private var userDidChooseAudioRoute = false
     private var localNudgeForcedSpeaker = false
+    private var audioRouteObserver: NSObjectProtocol?
+    private var expectedSpeakerRoute: (speaker: Bool, expiresAt: Date)?
+    private var callIsEnding = false
 
     // MARK: - Init
 
@@ -170,6 +174,7 @@ final actor CallManager: NSObject, ObservableObject {
         rtc.isAudioEnabled = false  // 초기 오디오 비활성화
 
         print("Init CallManager")
+        Task { await self.observeAudioRouteChanges() }
     }
 
     deinit {
@@ -237,6 +242,7 @@ final actor CallManager: NSObject, ObservableObject {
     ) {
         cancelIfOngoing()
         currentCallUUID = uuid
+        resetAudioRouteForNewCall()
         isOutgoing = false
         wasAnswered = false
         currentCallerName = handle
@@ -309,6 +315,7 @@ final actor CallManager: NSObject, ObservableObject {
     func startOutgoing(handle: String) {
         let uuid = UUID()
         currentCallUUID = uuid
+        resetAudioRouteForNewCall()
         isOutgoing = true
         wasAnswered = true
         currentCallerName = handle
@@ -370,12 +377,18 @@ final actor CallManager: NSObject, ObservableObject {
     }
 
     func setSpeakerOn(_ speakerOn: Bool) {
+        userDidChooseAudioRoute = true
+        AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = false
         userPrefersSpeaker = speakerOn
         localNudgeForcedSpeaker = false
         applySpeakerRoute(speakerOn)
     }
 
     private func applySpeakerRoute(_ speakerOn: Bool) {
+        let currentSpeaker = AVAudioSession.sharedInstance().currentRoute.outputs
+            .contains { $0.portType == .builtInSpeaker }
+        expectedSpeakerRoute = currentSpeaker == speakerOn ? nil
+            : (speakerOn, Date().addingTimeInterval(1))
         AudioManager.shared.isSpeakerOutputPreferred = speakerOn
         do {
             try AVAudioSession.sharedInstance().overrideOutputAudioPort(
@@ -385,12 +398,58 @@ final actor CallManager: NSObject, ObservableObject {
                 CallPresentationStore.shared.setSpeakerOn(speakerOn)
             }
         } catch {
+            expectedSpeakerRoute = nil
             print("Speaker state update failed: \(error.localizedDescription)")
         }
     }
 
+    private func observeAudioRouteChanges() {
+        guard audioRouteObserver == nil else { return }
+        audioRouteObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: nil
+        ) { [weak self] notification in
+            let reason = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue ?? 0
+            let previous = notification.userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
+            let oldOutputs = previous?.outputs.map { $0.portType.rawValue } ?? []
+            let outputs = AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portType.rawValue }
+            Task {
+                await self?.audioRouteDidChange(reason: reason, oldOutputs: oldOutputs, outputs: outputs)
+            }
+        }
+    }
+
+    private func audioRouteDidChange(reason: UInt, oldOutputs: [String], outputs: [String]) {
+        guard currentCallUUID != nil, wasAnswered, !callIsEnding, !outputs.isEmpty else { return }
+        let speakerOn = outputs.contains(AVAudioSession.Port.builtInSpeaker.rawValue)
+        if let expected = expectedSpeakerRoute,
+           expected.expiresAt > Date(), expected.speaker == speakerOn {
+            expectedSpeakerRoute = nil
+            return
+        }
+        guard oldOutputs != outputs,
+              let change = AVAudioSession.RouteChangeReason(rawValue: reason),
+              change == .override || change == .newDeviceAvailable || change == .oldDeviceUnavailable else { return }
+
+        // CallKit's speaker button does not call setSpeakerOn. Observe its route
+        // change, and leave subsequent routing (including headsets) to the user.
+        userDidChooseAudioRoute = true
+        userPrefersSpeaker = speakerOn
+        localNudgeForcedSpeaker = false
+        expectedSpeakerRoute = nil
+        // The SDK otherwise reapplies its old speaker preference on engine changes.
+        AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = false
+        // Do not reapply the route here: that would fight CallKit/headset routing.
+        Task { @MainActor in CallPresentationStore.shared.setSpeakerOn(speakerOn) }
+        print("📱 User audio route selected; automatic nudge routing disabled for this call")
+    }
+
     private func beginLocalNudgeSpeakerBoost() {
-        guard !userPrefersSpeaker else { return }
+        guard !userDidChooseAudioRoute, !userPrefersSpeaker else { return }
+        guard AVAudioSession.sharedInstance().currentRoute.outputs.allSatisfy({
+            $0.portType == .builtInReceiver || $0.portType == .builtInSpeaker
+        }) else { return }
         localNudgeForcedSpeaker = true
         applySpeakerRoute(true)
     }
@@ -398,13 +457,22 @@ final actor CallManager: NSObject, ObservableObject {
     private func restoreSpeakerAfterLocalNudge() {
         guard localNudgeForcedSpeaker else { return }
         localNudgeForcedSpeaker = false
+        guard !userDidChooseAudioRoute else { return }
         applySpeakerRoute(userPrefersSpeaker)
+    }
+
+    private func resetAudioRouteForNewCall() {
+        userPrefersSpeaker = false
+        userDidChooseAudioRoute = false
+        localNudgeForcedSpeaker = false
+        expectedSpeakerRoute = nil
+        callIsEnding = false
     }
 
     // MARK: - 로컬 무응답 깨우기 음성
 
     private func playLocalNudge(stage: Int, requestID: String) async {
-        guard currentCallUUID != nil, wasAnswered, isConnectingOrConnected else {
+        guard currentCallUUID != nil, wasAnswered, isConnectingOrConnected, !callIsEnding else {
             await publishLocalAudioEvent(
                 type: "local_audio.failed",
                 requestID: requestID,
@@ -440,6 +508,8 @@ final actor CallManager: NSObject, ObservableObject {
                 notifyAgent: true
             )
         }
+
+        guard !callIsEnding, currentCallUUID != nil else { return }
 
         do {
             let player = try AVAudioPlayer(contentsOf: url)
@@ -612,7 +682,9 @@ final actor CallManager: NSObject, ObservableObject {
                 print("🎙️ Microphone enabled after connect")
                 await MainActor.run {
                     CallPresentationStore.shared.showActive()
-                    CallPresentationStore.shared.setSpeakerOn(false)
+                    CallPresentationStore.shared.setSpeakerOn(
+                        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .builtInSpeaker }
+                    )
                 }
             } catch {
                 print("🛑 LiveKit connect error: \(error.localizedDescription)")
@@ -639,19 +711,23 @@ final actor CallManager: NSObject, ObservableObject {
         }
 
         let audioSession = AVAudioSession.sharedInstance()
+        AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = !userDidChooseAudioRoute
         do {
-            try audioSession.setCategory(
-                .playAndRecord,
-                mode: .voiceChat,
-                options: [.allowBluetoothHFP]
-            )
+            if !userDidChooseAudioRoute {
+                try audioSession.setCategory(
+                    .playAndRecord,
+                    mode: .voiceChat,
+                    options: [.allowBluetoothHFP]
+                )
+            }
             try audioSession.setPreferredSampleRate(48_000)
             try audioSession.setPreferredIOBufferDuration(0.005)
             try audioSession.setActive(true)
-            try audioSession.overrideOutputAudioPort(.none)
-            userPrefersSpeaker = false
-            localNudgeForcedSpeaker = false
-            print("📱 AVAudioSession activated with receiver preferred")
+            if !userDidChooseAudioRoute {
+                try audioSession.overrideOutputAudioPort(.none)
+                AudioManager.shared.isSpeakerOutputPreferred = false
+            }
+            print("📱 AVAudioSession activated; user-selected route preserved=\(userDidChooseAudioRoute)")
         } catch {
             print("AVAudioSession config/activate error: \(error)")
         }
@@ -668,6 +744,7 @@ final actor CallManager: NSObject, ObservableObject {
 
     /// LiveKit Room 연결을 해제 후 상태를 초기화
     private func disconnectRoom() async {
+        callIsEnding = true
         clearLocalNudgePlayback()
         let endedAlarmID = alarmId
         let answered = wasAnswered
@@ -681,7 +758,9 @@ final actor CallManager: NSObject, ObservableObject {
         isOutgoing = false
         wasAnswered = false
         userPrefersSpeaker = false
+        userDidChooseAudioRoute = false
         localNudgeForcedSpeaker = false
+        expectedSpeakerRoute = nil
 
         let rtc = LKRTCAudioSession.sharedInstance()
         rtc.isAudioEnabled = false
@@ -695,6 +774,26 @@ final actor CallManager: NSObject, ObservableObject {
 
         await currentRoom?.disconnect()
         print("🚪 Disconnected LiveKit room")
+    }
+
+    private func sendCalendarSnapshot(requestID: String, sourceRoom: Room) async {
+        guard let uuid = currentCallUUID, sourceRoom === room, !callIsEnding else { return }
+        let data = await withCheckedContinuation { continuation in
+            AppleCalendarService.shared.fetchMorningCallSnapshot(requestID: requestID) {
+                continuation.resume(returning: $0)
+            }
+        }
+        guard currentCallUUID == uuid, !callIsEnding, let data else { return }
+        do {
+            try await sourceRoom.localParticipant.publish(data: data, options: DataPublishOptions(topic: "haru.call.control", reliable: true))
+        } catch {
+            print("⚠️ Failed to deliver Apple Calendar snapshot: \(error.localizedDescription)")
+        }
+    }
+
+    private func prepareForRemoteHangup() {
+        callIsEnding = true
+        clearLocalNudgePlayback()
     }
 }
 
@@ -714,6 +813,11 @@ extension CallManager: RoomDelegate {
         }
 
         switch type {
+        case "calendar.today.query":
+            guard let requestID = payload["requestId"] as? String else { return }
+            Task { await self.sendCalendarSnapshot(requestID: requestID, sourceRoom: room) }
+        case "call.ending":
+            Task { await self.prepareForRemoteHangup() }
         case "call.end":
             let startLocalAlarm = payload["startLocalAlarm"] as? Bool ?? false
             let requestedAlarmID = payload["alarmId"] as? String
@@ -722,6 +826,7 @@ extension CallManager: RoomDelegate {
                 + "startLocalAlarm=\(startLocalAlarm)"
             )
             Task {
+                await self.prepareForRemoteHangup()
                 await self.endCurrentCallFromRemote(
                     startLocalAlarm: startLocalAlarm,
                     requestedAlarmID: requestedAlarmID

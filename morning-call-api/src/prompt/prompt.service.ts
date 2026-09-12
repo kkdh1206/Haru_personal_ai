@@ -134,11 +134,11 @@ export class PromptService {
     const currentIsoTime =
       now.toISO() || now.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
 
-    // 1. 구글 캘린더 일정 조회
+    // Apple events arrive over the connected call, not a best-effort silent push.
+    const calendarOnDevice = Boolean(user.appleCalendarConnected &&
+      (!user.calendarProvider || user.calendarProvider === 'apple'));
     const schedules = this.normalizeSchedules(
-      await this.calendarService.getTodayEvents(user._id, {
-        requestAppleCalendar: true,
-      }),
+      await this.calendarService.getTodayEvents(user._id),
       timeZone,
     );
 
@@ -165,6 +165,7 @@ export class PromptService {
       currentTimeLabel,
       currentIsoTime,
       schedule: schedules,
+      calendarOnDevice,
       weather: weatherInfo,
     });
 
