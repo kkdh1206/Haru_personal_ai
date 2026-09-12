@@ -74,6 +74,28 @@ struct IncomingAppleCalendarEvent {
     let timeZone: String
 }
 
+private struct AppleCalendarDaySnapshot {
+    let status: String
+    let date: String
+    let timeZone: String
+    let calendarCount: Int
+    let events: [Event]
+    let emptyConfirmed: Bool
+
+    func callPayload(requestID: String) -> [String: Any] {
+        [
+            "type": "calendar.today.result", "requestId": requestID,
+            "status": status, "date": date, "timeZone": timeZone,
+            "calendarCount": calendarCount, "emptyConfirmed": emptyConfirmed,
+            "truncated": events.count > 30,
+            "events": events.prefix(30).map { event in
+                ["title": String(event.summary.prefix(80)), "start": event.start,
+                 "end": event.end, "allDay": event.isAllDay] as [String: Any]
+            },
+        ]
+    }
+}
+
 final class AppleCalendarService {
     static let shared = AppleCalendarService()
 
@@ -118,42 +140,62 @@ final class AppleCalendarService {
     }
 
     private func readMorningCallSnapshot(requestID: String, accountID: String?, completion: @escaping (Data?) -> Void) {
+        readTodaySnapshot(accountID: accountID) { snapshot in
+            print("📅 Apple Calendar snapshot: status=\(snapshot.status) date=\(snapshot.date) zone=\(snapshot.timeZone) calendars=\(snapshot.calendarCount) events=\(snapshot.events.count) emptyConfirmed=\(snapshot.emptyConfirmed)")
+            completion(try? JSONSerialization.data(withJSONObject: snapshot.callPayload(requestID: requestID)))
+        }
+    }
+
+    /// UI and calls use the same local-day query. A read uses a new store after
+    /// authorization, independent of the store used for permission and writes.
+    private func readTodaySnapshot(
+        accountID: String?,
+        attempt: Int = 0,
+        completion: @escaping (AppleCalendarDaySnapshot) -> Void
+    ) {
         stateQueue.async { [weak self] in
-            guard let self else { completion(nil); return }
+            guard let self else { return }
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = .autoupdatingCurrent
             let start = calendar.startOfDay(for: Date())
             let end = calendar.date(byAdding: .day, value: 1, to: start)!
-            var payload: [String: Any] = [
-                "type": "calendar.today.result",
-                "requestId": requestID,
-                "timeZone": calendar.timeZone.identifier,
-                "date": self.dayString(from: start, timeZone: calendar.timeZone),
-                "events": []
-            ]
+            func finish(_ status: String, calendars: Int = 0, events: [Event] = []) {
+                completion(AppleCalendarDaySnapshot(
+                    status: status,
+                    date: self.dayString(from: start, timeZone: calendar.timeZone),
+                    timeZone: calendar.timeZone.identifier,
+                    calendarCount: calendars, events: events,
+                    emptyConfirmed: status == "ok" && events.isEmpty && attempt > 0
+                ))
+            }
             if accountID == nil || accountID != Auth.auth().currentUser?.uid
                 || CalendarProviderStore.selected != .apple {
-                payload["status"] = "not_connected"
-            } else if !self.hasFullAccess {
-                payload["status"] = "permission_denied"
-            } else {
-                let predicate = self.eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
-                let events = self.eventStore.events(matching: predicate)
-                    .sorted { $0.startDate < $1.startDate }
-                payload["status"] = "ok"
-                payload["truncated"] = events.count > 30
-                // Keep the reliable data packet small and omit notes/descriptions.
-                payload["events"] = events.prefix(30).map { event -> [String: Any] in
-                    let values = self.eventValues(event)
-                    return [
-                        "title": String(values.title.prefix(80)),
-                        "start": values.start, "end": values.end,
-                        "allDay": event.isAllDay
-                    ]
-                }
+                finish("not_connected")
+                return
             }
-            print("📅 Apple Calendar snapshot: status=\(payload["status"] ?? "unknown") date=\(payload["date"] ?? "") zone=\(calendar.timeZone.identifier) events=\((payload["events"] as? [[String: Any]])?.count ?? 0)")
-            completion(try? JSONSerialization.data(withJSONObject: payload))
+            guard self.hasFullAccess else { finish("permission_denied"); return }
+
+            let readStore = EKEventStore()
+            let calendars = readStore.calendars(for: .event)
+            let predicate = readStore.predicateForEvents(withStart: start, end: end, calendars: calendars)
+            let events: [Event] = calendars.isEmpty ? [] : readStore.events(matching: predicate)
+                .sorted { $0.startDate < $1.startDate }
+                .map { event in
+                    let values = self.eventValues(event)
+                    return Event(id: values.id, summary: values.title, start: values.start, end: values.end)
+                }
+            if events.isEmpty && attempt == 0 {
+                readStore.refreshSourcesIfNecessary()
+                self.stateQueue.asyncAfter(deadline: .now() + 0.5) {
+                    self.readTodaySnapshot(accountID: accountID, attempt: 1, completion: completion)
+                }
+                return
+            }
+            guard accountID == Auth.auth().currentUser?.uid,
+                  CalendarProviderStore.selected == .apple else { finish("not_connected"); return }
+            guard self.hasFullAccess else { finish("permission_denied"); return }
+            // No readable calendars is a loading problem, not an empty day.
+            finish(calendars.isEmpty ? "no_calendars" : "ok", calendars: calendars.count, events: events)
         }
     }
 
@@ -295,40 +337,15 @@ final class AppleCalendarService {
         }
     }
 
-    func fetchTodayEvents(completion: @escaping ([Event]) -> Void) {
-        guard hasFullAccess else {
-            DispatchQueue.main.async { completion([]) }
-            return
-        }
-
-        stateQueue.async { [weak self] in
-            guard let self else {
-                DispatchQueue.main.async { completion([]) }
-                return
+    func fetchTodayEvents(completion: @escaping (Result<[Event], Error>) -> Void) {
+        readTodaySnapshot(accountID: Auth.auth().currentUser?.uid) { snapshot in
+            DispatchQueue.main.async {
+                if snapshot.status == "ok" {
+                    completion(.success(snapshot.events))
+                } else {
+                    completion(.failure(AppleCalendarError.readUnavailable(snapshot.status)))
+                }
             }
-
-            var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = .autoupdatingCurrent
-            let now = Date()
-            let start = calendar.startOfDay(for: now)
-            let end = calendar.date(byAdding: .day, value: 1, to: start)
-                ?? start.addingTimeInterval(86_400)
-            let predicate = self.eventStore.predicateForEvents(
-                withStart: start,
-                end: end,
-                calendars: nil
-            )
-            let events = self.eventStore.events(matching: predicate)
-                .sorted { $0.startDate < $1.startDate }.map { event in
-                let payload = self.eventValues(event)
-                return Event(
-                    id: payload.id,
-                    summary: payload.title,
-                    start: payload.start,
-                    end: payload.end
-                )
-            }
-            DispatchQueue.main.async { completion(events) }
         }
     }
 
@@ -472,6 +489,7 @@ final class AppleCalendarService {
 private enum AppleCalendarError: LocalizedError {
     case invalidDate
     case noWritableCalendar
+    case readUnavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -479,6 +497,8 @@ private enum AppleCalendarError: LocalizedError {
             return "일정의 날짜나 시간을 해석할 수 없습니다."
         case .noWritableCalendar:
             return "일정을 저장할 수 있는 Apple Calendar가 없습니다."
+        case .readUnavailable(let status):
+            return "Apple Calendar 조회를 완료하지 못했습니다 (\(status))."
         }
     }
 }

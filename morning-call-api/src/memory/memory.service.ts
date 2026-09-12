@@ -1,14 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import { ChromaClient } from 'chromadb';
 import { Model, Types } from 'mongoose';
 import { SaveCallRecordDto } from './dto/save-call-record.dto';
 import {
   LongTermMemoryItemDto,
   UpsertLongTermMemoriesDto,
 } from './dto/upsert-long-term-memories.dto';
-import { EmbeddingsService } from './embeddings.service';
 import { SaveReminderDto } from './dto/save-reminder.dto';
 import { SaveUserInfoDto } from './dto/save-user-info.dto';
 import { Memory, MemoryDocument } from './schemas/memory.schema';
@@ -16,10 +13,6 @@ import {
   UserProfile,
   UserProfileDocument,
 } from './schemas/user-profile.schema';
-
-type LongTermMemorySearchResult = {
-  id: string;
-};
 
 type BehaviorProfilePatch = {
   wakeStyle?: 'gentle' | 'aggressive';
@@ -30,55 +23,12 @@ type BehaviorProfilePatch = {
 @Injectable()
 export class MemoryService {
   private readonly logger = new Logger(MemoryService.name);
-  private readonly collectionName = 'haru_long_term_memories';
-  private readonly chromaClient: ChromaClient | null;
 
   constructor(
     @InjectModel(Memory.name) private memoryModel: Model<MemoryDocument>,
     @InjectModel(UserProfile.name)
     private userProfileModel: Model<UserProfileDocument>,
-    private embeddingsService: EmbeddingsService,
-    private configService: ConfigService,
-  ) {
-    if (this.embeddingsService.isEnabled()) {
-      const chromaUrl =
-        this.configService.get<string>('CHROMA_URL') || 'http://localhost:8000';
-      this.chromaClient = new ChromaClient({ path: chromaUrl });
-      void this.initializeChromaCollection();
-    } else {
-      this.chromaClient = null;
-    }
-  }
-
-  private async initializeChromaCollection() {
-    if (!this.isVectorStoreEnabled()) {
-      return;
-    }
-
-    try {
-      const chromaClient = this.chromaClient;
-      if (!chromaClient) {
-        return;
-      }
-
-      await chromaClient.getOrCreateCollection({
-        name: this.collectionName,
-        metadata: { description: 'Haru long-term memory vectors' },
-      });
-      this.logger.log(
-        `ChromaDB collection '${this.collectionName}' initialized`,
-      );
-    } catch (error) {
-      this.logger.error(
-        `Failed to initialize ChromaDB collection: ${error.message}`,
-        error.stack,
-      );
-    }
-  }
-
-  private isVectorStoreEnabled(): boolean {
-    return this.chromaClient !== null && this.embeddingsService.isEnabled();
-  }
+  ) {}
 
   private getUserObjectId(userId: string): Types.ObjectId {
     if (!Types.ObjectId.isValid(userId)) {
@@ -115,87 +65,17 @@ export class MemoryService {
     );
   }
 
-  private async getCollection() {
-    if (!this.isVectorStoreEnabled()) {
-      return null;
-    }
-
-    const chromaClient = this.chromaClient;
-    if (!chromaClient) {
-      return null;
-    }
-
-    return chromaClient.getCollection({
-      name: this.collectionName,
-    });
-  }
-
-  private async addMemoryToVectorStore(memory: MemoryDocument) {
-    if (!this.isVectorStoreEnabled()) {
-      return;
-    }
-
-    const collection = await this.getCollection();
-    if (!collection) {
-      return;
-    }
-
-    try {
-      const embedding = await this.embeddingsService.generateEmbedding(
-        memory.content,
-      );
-
-      await collection.add({
-        ids: [memory._id.toString()],
-        embeddings: [embedding],
-        documents: [memory.content],
-        metadatas: [
-          {
-            userId: memory.userId.toString(),
-            conversationId: memory.conversationId,
-            memoryType: memory.memoryType,
-            timestamp: memory.timestamp.toISOString(),
-          },
-        ],
-      });
-
-      memory.chromaId = memory._id.toString();
-      await memory.save();
-    } catch (error) {
-      this.logger.error(
-        `Failed to save memory to ChromaDB: ${error.message}`,
-        error.stack,
-      );
-    }
-  }
-
-  private async removeMemoryFromVectorStore(chromaId?: string | null) {
-    if (!this.isVectorStoreEnabled() || !chromaId) {
-      return;
-    }
-
-    try {
-      const collection = await this.getCollection();
-      if (!collection) {
-        return;
-      }
-
-      await collection.delete({
-        ids: [chromaId],
-      });
-    } catch (error) {
-      this.logger.error(
-        `Failed to delete memory from ChromaDB: ${error.message}`,
-        error.stack,
-      );
-    }
-  }
-
-  private async fallbackSearchMemories(
+  // Keep memory retrieval available without an external model or vector store.
+  async searchMemories(
     userId: string,
     query: string,
-    limit: number,
+    limit = 5,
   ): Promise<MemoryDocument[]> {
+    query = query.trim();
+    if (!query) {
+      return [];
+    }
+
     const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const tokens = query
       .split(/\s+/)
@@ -342,7 +222,7 @@ export class MemoryService {
         continue;
       }
 
-      const createdMemory = await new this.memoryModel({
+      await new this.memoryModel({
         userId: userObjectId,
         conversationId: dto.conversationId,
         memoryType: 'long_term_memory',
@@ -361,7 +241,6 @@ export class MemoryService {
         timestamp: new Date(),
       }).save();
 
-      await this.addMemoryToVectorStore(createdMemory);
       savedCount += 1;
     }
 
@@ -402,96 +281,11 @@ export class MemoryService {
       .exec();
   }
 
-  async searchMemories(
-    userId: string,
-    query: string,
-    limit = 5,
-  ): Promise<MemoryDocument[]> {
-    if (!query.trim()) {
-      return [];
-    }
-
-    if (!this.isVectorStoreEnabled()) {
-      this.logger.warn(
-        'Vector search is disabled. Falling back to Mongo text matching.',
-      );
-      return this.fallbackSearchMemories(userId, query, limit);
-    }
-
-    try {
-      const queryEmbedding = await this.embeddingsService.generateEmbedding(
-        query,
-      );
-      const collection = await this.getCollection();
-
-      if (!collection) {
-        return this.fallbackSearchMemories(userId, query, limit);
-      }
-
-      const results = await collection.query({
-        queryEmbeddings: [queryEmbedding],
-        nResults: limit * 3,
-        where: {
-          $and: [{ userId }, { memoryType: 'long_term_memory' }],
-        },
-      });
-
-      const ids = results.ids?.[0] || [];
-      if (!ids.length) {
-        return [];
-      }
-
-      const orderedResults: LongTermMemorySearchResult[] = ids.map((id) => ({
-        id,
-      }));
-
-      const memoryIds = orderedResults
-        .filter((result) => Types.ObjectId.isValid(result.id))
-        .map((result) => new Types.ObjectId(result.id));
-
-      if (!memoryIds.length) {
-        return [];
-      }
-
-      const memories = await this.memoryModel
-        .find({
-          _id: { $in: memoryIds },
-          userId: this.getUserObjectId(userId),
-          memoryType: 'long_term_memory',
-        })
-        .exec();
-
-      const memoryMap = new Map(
-        memories.map((memory) => [memory._id.toString(), memory]),
-      );
-
-      return orderedResults
-        .map((result) => memoryMap.get(result.id))
-        .filter(Boolean)
-        .slice(0, limit) as MemoryDocument[];
-    } catch (error) {
-      this.logger.error(
-        `Failed to search memories: ${error.message}`,
-        error.stack,
-      );
-      return this.fallbackSearchMemories(userId, query, limit);
-    }
-  }
-
   async deleteUserMemories(userId: string): Promise<{
     deletedCount: number;
     deletedUserInfo: boolean;
   }> {
     const userObjectId = this.getUserObjectId(userId);
-    const memories = await this.memoryModel
-      .find({ userId: userObjectId })
-      .select('_id chromaId')
-      .exec();
-
-    for (const memory of memories) {
-      await this.removeMemoryFromVectorStore(memory.chromaId);
-    }
-
     const deleteResult = await this.memoryModel.deleteMany({
       userId: userObjectId,
     });
@@ -642,7 +436,6 @@ export class MemoryService {
       return { success: false };
     }
 
-    await this.removeMemoryFromVectorStore(memory.chromaId);
     await this.memoryModel.deleteOne({ _id: memory._id });
 
     return { success: true };

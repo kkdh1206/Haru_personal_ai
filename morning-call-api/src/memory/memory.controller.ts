@@ -125,7 +125,7 @@ export class MemoryController {
 
   /**
    * GET /memory/search?userId=xxx&q=검색어&limit=5
-   * 장기 메모리 벡터 검색
+   * 장기 메모리 키워드 검색 (MongoDB)
    */
   @Get('search')
   async searchMemories(

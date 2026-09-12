@@ -60,11 +60,11 @@ Haru Agent includes an API-based memory system that connects to a NestJS backend
 
 ### Key Features
 
-- **API-based memory**: All data stored in NestJS backend (MongoDB + ChromaDB)
+- **API-based memory**: All data stored in the NestJS backend (MongoDB)
 - **Automatic conversation tracking**: All conversations automatically saved via API
 - **User information storage**: Save important user details (name, preferences, etc.)
 - **Important facts**: Track key information from conversations
-- **RAG search**: Semantic search through conversation history (when backend implements it)
+- **Memory search**: Keyword matching against long-term memories in MongoDB; no embedding API calls or vector database
 - **Centralized management**: Multiple agent instances share the same memory
 
 ### Setup

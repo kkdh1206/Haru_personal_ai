@@ -275,6 +275,8 @@ def test_calendar_unavailable_is_not_reported_as_an_empty_day():
             "date": "2026-09-12",
             "timeZone": "America/Toronto",
             "events": [],
+            "calendarCount": 1,
+            "emptyConfirmed": True,
         }
     )
 

@@ -240,6 +240,8 @@ async def test_calendar_is_loaded_over_connected_room_before_session_start(
                             "timeZone": "America/Toronto",
                             "date": "2026-09-12",
                             "events": [],
+                            "calendarCount": 1,
+                            "emptyConfirmed": True,
                         }
                     ).encode(),
                 ),
@@ -251,7 +253,7 @@ async def test_calendar_is_loaded_over_connected_room_before_session_start(
         "일정이 없는 것이 확인"
         in rt.session.start.call_args.kwargs["agent"].instructions
     )
-    assert rt.session.start.call_args.kwargs["agent"].on_calendar_query is None
+    assert rt.session.start.call_args.kwargs["agent"].on_calendar_query is not None
 
 
 async def test_calendar_retries_when_the_first_startup_query_is_lost(call_runtime):
@@ -284,6 +286,8 @@ async def test_calendar_retries_when_the_first_startup_query_is_lost(call_runtim
                             "timeZone": "America/Toronto",
                             "date": "2026-09-12",
                             "events": [],
+                            "calendarCount": 1,
+                            "emptyConfirmed": True,
                         }
                     ).encode(),
                 ),
@@ -327,6 +331,8 @@ async def test_a_late_calendar_response_can_recover_after_initial_timeout(call_r
                     "timeZone": "America/Toronto",
                     "date": "2026-09-12",
                     "events": [],
+                    "calendarCount": 1,
+                    "emptyConfirmed": True,
                 }
             ).encode(),
         ),
@@ -335,3 +341,48 @@ async def test_a_late_calendar_response_can_recover_after_initial_timeout(call_r
     recovered = await assistant.on_calendar_query(timeout_seconds=1.0)
     assert recovered["status"] == "ok"
     assert rt.room.local_participant.publish_data.call_count == publishes_before_retry
+
+
+@pytest.mark.parametrize("verified_empty", [False, True])
+async def test_calendar_correction_makes_a_new_request_instead_of_reusing_empty_cache(
+    call_runtime, verified_empty,
+):
+    rt = call_runtime
+    rt.ctx.job.metadata = json.dumps({
+        "user_id": "user-id", "alarm_id": "alarm-id",
+        "time_zone": "Asia/Seoul", "prompt": "[APPLE_CALENDAR_ON_CALL]",
+    })
+    request_ids = []
+
+    async def publish(data, **kwargs):
+        command = json.loads(data)
+        if command["type"] != "calendar.today.query":
+            return
+        request_ids.append(command["requestId"])
+        events = [] if len(request_ids) == 1 else [{
+            "title": "실제 일정", "start": "2026-09-12T16:00:00Z",
+            "end": "2026-09-12T17:00:00Z",
+        }]
+        rt.room.emit("data_received", SimpleNamespace(
+            topic=agent.CALL_END_TOPIC,
+            participant=SimpleNamespace(identity="user-id"),
+            data=json.dumps({
+                "type": "calendar.today.result", "requestId": command["requestId"],
+                "status": "ok", "timeZone": "America/Toronto", "date": "2026-09-12",
+                "calendarCount": 1, "emptyConfirmed": verified_empty, "events": events,
+            }).encode(),
+        ))
+
+    rt.room.local_participant.publish_data.side_effect = publish
+    await agent.entrypoint(rt.ctx)
+    assistant = rt.session.start.call_args.kwargs["agent"]
+    assert assistant.on_calendar_query is not None
+    if verified_empty:
+        assert assistant.time_zone == "America/Toronto"
+    else:
+        assert "일정이 없는 것이 확인" not in assistant.instructions
+    result = await assistant.on_calendar_query(timeout_seconds=1.0, force_refresh=True)
+    assert len(request_ids) == 2
+    assert request_ids[0] != request_ids[1]
+    assert result["status"] == "ok"
+    assert result["events"][0]["title"] == "실제 일정"

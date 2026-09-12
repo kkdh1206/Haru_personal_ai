@@ -43,9 +43,6 @@ export class Memory {
   };
 
   @Prop({ type: String, default: null })
-  chromaId: string | null; // ChromaDB에 저장된 ID
-
-  @Prop({ type: String, default: null })
   normalizedContent: string | null;
 
   @Prop({ default: Date.now })

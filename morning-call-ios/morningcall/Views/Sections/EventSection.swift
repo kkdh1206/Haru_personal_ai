@@ -6,9 +6,19 @@
 //
 
 import SwiftUI
+import FirebaseAuth
+
+private struct EventCalendarStatus: Decodable {
+    let connected: Bool
+    let provider: CalendarProvider?
+}
 
 struct EventSection: View {
     @State private var events: [Event] = []
+    @State private var isLoading = true
+    @State private var loadFailed = false
+    @State private var loadRequestID = UUID()
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var env: AppEnvironment
     let date: Date = Date()
 
@@ -32,7 +42,17 @@ struct EventSection: View {
 //                .background(.ultraThinMaterial)
 //                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 VStack {
-                    if events.isEmpty {
+                    if isLoading {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                    } else if loadFailed {
+                        Button { loadData() } label: {
+                            Label(localized("일정을 확인하지 못했어요. 눌러서 다시 조회해 주세요."), systemImage: "arrow.clockwise")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                    } else if events.isEmpty {
                         HStack(spacing: 8) {
                             Image(systemName: "calendar.badge.clock")
                                 .foregroundStyle(.secondary)
@@ -63,7 +83,10 @@ struct EventSection: View {
                 }
             }
         }
-        .task { loadData() }
+        .task(id: env.user?.id) { loadData() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { loadData() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .haruCalendarDidSync)) { _ in
             loadData()
         }
@@ -75,21 +98,55 @@ struct EventSection: View {
 
     // MARK: - Networking
     private func loadData() {
-        if CalendarProviderStore.selected == .apple {
-            AppleCalendarService.shared.fetchTodayEvents { data in
-                apply(data)
-            }
+        let requestID = UUID()
+        loadRequestID = requestID
+        isLoading = true
+        loadFailed = false
+        guard let accountID = Auth.auth().currentUser?.uid else {
+            events = []
+            isLoading = false
+            loadFailed = true
             return
         }
-
-        APIClient.request(path: "/calendar/today", method: .GET) { (result: Result<[Event], Error>) in
+        let finish: (Result<[Event], Error>) -> Void = { result in
             DispatchQueue.main.async {
+                guard loadRequestID == requestID, Auth.auth().currentUser?.uid == accountID else { return }
+                isLoading = false
                 switch result {
                 case .success(let data):
                     apply(data)
                 case .failure(let error):
                     print("❌ 일정 가져오기 실패: \(error)")
-                    self.events = []
+                    loadFailed = true
+                }
+            }
+        }
+        func fetch(_ provider: CalendarProvider) {
+            if provider == .apple {
+                AppleCalendarService.shared.fetchTodayEvents(completion: finish)
+            } else {
+                APIClient.request(path: "/calendar/today", method: .GET, completion: finish)
+            }
+        }
+        if let provider = CalendarProviderStore.selected {
+            fetch(provider)
+            return
+        }
+        // A fresh login may not have opened Settings yet. Do not send Apple
+        // users to the server's intentionally empty /calendar/today endpoint.
+        APIClient.request(path: "/user/calendar-status", method: .GET) { (result: Result<EventCalendarStatus, Error>) in
+            DispatchQueue.main.async {
+                guard loadRequestID == requestID, Auth.auth().currentUser?.uid == accountID else { return }
+                switch result {
+                case .success(let status):
+                    guard status.connected, let provider = status.provider else {
+                        finish(.failure(APIError.noData))
+                        return
+                    }
+                    CalendarProviderStore.selected = CalendarProviderStore.selected ?? provider
+                    fetch(CalendarProviderStore.selected ?? provider)
+                case .failure(let error):
+                    finish(.failure(error))
                 }
             }
         }
