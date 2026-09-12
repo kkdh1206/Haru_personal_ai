@@ -33,6 +33,7 @@ type PromptOptions = {
   weather: string;
   schedule: Schedule[];
   calendarOnDevice?: boolean;
+  calendarUnavailableReason?: string;
   customMessage: string;
 };
 
@@ -159,6 +160,7 @@ export function buildMorningCallPrompt({
   weather,
   schedule,
   calendarOnDevice = false,
+  calendarUnavailableReason,
   customMessage,
 }: PromptOptions): string {
   const normalizedWakeIntensity = wakeIntensity === 'firm' ? 'firm' : 'gentle';
@@ -181,6 +183,8 @@ export function buildMorningCallPrompt({
       : '최초 기상 통화';
   const scheduleUsageInstruction = calendarOnDevice
     ? '- Apple Calendar 일정은 통화 중 전달되는 조회 결과만 사용한다. 조회 실패를 일정 없음으로 말하지 않는다.'
+    : calendarUnavailableReason
+    ? '- 캘린더를 조회하지 못했다. 일정이 없다고 단정하거나 지어내지 않는다.'
     : schedule?.length
     ? '- 일정이 있으면 가장 이른 일정 하나만 지금 일어날 이유로 쓴다.'
     : '- 일정이 없으면 없다고 강조하지 말고 시간, 날씨, 바로 할 행동만 말한다.';
@@ -287,7 +291,7 @@ ${resolvedSpeechStyle.prompt}
 - 현재 시각: ${currentTimeLabel}
 - 날씨: ${weather || '정보 없음'}
 - 오늘 일정:
-${calendarOnDevice ? '[APPLE_CALENDAR_ON_CALL] 아직 조회되지 않음. 통화 연결 후 전달되는 기기 조회 결과를 사용한다. 결과가 없으면 일정을 확인하지 못했다고 말한다.' : formatSchedules(schedule)}
+${calendarOnDevice ? '[APPLE_CALENDAR_ON_CALL] 아직 조회되지 않음. 통화 연결 후 전달되는 기기 조회 결과를 사용한다. 결과가 없으면 일정을 확인하지 못했다고 말한다.' : calendarUnavailableReason || formatSchedules(schedule)}
 - 전할 말 의도: ${messageIntent || '없음'}
 `.trim();
 }

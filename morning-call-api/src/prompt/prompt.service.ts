@@ -134,13 +134,20 @@ export class PromptService {
     const currentIsoTime =
       now.toISO() || now.toFormat("yyyy-MM-dd'T'HH:mm:ssZZ");
 
-    // Apple events arrive over the connected call, not a best-effort silent push.
-    const calendarOnDevice = Boolean(user.appleCalendarConnected &&
-      (!user.calendarProvider || user.calendarProvider === 'apple'));
+    // Settings and the call must agree, including legacy provider/token states.
+    const calendar = await this.calendarService.getMorningCallContext(user._id);
+    const calendarOnDevice = calendar.provider === 'apple';
     const schedules = this.normalizeSchedules(
-      await this.calendarService.getTodayEvents(user._id),
+      calendar.events,
       timeZone,
     );
+    console.log(`[Calendar] call-context ${JSON.stringify({
+      alarmId, userId: String(user._id), provider: calendar.provider,
+      status: calendar.status, timeZone,
+      // null means pending/failed, never a confirmed empty calendar.
+      eventCount: calendar.status === 'ok' ? schedules.length : null,
+      transport: calendarOnDevice ? 'livekit-device' : calendar.provider === 'google' ? 'google-api' : 'none',
+    })}`);
 
     // 2. 날씨 가져오기
     const weather = await this.informationService.getCurrentWeather(
@@ -166,6 +173,11 @@ export class PromptService {
       currentIsoTime,
       schedule: schedules,
       calendarOnDevice,
+      calendarUnavailableReason: calendar.status === 'unavailable'
+        ? '캘린더 조회 실패. 일정을 확인하지 못했으며 일정 없음으로 단정하지 않는다.'
+        : calendar.status === 'not_connected'
+          ? '캘린더가 연결되지 않아 일정을 확인할 수 없다. 일정 없음으로 단정하지 않는다.'
+          : undefined,
       weather: weatherInfo,
     });
 

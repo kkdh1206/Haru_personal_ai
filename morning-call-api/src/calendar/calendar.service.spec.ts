@@ -87,6 +87,51 @@ describe('CalendarService Apple Calendar integration', () => {
     expect(apnsService.sendAppleCalendarQueryPush).not.toHaveBeenCalled();
   });
 
+  it('marks Apple events as pending the answered call instead of an empty day', async () => {
+    userService.getCalendarProvider.mockResolvedValue('apple');
+    await expect(createService().getMorningCallContext('user-1')).resolves.toEqual({
+      provider: 'apple', status: 'pending_device', events: [],
+    });
+    expect(userService.getCalendarProvider).toHaveBeenCalledTimes(1);
+    expect(apnsService.sendAppleCalendarQueryPush).not.toHaveBeenCalled();
+  });
+
+  it('keeps a disconnected calendar distinct from a confirmed empty day', async () => {
+    userService.getCalendarProvider.mockResolvedValue(null);
+    await expect(createService().getMorningCallContext('user-1')).resolves.toEqual({
+      provider: null, status: 'not_connected', events: [],
+    });
+  });
+
+  it.each([
+    { items: [] },
+    { items: [{
+      id: 'event-1', summary: 'Meeting',
+      start: { dateTime: '2026-09-12T09:00:00-04:00' },
+      end: { dateTime: '2026-09-12T10:00:00-04:00' },
+    }] },
+  ])('keeps successful Google results, including empty days, in the user time zone (%j)', async ({ items }) => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-12T15:00:00Z'));
+    try {
+      userService.getCalendarProvider.mockResolvedValue('google');
+      const list = jest.fn().mockResolvedValue({ data: { items } });
+      const service = createService();
+      jest.spyOn(service as any, 'getGoogleCalendarClient').mockResolvedValue({
+        calendar: { events: { list } }, timeZone: 'America/Toronto',
+      });
+      const context = await service.getMorningCallContext('user-1');
+      expect(context.status).toBe('ok');
+      expect(context.provider).toBe('google');
+      expect(context.events).toHaveLength(items.length);
+      expect(list).toHaveBeenCalledWith(expect.objectContaining({
+        timeMin: '2026-09-12T04:00:00.000Z',
+        timeMax: '2026-09-13T03:59:59.999Z',
+      }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('delivers spoken event additions directly to the iPhone without storing them', async () => {
     userService.getCalendarProvider.mockResolvedValue('apple');
     userService.getUserDeviceToken.mockResolvedValue({

@@ -234,6 +234,7 @@ export class UserService {
     userId: string,
     calendarAccessToken: string,
     calendarRefreshToken: string,
+    options: { selectProvider?: boolean } = {},
   ) {
     return this.userModel
       .findByIdAndUpdate(
@@ -242,7 +243,9 @@ export class UserService {
           $set: {
             calendarAccessToken: this.crypto.encrypt(calendarAccessToken),
             calendarRefreshToken: this.crypto.encrypt(calendarRefreshToken),
-            calendarProvider: 'google',
+            // OAuth refresh is not a new user selection. An in-flight Google
+            // request must not switch a user who has since connected Apple.
+            ...(options.selectProvider === false ? {} : { calendarProvider: 'google' }),
           },
         },
         { new: true },

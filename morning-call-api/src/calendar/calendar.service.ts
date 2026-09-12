@@ -57,9 +57,9 @@ export class CalendarService {
     return 'Unknown calendar error';
   }
 
-  private logCalendarError(action: string, error: unknown) {
+  private logCalendarError(action: string, error: unknown, userId?: string) {
     const message = this.getCalendarErrorMessage(error);
-    console.error(`[Calendar] ${action} failed: ${message}`);
+    console.error(`[Calendar] ${action} failed${userId ? ` user=${userId}` : ''}: ${message}`);
   }
 
   private async getGoogleCalendarClient(userId: string) {
@@ -83,6 +83,7 @@ export class CalendarService {
           userId,
           tokens.access_token,
           tokens.refresh_token ?? calendarRefreshToken,
+          { selectProvider: false },
         );
       }
     });
@@ -132,31 +133,49 @@ export class CalendarService {
     if (provider !== 'google') return [];
 
     try {
-      const { calendar, timeZone } = await this.getGoogleCalendarClient(userId);
-      const now = DateTime.now().setZone(timeZone);
-
-      const res = await calendar.events.list({
-        calendarId: 'primary',
-        timeMin: now.startOf('day').toUTC().toISO(),
-        timeMax: now.endOf('day').toUTC().toISO(),
-        singleEvents: true,
-        orderBy: 'startTime',
-      });
-
-      return (
-        res.data.items?.map((event) => ({
-          id: event.id,
-          summary: event.summary,
-          description: event.description,
-          start: event.start?.dateTime || event.start?.date,
-          end: event.end?.dateTime || event.end?.date,
-          location: event.location,
-        })) || []
-      );
+      return await this.getGoogleTodayEvents(userId);
     } catch (e) {
-      this.logCalendarError('getTodayEvents', e);
+      this.logCalendarError('getTodayEvents', e, userId);
       return [];
     }
+  }
+
+  /** Use the same resolved provider as Settings, once per prompt. Never persist Apple events. */
+  async getMorningCallContext(userId: string) {
+    const provider = await this.userService.getCalendarProvider(userId);
+    if (provider === 'apple') {
+      return { provider, status: 'pending_device' as const, events: [] };
+    }
+    if (provider !== 'google') {
+      return { provider: null, status: 'not_connected' as const, events: [] };
+    }
+    try {
+      const events = await this.getGoogleTodayEvents(userId);
+      return { provider, status: 'ok' as const, events };
+    } catch (error) {
+      this.logCalendarError('getMorningCallContext', error, userId);
+      return { provider, status: 'unavailable' as const, events: [] };
+    }
+  }
+
+  private async getGoogleTodayEvents(userId: string) {
+    const { calendar, timeZone } = await this.getGoogleCalendarClient(userId);
+    const now = DateTime.now().setZone(timeZone);
+    const res = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: now.startOf('day').toUTC().toISO(),
+      timeMax: now.endOf('day').toUTC().toISO(),
+      singleEvents: true,
+      orderBy: 'startTime',
+    });
+    return res.data.items?.map((event) => ({
+      id: event.id,
+      summary: event.summary,
+      description: event.description,
+      start: event.start?.dateTime || event.start?.date,
+      end: event.end?.dateTime || event.end?.date,
+      location: event.location,
+    })) || [];
   }
 
   async getSchedule(userId: string, date: string) {

@@ -186,6 +186,33 @@ describe('UserService', () => {
     ).rejects.toThrow('Google Calendar auth code did not return tokens.');
   });
 
+  it('does not change the selected calendar during a background Google token refresh', async () => {
+    await createService().updateCalendarToken('user-1', 'new-access', 'refresh', {
+      selectProvider: false,
+    });
+    expect(findByIdAndUpdate).toHaveBeenCalledWith(
+      { _id: 'user-1' },
+      { $set: {
+        calendarAccessToken: 'encrypted:new-access',
+        calendarRefreshToken: 'encrypted:refresh',
+      } },
+      { new: true },
+    );
+  });
+
+  it('resolves a legacy Google provider without tokens to the connected Apple calendar', async () => {
+    findById.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          calendarProvider: 'google', appleCalendarConnected: true,
+        }),
+      }),
+    });
+    await expect(createService().getCalendarStatus('user-1')).resolves.toMatchObject({
+      connected: true, provider: 'apple',
+    });
+  });
+
   it('resets the local-day counter and atomically reserves a call slot', async () => {
     await expect(
       createService().reserveDailyCallSlot('user-1', '2026-07-24', 3),
