@@ -62,6 +62,7 @@ struct AlarmTabView: View {
     @State private var editorContext: AlarmEditorContext?
     @State private var pendingWeekdaySaves: Set<Int> = []
     @State private var showAlarmSaveError = false
+    @State private var showAlarmDeleteError = false
     private let character = CharacterPreference.hari
     @State private var now = Date()
 
@@ -184,27 +185,27 @@ struct AlarmTabView: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 14) {
                 Text(AlarmDateFormatter.heroDate(language: language).string(from: now))
-                    .font(.system(.headline, design: .rounded).weight(.medium))
+                    .font(.system(.headline).weight(.medium))
                     .foregroundStyle(Color.black.opacity(0.55))
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text(localized("다음 모닝콜까지"))
-                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                        .font(.system(.title3).weight(.semibold))
                         .foregroundStyle(Color.black.opacity(0.78))
 
                     if let summary = nextAlarmSummary {
                         countdownLabel(summary.countdownText)
 
                         Text(summary.supportingText)
-                            .font(.system(.headline, design: .rounded).weight(.medium))
+                            .font(.system(.headline).weight(.medium))
                             .foregroundStyle(Color.black.opacity(0.58))
                     } else {
                         Text(localized("알람 없음"))
-                            .font(.system(size: 42, weight: .bold, design: .rounded))
+                            .font(.system(size: 42, weight: .bold))
                             .foregroundStyle(Color.black.opacity(0.92))
 
                         Text(localized("알람을 추가해서 아침 루틴을 준비해보세요."))
-                            .font(.system(.subheadline, design: .rounded))
+                            .font(.system(.subheadline))
                             .foregroundStyle(Color.black.opacity(0.58))
                     }
                 }
@@ -236,7 +237,7 @@ struct AlarmTabView: View {
                     slot: slot,
                     isToday: slot.day == todayWeekday,
                     isPending: pendingWeekdaySaves.contains(slot.day),
-                    isDisabled: !pendingWeekdaySaves.isEmpty,
+                    isDisabled: isLoading || !pendingWeekdaySaves.isEmpty,
                     onTap: {
                         handleWeekdayTap(slot)
                     }
@@ -246,13 +247,18 @@ struct AlarmTabView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
+            RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                 .fill(Color.white.opacity(0.90))
         )
         .alert(localized("알람 저장 실패"), isPresented: $showAlarmSaveError) {
             Button(localized("확인"), role: .cancel) {}
         } message: {
             Text(localized("알람 저장에 실패했어요. 네트워크를 확인하고 다시 시도해 주세요."))
+        }
+        .alert(localized("알람 삭제 실패"), isPresented: $showAlarmDeleteError) {
+            Button(localized("확인"), role: .cancel) {}
+        } message: {
+            Text(localized("알람을 삭제하지 못했어요. 다시 시도해 주세요."))
         }
     }
 
@@ -262,8 +268,8 @@ struct AlarmTabView: View {
                 Text(token.value)
                     .font(
                         token.isNumber
-                        ? .system(size: 48, weight: .bold, design: .rounded)
-                        : .system(size: 24, weight: .bold, design: .rounded)
+                        ? .system(size: 48, weight: .bold)
+                        : .system(size: 24, weight: .bold)
                     )
             }
         }
@@ -331,190 +337,49 @@ struct AlarmTabView: View {
     }
 
     private func handleDelete(for context: AlarmEditorContext) {
-        guard let alarm = context.existingAlarm else { return }
-        deleteAlarm(id: alarm.id) {
-            loadAlarms()
-        }
-    }
-
-    private func handleWeekdayToggle(day: Int, value: Bool) {
-        guard let alarm = recurringAlarms.first(where: { $0.repeatDays.contains(day) }) else {
-            if value {
-                createAlarm(
-                    time: nextAlarmSummary?.timeText ?? "07:30",
-                    repeatDays: [day],
-                    targetDate: nil,
-                    isOn: true,
-                    wakeIntensity: "gentle",
-                    personality: "gentle"
-                ) { _ in
-                    loadAlarms()
-                }
-            }
-            return
-        }
-
-        if alarm.repeatDays.count > 1 {
-            let updatedDays = value
-                ? Array(Set(alarm.repeatDays + [day])).sorted()
-                : alarm.repeatDays.filter { $0 != day }
-
-            updateAlarm(
-                alarm: alarm,
-                time: alarm.time,
-                repeatDays: updatedDays,
-                targetDate: nil,
-                isOn: !updatedDays.isEmpty && alarm.isOn,
-                wakeIntensity: alarm.wakeIntensity,
-                personality: alarm.personality
-            ) { _ in
+        guard pendingWeekdaySaves.isEmpty,
+              let alarm = context.existingAlarm,
+              case .weekday(let day) = context.mode else { return }
+        pendingWeekdaySaves.insert(day)
+        Task { @MainActor in
+            defer { pendingWeekdaySaves.remove(day) }
+            do {
+                alarms = try await WeekdayAlarmService(repository: .live)
+                    .remove(day: day, alarm: alarm, alarms: alarms)
+                LocalCallFallbackScheduler.shared.syncFallbacks(with: alarms)
+            } catch {
+                showAlarmDeleteError = true
                 loadAlarms()
             }
-            return
-        }
-
-        updateAlarm(
-            alarm: alarm,
-            time: alarm.time,
-            repeatDays: [day],
-            targetDate: nil,
-            isOn: value,
-            wakeIntensity: alarm.wakeIntensity,
-            personality: alarm.personality
-        ) { _ in
-            loadAlarms()
         }
     }
 
     private func handleWeekdayTap(_ slot: WeekdaySlot) {
-        guard pendingWeekdaySaves.isEmpty else { return }
+        guard !isLoading, pendingWeekdaySaves.isEmpty else { return }
         editorContext = makeWeekdayContext(for: slot.day, existingAlarm: slot.alarm)
     }
 
     private func saveWeekdayAlarm(day: Int, context: AlarmEditorContext, result: AlarmEditorResult) {
         guard pendingWeekdaySaves.isEmpty else { return }
-
-        let time = AlarmDateFormatter.time.string(from: result.time)
-        let wakeIntensity = wakeIntensityValue(for: result.wakeStyle)
-        let personality = result.wakeStyle
-        let previousAlarms = alarms
-
-        applyOptimisticWeekdaySave(
-            day: day,
-            existing: context.existingAlarm,
-            time: time,
-            wakeIntensity: wakeIntensity,
-            personality: personality
+        let template = Alarm(
+            id: context.existingAlarm?.id ?? "",
+            time: AlarmDateFormatter.time.string(from: result.time),
+            isOn: true, repeatDays: [day], personality: result.wakeStyle,
+            voice: character.voiceName, role: character.roleName,
+            wakeIntensity: wakeIntensityValue(for: result.wakeStyle)
         )
         pendingWeekdaySaves.insert(day)
-
-        let finish: (Result<Alarm, Error>) -> Void = { result in
-            pendingWeekdaySaves.remove(day)
-            switch result {
-            case .success(let savedAlarm):
-                alarms.removeAll {
-                    $0.id.hasPrefix("pending-") && $0.repeatDays.contains(day)
-                }
-                replaceAlarm(savedAlarm)
-                loadAlarms()
-            case .failure(let error):
-                alarms = previousAlarms
+        Task { @MainActor in
+            defer { pendingWeekdaySaves.remove(day) }
+            do {
+                alarms = try await WeekdayAlarmService(repository: .live)
+                    .save(day: day, template: template, alarms: alarms)
+                LocalCallFallbackScheduler.shared.syncFallbacks(with: alarms)
+            } catch {
                 showAlarmSaveError = true
-                print("❌ 알람 저장 실패: \(error)")
                 loadAlarms()
             }
         }
-
-        if let existing = context.existingAlarm {
-            if existing.repeatDays == [day] || Set(existing.repeatDays) == Set([day]) {
-                updateAlarm(
-                    alarm: existing,
-                    time: time,
-                    repeatDays: [day],
-                    targetDate: nil,
-                    isOn: true,
-                    wakeIntensity: wakeIntensity,
-                    personality: personality
-                ) { finish($0) }
-            } else {
-                let remainingDays = existing.repeatDays.filter { $0 != day }
-                updateAlarm(
-                    alarm: existing,
-                    time: existing.time,
-                    repeatDays: remainingDays,
-                    targetDate: nil,
-                    isOn: existing.isOn,
-                    wakeIntensity: existing.wakeIntensity,
-                    personality: existing.personality
-                ) { updateResult in
-                    guard case .success = updateResult else {
-                        finish(updateResult)
-                        return
-                    }
-                    createAlarm(
-                        time: time,
-                        repeatDays: [day],
-                        targetDate: nil,
-                        isOn: true,
-                        wakeIntensity: wakeIntensity,
-                        personality: personality
-                    ) { finish($0) }
-                }
-            }
-        } else {
-            createAlarm(
-                time: time,
-                repeatDays: [day],
-                targetDate: nil,
-                isOn: true,
-                wakeIntensity: wakeIntensity,
-                personality: personality
-            ) { finish($0) }
-        }
-    }
-
-    private func applyOptimisticWeekdaySave(
-        day: Int,
-        existing: Alarm?,
-        time: String,
-        wakeIntensity: String,
-        personality: String
-    ) {
-        if var existing {
-            if existing.repeatDays.count == 1, existing.repeatDays.contains(day) {
-                existing.time = time
-                existing.isOn = true
-                existing.wakeIntensity = wakeIntensity
-                existing.personality = personality
-                replaceAlarm(existing)
-                return
-            }
-
-            var remainingAlarm = existing
-            remainingAlarm.repeatDays.removeAll { $0 == day }
-            replaceAlarm(remainingAlarm)
-        }
-
-        alarms.append(
-            Alarm(
-                id: "pending-\(UUID().uuidString)",
-                time: time,
-                isOn: true,
-                repeatDays: [day],
-                personality: personality,
-                voice: character.voiceName,
-                role: character.roleName,
-                wakeIntensity: wakeIntensity
-            )
-        )
-    }
-
-    private func replaceAlarm(_ alarm: Alarm) {
-        guard let index = alarms.firstIndex(where: { $0.id == alarm.id }) else {
-            alarms.append(alarm)
-            return
-        }
-        alarms[index] = alarm
     }
 
     private func loadAlarms() {
@@ -530,90 +395,6 @@ struct AlarmTabView: View {
                     print("❌ 알람 가져오기 실패: \(error)")
                 }
                 isLoading = false
-            }
-        }
-    }
-
-    private func createAlarm(
-        time: String,
-        repeatDays: [Int],
-        targetDate: String?,
-        isOn: Bool,
-        wakeIntensity: String,
-        personality: String,
-        completion: @escaping (Result<Alarm, Error>) -> Void
-    ) {
-        let character = CharacterPreference.hari
-        var body: [String: Any] = [
-            "time": time,
-            "timeZone": TimeZone.autoupdatingCurrent.identifier,
-            "repeatDays": repeatDays,
-            "isOn": isOn,
-            "wakeIntensity": wakeIntensity,
-            "personality": personality,
-            "voice": character.voiceName,
-            "role": character.roleName,
-        ]
-        if let targetDate {
-            body["targetDate"] = targetDate
-        }
-
-        APIClient.request(path: "/alarm", method: .POST, body: body) { (result: Result<Alarm, Error>) in
-            DispatchQueue.main.async {
-                if case .success(let alarm) = result {
-                    LocalCallFallbackScheduler.shared.rescheduleFallback(for: alarm)
-                }
-                completion(result)
-            }
-        }
-    }
-
-    private func updateAlarm(
-        alarm: Alarm,
-        time: String,
-        repeatDays: [Int],
-        targetDate: String?,
-        isOn: Bool,
-        wakeIntensity: String,
-        personality: String,
-        completion: @escaping (Result<Alarm, Error>) -> Void
-    ) {
-        let character = CharacterPreference.hari
-        var body: [String: Any] = [
-            "time": time,
-            "timeZone": TimeZone.autoupdatingCurrent.identifier,
-            "repeatDays": repeatDays,
-            "isOn": isOn,
-            "wakeIntensity": wakeIntensity,
-            "personality": personality,
-            "voice": character.voiceName,
-            "role": character.roleName,
-        ]
-        if let targetDate {
-            body["targetDate"] = targetDate
-        }
-
-        APIClient.request(
-            path: "/alarm/\(alarm.id)",
-            method: .PUT,
-            body: body
-        ) { (result: Result<Alarm, Error>) in
-            DispatchQueue.main.async {
-                if case .success(let updatedAlarm) = result {
-                    LocalCallFallbackScheduler.shared.rescheduleFallback(for: updatedAlarm)
-                }
-                completion(result)
-            }
-        }
-    }
-
-    private func deleteAlarm(id: String, completion: @escaping () -> Void) {
-        APIClient.requestVoid(path: "/alarm/\(id)", method: .DELETE) { (result: Result<Void, Error>) in
-            DispatchQueue.main.async {
-                if case .success = result {
-                    LocalCallFallbackScheduler.shared.cancelFallback(for: id)
-                }
-                completion()
             }
         }
     }
@@ -799,11 +580,11 @@ private struct WeekdayAlarmCard: View {
     var body: some View {
         VStack(spacing: 8) {
             Text(slot.label)
-                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .font(.system(.subheadline).weight(.semibold))
                 .foregroundStyle(isToday ? .white : Color.black.opacity(0.72))
 
             Text(slot.alarm?.time ?? "OFF")
-                .font(.system(.caption, design: .rounded).weight(.bold))
+                .font(.system(.caption).weight(.bold))
                 .foregroundStyle(
                     isToday
                     ? .white
@@ -814,10 +595,10 @@ private struct WeekdayAlarmCard: View {
         .padding(.vertical, 10)
         .padding(.horizontal, 4)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                 .fill(isToday ? Color(red: 0.41, green: 0.63, blue: 0.95).opacity(0.92) : Color.clear)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous))
         .overlay(alignment: .topTrailing) {
             if isPending {
                 ProgressView()

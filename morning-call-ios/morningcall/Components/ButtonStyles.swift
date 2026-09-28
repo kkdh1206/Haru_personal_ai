@@ -8,13 +8,17 @@
 import SwiftUI
 
 struct PrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .frame(maxWidth: .infinity)
-            .padding()
-            .background(configuration.isPressed ? Color.black.opacity(0.78) : Color.black.opacity(0.88))
+            .font(.body.weight(.semibold))
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, minHeight: 24)
+            .padding(16)
+            .background(HaruStyle.ink.opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.35))
             .foregroundColor(.white)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous))
             .fontWeight(.bold)
     }
 }
@@ -26,7 +30,7 @@ struct SecondaryButtonStyle: ButtonStyle {
             .padding()
             .background(configuration.isPressed ? Color.white.opacity(0.72) : Color.white.opacity(0.88))
             .foregroundColor(Color.black.opacity(0.78))
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous))
             .fontWeight(.bold)
     }
 }

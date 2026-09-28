@@ -22,7 +22,6 @@ struct OnboardingAlarmSetupView: View {
     @State private var time = Self.defaultAlarmTime
     @State private var repeatDays: Set<Int> = [1, 2, 3, 4, 5]
     @State private var wakeIntensity = OnboardingCallPreferencesStore.wakeIntensity
-    @State private var existingAlarm: Alarm?
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var showSaveError = false
@@ -32,105 +31,97 @@ struct OnboardingAlarmSetupView: View {
     }
 
     var body: some View {
-        ZStack {
-            onboardingBackground
+        OnboardingLayout(step: 4) {
+            VStack(alignment: .leading, spacing: 9) {
+                Text("첫 모닝콜을 설정해볼게요")
+                    .font(.system(.largeTitle).weight(.bold))
+                    .foregroundStyle(Color.black.opacity(0.92))
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    VStack(alignment: .leading, spacing: 9) {
-                        Text("첫 모닝콜을 설정해볼게요")
-                            .font(.system(.largeTitle, design: .rounded).weight(.bold))
-                            .foregroundStyle(Color.black.opacity(0.92))
-
-                        Text("원하는 시간과 깨우기 방식을 선택해 주세요.")
-                            .font(.system(.subheadline, design: .rounded).weight(.medium))
-                            .foregroundStyle(Color.black.opacity(0.60))
-                    }
-
-                    VStack(alignment: .leading, spacing: 14) {
-                        Label("알람 시간", systemImage: "alarm.fill")
-                            .font(.system(.headline, design: .rounded).weight(.semibold))
-
-                        DatePicker("", selection: $time, displayedComponents: .hourAndMinute)
-                            .datePickerStyle(.wheel)
-                            .labelsHidden()
-                            .frame(maxWidth: .infinity)
-                            .clipped()
-                    }
-                    .onboardingPanel()
-
-                    VStack(alignment: .leading, spacing: 16) {
-                        Label("반복 요일", systemImage: "repeat")
-                            .font(.system(.headline, design: .rounded).weight(.semibold))
-
-                        HStack(spacing: 7) {
-                            ForEach([1, 2, 3, 4, 5, 6, 0], id: \.self) { day in
-                                Button {
-                                    toggle(day)
-                                } label: {
-                                    Text(weekdayLabel(for: day))
-                                        .font(.system(.subheadline, design: .rounded).weight(.bold))
-                                        .foregroundStyle(repeatDays.contains(day) ? .white : Color.black.opacity(0.66))
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 40)
-                                        .background(
-                                            Circle()
-                                                .fill(
-                                                    repeatDays.contains(day)
-                                                    ? Color(red: 0.35, green: 0.52, blue: 0.84)
-                                                    : Color.white.opacity(0.72)
-                                                )
-                                        )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-
-                        if repeatDays.isEmpty {
-                            Text("반복할 요일을 한 개 이상 선택해 주세요.")
-                                .font(.system(.footnote, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.red.opacity(0.78))
-                        }
-                    }
-                    .onboardingPanel()
-
-                    VStack(alignment: .leading, spacing: 14) {
-                        Label("깨우기 강도", systemImage: "speaker.wave.2.fill")
-                            .font(.system(.headline, design: .rounded).weight(.semibold))
-
-                        Picker("깨우기 강도", selection: $wakeIntensity) {
-                            Text("다정하게").tag("gentle")
-                            Text("강하게").tag("firm")
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                    .onboardingPanel()
-
-                    if showSaveError {
-                        Text("알람 저장에 실패했어요. 네트워크를 확인하고 다시 시도해 주세요.")
-                            .font(.system(.footnote, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.red.opacity(0.82))
-                            .frame(maxWidth: .infinity, alignment: .center)
-                    }
-
-                    Button {
-                        saveAlarm()
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                                .tint(.white)
-                        } else {
-                            Text("알람 저장하고 계속하기")
-                        }
-                    }
-                    .disabled(isSaving || isLoading || repeatDays.isEmpty)
-                    .buttonStyle(PrimaryButtonStyle())
-                }
-                .padding(.horizontal, 22)
-                .padding(.top, 64)
-                .padding(.bottom, 48)
+                Text("원하는 시간과 깨우기 방식을 선택해 주세요.")
+                    .font(.system(.subheadline).weight(.medium))
+                    .foregroundStyle(Color.black.opacity(0.60))
             }
+
+            VStack(alignment: .leading, spacing: 14) {
+                Label("알람 시간", systemImage: "alarm.fill")
+                    .font(.system(.headline).weight(.semibold))
+
+                DatePicker("", selection: $time, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+            }
+            .onboardingPanel()
+
+            VStack(alignment: .leading, spacing: 16) {
+                Label("반복 요일", systemImage: "repeat")
+                    .font(.system(.headline).weight(.semibold))
+
+                HStack(spacing: 7) {
+                    ForEach([1, 2, 3, 4, 5, 6, 0], id: \.self) { day in
+                        Button {
+                            toggle(day)
+                        } label: {
+                            Text(weekdayLabel(for: day))
+                                .font(.system(.subheadline).weight(.bold))
+                                .foregroundStyle(repeatDays.contains(day) ? .white : Color.black.opacity(0.66))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 40)
+                                .background(
+                                    Circle()
+                                        .fill(
+                                            repeatDays.contains(day)
+                                            ? HaruStyle.ink
+                                            : Color.white.opacity(0.72)
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if repeatDays.isEmpty {
+                    Text("반복할 요일을 한 개 이상 선택해 주세요.")
+                        .font(.system(.footnote).weight(.semibold))
+                        .foregroundStyle(Color.red.opacity(0.78))
+                }
+            }
+            .onboardingPanel()
+
+            VStack(alignment: .leading, spacing: 14) {
+                Label("깨우기 강도", systemImage: "speaker.wave.2.fill")
+                    .font(.system(.headline).weight(.semibold))
+
+                Picker("깨우기 강도", selection: $wakeIntensity) {
+                    Text("다정하게").tag("gentle")
+                    Text("강하게").tag("firm")
+                }
+                .pickerStyle(.segmented)
+            }
+            .onboardingPanel()
+
+            if showSaveError {
+                Text("알람 저장에 실패했어요. 네트워크를 확인하고 다시 시도해 주세요.")
+                    .font(.system(.footnote).weight(.semibold))
+                    .foregroundStyle(Color.red.opacity(0.82))
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        } actions: {
+            Button {
+                saveAlarm()
+            } label: {
+                if isSaving {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Text("알람 저장하고 계속하기")
+                }
+            }
+            .disabled(isSaving || isLoading || repeatDays.isEmpty)
+            .buttonStyle(PrimaryButtonStyle())
         }
+        .disabled(isLoading || isSaving)
         .task {
             loadExistingAlarm()
         }
@@ -153,14 +144,16 @@ struct OnboardingAlarmSetupView: View {
         APIClient.request(path: "/alarm", method: .GET) { (result: Result<[Alarm], Error>) in
             DispatchQueue.main.async {
                 defer { isLoading = false }
-                guard case .success(let alarms) = result, let alarm = alarms.first else {
-                    return
+                switch result {
+                case .success(let alarms):
+                    let recurring = alarms.filter { ($0.targetDate ?? "").isEmpty }
+                    guard let alarm = recurring.first else { return }
+                    time = AlarmDateFormatter.time.date(from: alarm.time) ?? time
+                    repeatDays = Set(recurring.flatMap(\.repeatDays))
+                    wakeIntensity = alarm.wakeIntensity
+                case .failure:
+                    showSaveError = true
                 }
-
-                existingAlarm = alarm
-                time = AlarmDateFormatter.time.date(from: alarm.time) ?? time
-                repeatDays = Set(alarm.repeatDays)
-                wakeIntensity = alarm.wakeIntensity
             }
         }
     }
@@ -175,31 +168,28 @@ struct OnboardingAlarmSetupView: View {
         OnboardingCallPreferencesStore.wakeIntensity = wakeIntensity
         AppIconManager.apply(for: character)
 
-        let body: [String: Any?] = [
-            "time": AlarmDateFormatter.time.string(from: time),
-            "timeZone": TimeZone.autoupdatingCurrent.identifier,
-            "repeatDays": Array(repeatDays).sorted(),
-            "isOn": true,
-            "wakeIntensity": wakeIntensity,
-            "personality": wakeIntensity,
-            "voice": character.voiceName,
-            "role": character.roleName,
-        ]
-        let path = existingAlarm.map { "/alarm/\($0.id)" } ?? "/alarm"
-        let method: HTTPMethod = existingAlarm == nil ? .POST : .PUT
-
-        APIClient.request(path: path, method: method, body: body) { (result: Result<Alarm, Error>) in
-            DispatchQueue.main.async {
-                isSaving = false
-                switch result {
-                case .success(let alarm):
-                    LocalCallFallbackScheduler.shared.rescheduleFallback(for: alarm)
-                    FeatureIntroStore.advance(to: .calendarIntro)
-                    env.onboardingStep = .calendarIntro
-                case .failure(let error):
-                    showSaveError = true
-                    print("❌ 온보딩 알람 저장 실패: \(error)")
+        let template = Alarm(
+            id: "", time: AlarmDateFormatter.time.string(from: time),
+            isOn: true, repeatDays: [], personality: wakeIntensity,
+            voice: character.voiceName, role: character.roleName,
+            wakeIntensity: wakeIntensity
+        )
+        let selectedDays = repeatDays
+        Task { @MainActor in
+            defer { isSaving = false }
+            do {
+                let alarms = try await WeekdayAlarmService(repository: .live)
+                    .configure(days: selectedDays, template: template)
+                LocalCallFallbackScheduler.shared.syncFallbacks(with: alarms)
+                FeatureIntroStore.advance(to: .calendarIntro)
+                env.onboardingStep = .calendarIntro
+            } catch {
+                showSaveError = true
+                // Partial saves remain recoverable; retry reads their IDs first.
+                if let alarms = try? await WeekdayAlarmRepository.live.fetch() {
+                    LocalCallFallbackScheduler.shared.syncFallbacks(with: alarms)
                 }
+                print("❌ 온보딩 알람 저장 실패: \(error)")
             }
         }
     }
@@ -225,81 +215,65 @@ struct CalendarIntroView: View {
     @State private var retryAppleCalendarAfterSettings = false
 
     var body: some View {
-        ZStack {
-            onboardingBackground
+        OnboardingLayout(step: 5) {
+            VStack(alignment: .leading, spacing: 10) {
+                Image(systemName: "calendar.badge.plus")
+                    .font(.system(size: 36, weight: .semibold))
+                    .foregroundStyle(HaruStyle.ink)
 
-            GeometryReader { proxy in
-                VStack(alignment: .leading, spacing: 0) {
-                    Spacer(minLength: 34)
+                Text("캘린더를 연결할까요?")
+                    .font(.system(.largeTitle).weight(.bold))
+                    .foregroundStyle(Color.black.opacity(0.92))
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        Image(systemName: "calendar.badge.plus")
-                            .font(.system(size: 36, weight: .semibold))
-                            .foregroundStyle(Color(red: 0.35, green: 0.52, blue: 0.84))
-
-                        Text("캘린더를 연결할까요?")
-                            .font(.system(.largeTitle, design: .rounded).weight(.bold))
-                            .foregroundStyle(Color.black.opacity(0.92))
-
-                        Text("Haru가 오늘 일정을 가져와 아침에 브리핑하고, 통화 중 말로 새 일정을 추가할 수 있어요.")
-                            .font(.system(.body, design: .rounded).weight(.medium))
-                            .foregroundStyle(Color.black.opacity(0.60))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.top, proxy.safeAreaInsets.top + 36)
-
-                    Spacer(minLength: 30)
-
-                    VStack(spacing: 14) {
-                        calendarBenefit(
-                            icon: "list.bullet.clipboard.fill",
-                            title: "오늘 일정을 아침 브리핑에 담아요",
-                            description: "첫 일정과 준비할 내용을 모닝콜에서 자연스럽게 알려드려요."
-                        )
-                        calendarBenefit(
-                            icon: "text.bubble.fill",
-                            title: "말로 일정을 추가할 수 있어요",
-                            description: "통화 중 일정과 시간을 말하면 선택한 캘린더에 추가할 수 있어요."
-                        )
-                    }
-
-                    Spacer(minLength: 28)
-
-                    if let connectionErrorKey {
-                        Text(AppLocalizer.string(connectionErrorKey, language: env.appLanguage))
-                            .font(.system(.footnote, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.red.opacity(0.80))
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.bottom, 12)
-                    }
-
-                    if isConnected {
-                        Button {
-                            continueToTest()
-                        } label: {
-                            Label("연결됨, 계속하기", systemImage: "checkmark.circle.fill")
-                        }
-                        .disabled(isLoading || isConnecting)
-                        .buttonStyle(PrimaryButtonStyle())
-                    } else {
-                        VStack(spacing: 12) {
-                            calendarConnectButton(provider: .google, systemImage: "g.circle.fill")
-                            calendarConnectButton(provider: .apple, systemImage: "apple.logo")
-                        }
-                    }
-
-                    Button("지금은 건너뛰기") {
-                        continueToTest()
-                    }
-                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.black.opacity(0.58))
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 14)
-                    .padding(.bottom, proxy.safeAreaInsets.bottom + 36)
-                }
-                .padding(.horizontal, 22)
-                .frame(width: proxy.size.width, height: proxy.size.height)
+                Text("Haru가 오늘 일정을 가져와 아침에 브리핑하고, 통화 중 말로 새 일정을 추가할 수 있어요.")
+                    .font(.system(.body).weight(.medium))
+                    .foregroundStyle(Color.black.opacity(0.60))
+                    .fixedSize(horizontal: false, vertical: true)
             }
+
+            VStack(spacing: 14) {
+                calendarBenefit(
+                    icon: "list.bullet.clipboard.fill",
+                    title: "오늘 일정을 아침 브리핑에 담아요",
+                    description: "첫 일정과 준비할 내용을 모닝콜에서 자연스럽게 알려드려요."
+                )
+                calendarBenefit(
+                    icon: "text.bubble.fill",
+                    title: "말로 일정을 추가할 수 있어요",
+                    description: "통화 중 일정과 시간을 말하면 선택한 캘린더에 추가할 수 있어요."
+                )
+            }
+
+            if let connectionErrorKey {
+                Text(AppLocalizer.string(connectionErrorKey, language: env.appLanguage))
+                    .font(.system(.footnote).weight(.semibold))
+                    .foregroundStyle(Color.red.opacity(0.80))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 12)
+            }
+        } actions: {
+            if isConnected {
+                Button {
+                    continueToTest()
+                } label: {
+                    Label("연결됨, 계속하기", systemImage: "checkmark.circle.fill")
+                }
+                .disabled(isLoading || isConnecting)
+                .buttonStyle(PrimaryButtonStyle())
+            } else {
+                VStack(spacing: 12) {
+                    calendarConnectButton(provider: .google, systemImage: "g.circle.fill")
+                    calendarConnectButton(provider: .apple, systemImage: "apple.logo")
+                }
+            }
+
+            Button("지금은 건너뛰기") {
+                continueToTest()
+            }
+            .font(.system(.subheadline).weight(.semibold))
+            .foregroundStyle(Color.black.opacity(0.58))
+            .frame(maxWidth: .infinity)
+            .padding(.top, 14)
         }
         .task {
             loadCalendarStatus()
@@ -340,16 +314,16 @@ struct CalendarIntroView: View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: icon)
                 .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(Color(red: 0.35, green: 0.52, blue: 0.84))
+                .foregroundStyle(HaruStyle.ink)
                 .frame(width: 42, height: 42)
                 .background(Color.white.opacity(0.82), in: Circle())
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(title)
-                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .font(.system(.body).weight(.semibold))
                     .foregroundStyle(Color.black.opacity(0.86))
                 Text(description)
-                    .font(.system(.footnote, design: .rounded).weight(.medium))
+                    .font(.system(.footnote).weight(.medium))
                     .foregroundStyle(Color.black.opacity(0.57))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -498,207 +472,193 @@ struct OnboardingTestCallView: View {
     }
 
     var body: some View {
-        ZStack {
-            onboardingBackground
+        OnboardingLayout(step: 6) {
+            VStack(alignment: .leading, spacing: 10) {
+                Image(systemName: scheduledAt == nil ? "phone.badge.checkmark" : "phone.arrow.down.left.fill")
+                    .font(.system(size: 36, weight: .semibold))
+                    .foregroundStyle(HaruStyle.ink)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Image(systemName: scheduledAt == nil ? "phone.badge.checkmark" : "phone.arrow.down.left.fill")
-                            .font(.system(size: 36, weight: .semibold))
-                            .foregroundStyle(Color(red: 0.35, green: 0.52, blue: 0.84))
+                Text(LocalizedStringKey(scheduledAt == nil ? "실제로 전화를 한번 해드릴게요" : "테스트 전화가 곧 울려요"))
+                    .font(.system(.largeTitle).weight(.bold))
+                    .foregroundStyle(Color.black.opacity(0.92))
 
-                        Text(LocalizedStringKey(scheduledAt == nil ? "실제로 전화를 한번 해드릴게요" : "테스트 전화가 곧 울려요"))
-                            .font(.system(.largeTitle, design: .rounded).weight(.bold))
-                            .foregroundStyle(Color.black.opacity(0.92))
+                Text(LocalizedStringKey(
+                    scheduledAt == nil
+                    ? "권한과 설정을 확인하면 10초 후 Haru가 짧은 테스트 전화를 걸어요."
+                    : "전화를 받아 목소리를 확인해 주세요. 통화가 끝나면 테스트 완료 화면으로 넘어가요."
+                ))
+                .font(.system(.body).weight(.medium))
+                .foregroundStyle(Color.black.opacity(0.60))
+                .fixedSize(horizontal: false, vertical: true)
+            }
 
-                        Text(LocalizedStringKey(
-                            scheduledAt == nil
-                            ? "권한과 설정을 확인하면 10초 후 Haru가 짧은 테스트 전화를 걸어요."
-                            : "전화를 받아 목소리를 확인해 주세요. 통화가 끝나면 테스트 완료 화면으로 넘어가요."
-                        ))
-                        .font(.system(.body, design: .rounded).weight(.medium))
-                        .foregroundStyle(Color.black.opacity(0.60))
-                        .fixedSize(horizontal: false, vertical: true)
+            if scheduledAt == nil {
+                VStack(spacing: 12) {
+                    readinessRow(
+                        icon: microphonePermission == .granted ? "mic.fill" : "mic.slash.fill",
+                        title: "마이크 권한",
+                        detail: microphonePermission == .granted ? "허용됨" : "설정에서 마이크를 허용해 주세요.",
+                        isReady: microphonePermission == .granted
+                    )
+
+                    readinessRow(
+                        icon: "antenna.radiowaves.left.and.right",
+                        title: "전화 수신 연결",
+                        detail: tokenManager.isRegistering
+                            ? "전화 수신 토큰을 등록하고 있어요."
+                            : tokenManager.isRegistered
+                                ? "테스트 전화를 받을 준비가 됐어요."
+                                : "기기 연결을 확인하고 있어요.",
+                        isReady: tokenManager.isRegistered
+                    )
+
+                    Button {
+                        requestOrOpenNotificationSettings()
+                    } label: {
+                        readinessRow(
+                            icon: notificationPermissionGranted ? "bell.badge.fill" : "bell.slash.fill",
+                            title: "알림 권한",
+                            detail: notificationPermissionGranted ? "기본 알람 알림을 받을 수 있어요." : "설정에서 알림을 허용해 주세요.",
+                            isReady: notificationPermissionGranted,
+                            showsSettingsDisclosure: true
+                        )
                     }
+                    .buttonStyle(.plain)
 
-                    if scheduledAt == nil {
-                        VStack(spacing: 12) {
-                            readinessRow(
-                                icon: microphonePermission == .granted ? "mic.fill" : "mic.slash.fill",
-                                title: "마이크 권한",
-                                detail: microphonePermission == .granted ? "허용됨" : "설정에서 마이크를 허용해 주세요.",
-                                isReady: microphonePermission == .granted
-                            )
+                    readinessRow(
+                        icon: "moon.zzz.fill",
+                        title: "테스트 중 방해금지 모드 끄기",
+                        detail: "테스트 전화가 울리는지 확인할 때만 잠시 꺼 주세요.",
+                        isReady: confirmedDoNotDisturb
+                    )
 
-                            readinessRow(
-                                icon: "antenna.radiowaves.left.and.right",
-                                title: "전화 수신 연결",
-                                detail: tokenManager.isRegistering
-                                    ? "전화 수신 토큰을 등록하고 있어요."
-                                    : tokenManager.isRegistered
-                                        ? "테스트 전화를 받을 준비가 됐어요."
-                                        : "기기 연결을 확인하고 있어요.",
-                                isReady: tokenManager.isRegistered
-                            )
-
-                            Button {
-                                requestOrOpenNotificationSettings()
-                            } label: {
-                                readinessRow(
-                                    icon: notificationPermissionGranted ? "bell.badge.fill" : "bell.slash.fill",
-                                    title: "알림 권한",
-                                    detail: notificationPermissionGranted ? "기본 알람 알림을 받을 수 있어요." : "설정에서 알림을 허용해 주세요.",
-                                    isReady: notificationPermissionGranted,
-                                    showsSettingsDisclosure: true
+                    Button {
+                        confirmedDoNotDisturb.toggle()
+                    } label: {
+                        HStack(spacing: 9) {
+                            Image(systemName: confirmedDoNotDisturb ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(
+                                    confirmedDoNotDisturb
+                                    ? HaruStyle.ink
+                                    : Color.black.opacity(0.30)
                                 )
-                            }
-                            .buttonStyle(.plain)
-
-                            readinessRow(
-                                icon: "moon.zzz.fill",
-                                title: "테스트 중 방해금지 모드 끄기",
-                                detail: "테스트 전화가 울리는지 확인할 때만 잠시 꺼 주세요.",
-                                isReady: confirmedDoNotDisturb
-                            )
-
-                            Button {
-                                confirmedDoNotDisturb.toggle()
-                            } label: {
-                                HStack(spacing: 9) {
-                                    Image(systemName: confirmedDoNotDisturb ? "checkmark.circle.fill" : "circle")
-                                        .font(.system(size: 22, weight: .semibold))
-                                        .foregroundStyle(
-                                            confirmedDoNotDisturb
-                                            ? Color(red: 0.20, green: 0.58, blue: 0.34)
-                                            : Color.black.opacity(0.30)
-                                        )
-                                    Text("방해금지 모드를 껐어요")
-                                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                                        .foregroundStyle(Color.black.opacity(0.72))
-                                }
-                                .frame(maxWidth: .infinity)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
+                            Text("방해금지 모드를 껐어요")
+                                .font(.system(.subheadline).weight(.semibold))
+                                .foregroundStyle(Color.black.opacity(0.72))
                         }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
 
-                        if microphonePermission != .granted {
-                            Button("마이크 권한 설정하기") {
-                                requestOrOpenMicrophoneSettings()
-                            }
-                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.black.opacity(0.72))
-                            .frame(maxWidth: .infinity)
+                if microphonePermission != .granted {
+                    Button("마이크 권한 설정하기") {
+                        requestOrOpenMicrophoneSettings()
+                    }
+                    .font(.system(.subheadline).weight(.semibold))
+                    .foregroundStyle(Color.black.opacity(0.72))
+                    .frame(maxWidth: .infinity)
+                }
+            } else {
+                VStack(spacing: 10) {
+                    Text(testCallCompleted ? "테스트 통화 발송 완료" : secondsRemaining > 0 ? "\(secondsRemaining)" : "전화 수신 대기 중")
+                        .font(.system(size: secondsRemaining > 0 && !testCallCompleted ? 72 : 28, weight: .bold))
+                        .foregroundStyle(Color.black.opacity(0.88))
+                        .contentTransition(.numericText())
+
+                    Text(LocalizedStringKey(
+                        testCallCompleted
+                            ? "걸려오는 전화를 받아 확인해보세요."
+                            : secondsRemaining > 0
+                                ? "초 뒤에 전화가 울려요"
+                                : "곧 Haru의 전화가 도착합니다."
+                    ))
+                        .font(.system(.headline).weight(.semibold))
+                        .foregroundStyle(Color.black.opacity(0.58))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 34)
+                .onboardingPanel()
+            }
+
+            VStack(alignment: .leading, spacing: 11) {
+                Label("일반 모닝콜은 최대 총 3회", systemImage: "phone.badge.clock.fill")
+                    .font(.system(.headline).weight(.semibold))
+                    .foregroundStyle(Color.black.opacity(0.84))
+                Text("일어나지 않으면 최초 전화 후 최대 두 번 더 연락해요. 지금 진행하는 테스트 전화는 1회만 울리고 재통화하지 않아요.")
+                    .font(.system(.footnote).weight(.medium))
+                    .foregroundStyle(Color.black.opacity(0.57))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .onboardingPanel()
+
+            if showScheduleError {
+                Text("테스트 전화를 예약하지 못했어요. 기기 연결과 네트워크를 확인한 뒤 다시 시도해 주세요.")
+                    .font(.system(.footnote).weight(.semibold))
+                    .foregroundStyle(Color.red.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } actions: {
+            if scheduledAt == nil {
+                Button {
+                    scheduleTestCall()
+                } label: {
+                    if isScheduling {
+                        HStack(spacing: 9) {
+                            ProgressView()
+                                .tint(.white)
+                            Text("테스트 통화를 준비 중이에요")
                         }
                     } else {
-                        VStack(spacing: 10) {
-                            Text(testCallCompleted ? "테스트 통화 발송 완료" : secondsRemaining > 0 ? "\(secondsRemaining)" : "전화 수신 대기 중")
-                                .font(.system(size: secondsRemaining > 0 && !testCallCompleted ? 72 : 28, weight: .bold, design: .rounded))
-                                .foregroundStyle(Color.black.opacity(0.88))
-                                .contentTransition(.numericText())
-
-                            Text(LocalizedStringKey(
-                                testCallCompleted
-                                    ? "걸려오는 전화를 받아 확인해보세요."
-                                    : secondsRemaining > 0
-                                        ? "초 뒤에 전화가 울려요"
-                                        : "곧 Haru의 전화가 도착합니다."
-                            ))
-                                .font(.system(.headline, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.black.opacity(0.58))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 34)
-                        .onboardingPanel()
-                    }
-
-                    VStack(alignment: .leading, spacing: 11) {
-                        Label("일반 모닝콜은 최대 총 3회", systemImage: "phone.badge.clock.fill")
-                            .font(.system(.headline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.black.opacity(0.84))
-                        Text("일어나지 않으면 최초 전화 후 최대 두 번 더 연락해요. 지금 진행하는 테스트 전화는 1회만 울리고 재통화하지 않아요.")
-                            .font(.system(.footnote, design: .rounded).weight(.medium))
-                            .foregroundStyle(Color.black.opacity(0.57))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .onboardingPanel()
-
-                    if showScheduleError {
-                        Text("테스트 전화를 예약하지 못했어요. 기기 연결과 네트워크를 확인한 뒤 다시 시도해 주세요.")
-                            .font(.system(.footnote, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.red.opacity(0.82))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    if scheduledAt == nil, allRequirementsReady {
-                        Button {
-                            scheduleTestCall()
-                        } label: {
-                            if isScheduling {
-                                HStack(spacing: 9) {
-                                    ProgressView()
-                                        .tint(.white)
-                                    Text("테스트 통화를 준비 중이에요")
-                                }
-                            } else {
-                                Text("10초 뒤 테스트 전화 받기")
-                            }
-                        }
-                        .disabled(!canSchedule)
-                        .buttonStyle(PrimaryButtonStyle())
-
-                        Button("테스트를 건너뛰고 홈으로") {
-                            endTestAndFinishOnboarding()
-                        }
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.black.opacity(0.56))
-                        .frame(maxWidth: .infinity)
-                    } else if scheduledAt == nil {
-                        Text("위 4가지 항목을 모두 확인하면 테스트 전화를 받거나 건너뛸 수 있어요.")
-                            .font(.system(.footnote, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.black.opacity(0.56))
-                            .frame(maxWidth: .infinity)
-                            .multilineTextAlignment(.center)
-                    } else if testCallCompleted {
-                        Button {
-                            endTestAndFinishOnboarding()
-                        } label: {
-                            if isFinishing {
-                                ProgressView()
-                                    .tint(.white)
-                            } else {
-                                Text("테스트 완료하고 홈으로")
-                            }
-                        }
-                        .disabled(isFinishing)
-                        .buttonStyle(PrimaryButtonStyle())
-                    } else if testCallWaitTimedOut {
-                        Button("테스트 전화 다시 받기") {
-                            retryTestCall()
-                        }
-                        .buttonStyle(PrimaryButtonStyle())
-
-                        Button("테스트 종료하고 홈으로") {
-                            endTestAndFinishOnboarding()
-                        }
-                        .disabled(isFinishing)
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.black.opacity(0.56))
-                        .frame(maxWidth: .infinity)
-                    } else {
-                        Button("테스트 종료하고 홈으로") {
-                            endTestAndFinishOnboarding()
-                        }
-                        .disabled(isFinishing)
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.black.opacity(0.56))
-                        .frame(maxWidth: .infinity)
+                        Text("10초 뒤 테스트 전화 받기")
                     }
                 }
-                .padding(.horizontal, 22)
-                .padding(.top, 64)
-                .padding(.bottom, 48)
+                .disabled(!canSchedule)
+                .buttonStyle(PrimaryButtonStyle())
+
+                Button("테스트를 건너뛰고 홈으로") {
+                    endTestAndFinishOnboarding()
+                }
+                .disabled(!allRequirementsReady || isScheduling || isFinishing)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(HaruStyle.ink.opacity(allRequirementsReady ? 1 : 0.4))
+                .frame(maxWidth: .infinity)
+            } else if testCallCompleted {
+                Button {
+                    endTestAndFinishOnboarding()
+                } label: {
+                    if isFinishing {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Text("테스트 완료하고 홈으로")
+                    }
+                }
+                .disabled(isFinishing)
+                .buttonStyle(PrimaryButtonStyle())
+            } else if testCallWaitTimedOut {
+                Button("테스트 전화 다시 받기") {
+                    retryTestCall()
+                }
+                .buttonStyle(PrimaryButtonStyle())
+
+                Button("테스트 종료하고 홈으로") {
+                    endTestAndFinishOnboarding()
+                }
+                .disabled(isFinishing)
+                .font(.system(.subheadline).weight(.semibold))
+                .foregroundStyle(Color.black.opacity(0.56))
+                .frame(maxWidth: .infinity)
+            } else {
+                Button("테스트 종료하고 홈으로") {
+                    endTestAndFinishOnboarding()
+                }
+                .disabled(isFinishing)
+                .font(.system(.subheadline).weight(.semibold))
+                .foregroundStyle(Color.black.opacity(0.56))
+                .frame(maxWidth: .infinity)
             }
         }
         .onAppear {
@@ -735,16 +695,16 @@ struct OnboardingTestCallView: View {
         HStack(spacing: 14) {
             Image(systemName: icon)
                 .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(Color(red: 0.35, green: 0.52, blue: 0.84))
+                .foregroundStyle(HaruStyle.ink)
                 .frame(width: 42, height: 42)
                 .background(Color.white.opacity(0.82), in: Circle())
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .font(.system(.body).weight(.semibold))
                     .foregroundStyle(Color.black.opacity(0.86))
                 Text(detail)
-                    .font(.system(.footnote, design: .rounded).weight(.medium))
+                    .font(.system(.footnote).weight(.medium))
                     .foregroundStyle(Color.black.opacity(0.57))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -753,8 +713,8 @@ struct OnboardingTestCallView: View {
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(
                     isReady
-                    ? Color(red: 0.20, green: 0.58, blue: 0.34)
-                    : Color(red: 0.88, green: 0.48, blue: 0.20)
+                    ? HaruStyle.ink
+                    : HaruStyle.ink.opacity(0.4)
                 )
 
             if showsSettingsDisclosure {
@@ -901,28 +861,5 @@ struct OnboardingTestCallView: View {
         let fractionalFormatter = ISO8601DateFormatter()
         fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return fractionalFormatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
-    }
-}
-
-private var onboardingBackground: some View {
-    Image("Background_morning")
-        .resizable()
-        .scaledToFill()
-        .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-        .clipped()
-        .ignoresSafeArea()
-}
-
-private extension View {
-    func onboardingPanel() -> some View {
-        padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.white.opacity(0.84))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(Color.white.opacity(0.68), lineWidth: 1)
-                    )
-            )
     }
 }

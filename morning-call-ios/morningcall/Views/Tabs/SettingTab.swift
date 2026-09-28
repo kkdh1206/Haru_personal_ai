@@ -36,11 +36,8 @@ struct SettingView: View {
     @EnvironmentObject var authVM: AuthViewModel
     @StateObject private var googleHelper = GoogleSignInHelper()
     @EnvironmentObject var env: AppEnvironment
-//<<<<<<< HEAD
     @EnvironmentObject var subscriptionManager: SubscriptionManager
-//=======
     @Environment(\.scenePhase) private var scenePhase
-// >>>>>>> 1211558 (애플캘린더 에러 수정 및 녹음파일로  토큰 절약)
 
     @State private var userName: String = ""
     @State private var selectedAppLanguage: AppLanguage = AppLanguageStore.current
@@ -67,26 +64,31 @@ struct SettingView: View {
     ]
     
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 20) {
-                profileSection
-                subscriptionSection
-                appLanguageSection
-                callSection
-                dailyCallSection
-                calendarSection
-                logoutSection
+        GeometryReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 20) {
+                    profileSection
+                    subscriptionSection
+                    appLanguageSection
+                    callSection
+                    dailyCallSection
+                    calendarSection
+                    logoutSection
+                }
+                .frame(width: max(0, proxy.size.width - 40), alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 36)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 20)
-            .padding(.bottom, 36)
+            .frame(width: proxy.size.width)
+            .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         }
-        .contentMargins(.horizontal, 20, for: .scrollContent)
-        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
         .background(Color(red: 0.97, green: 0.96, blue: 0.93).ignoresSafeArea())
         .navigationTitle(localized("설정"))
         .navigationBarTitleDisplayMode(.inline)
-        .tint(.black)
+        .toolbar(.visible, for: .navigationBar)
+        .tint(HaruStyle.ink)
+        .symbolRenderingMode(.monochrome)
         .task(id: Auth.auth().currentUser?.uid) {
             loadInitialSettings()
             loadCalendarStatus()
@@ -140,14 +142,14 @@ struct SettingView: View {
     private var profileSection: some View {
         settingsCard(title: "프로필") {
             TextField(localized("이름"), text: $userName)
-                .font(.system(.body, design: .rounded).weight(.semibold))
+                .font(.system(.body).weight(.semibold))
                 .foregroundStyle(.black)
                 .textInputAutocapitalization(.never)
                 .submitLabel(.done)
                 .onSubmit { saveProfile() }
                 .padding(18)
                 .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                         .fill(Color.white.opacity(0.78))
                 )
         }
@@ -159,13 +161,13 @@ struct SettingView: View {
                 HStack(spacing: 14) {
                     Image(systemName: subscriptionManager.isActive ? "checkmark.seal.fill" : "sunrise.fill")
                         .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(subscriptionManager.isActive ? Color.green : Color(red: 0.95, green: 0.57, blue: 0.22))
+                        .foregroundStyle(Color(red: 0.95, green: 0.57, blue: 0.22))
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(localized(subscriptionManager.isTrial ? "무료 체험 이용 중" : subscriptionManager.isActive ? "하루 플러스 이용 중" : "하루 플러스"))
-                            .font(.system(.body, design: .rounded).weight(.semibold))
+                            .font(.system(.body).weight(.semibold))
                         Text(localized(subscriptionManager.isActive ? "매일 AI 모닝콜을 이용할 수 있어요." : "신규 이용자는 3일 무료 체험을 이용할 수 있어요."))
-                            .font(.system(.footnote, design: .rounded))
+                            .font(.system(.footnote))
                             .foregroundStyle(Color.black.opacity(0.58))
                     }
 
@@ -180,19 +182,19 @@ struct SettingView: View {
                     }
                 } label: {
                     Text(localized(subscriptionManager.isActive ? "구독 관리" : "구독 시작하기"))
-                        .font(.system(.body, design: .rounded).weight(.semibold))
+                        .font(.system(.body).weight(.semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                 }
                 .foregroundStyle(subscriptionManager.isActive ? Color.black : Color.white)
                 .background(
-                    RoundedRectangle(cornerRadius: 18)
+                    RoundedRectangle(cornerRadius: HaruStyle.cardRadius)
                         .fill(subscriptionManager.isActive ? Color.white.opacity(0.82) : Color.black.opacity(0.9))
                 )
             }
             .padding(18)
             .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                     .fill(Color.white.opacity(0.78))
             )
         }
@@ -203,10 +205,10 @@ struct SettingView: View {
             HStack(spacing: 12) {
                 Image(systemName: "globe")
                     .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(Color.black.opacity(0.7))
+                    .foregroundStyle(HaruStyle.ink)
 
                 Text(localized("선택 언어"))
-                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .font(.system(.body).weight(.semibold))
                     .foregroundStyle(.black)
 
                 Spacer()
@@ -223,7 +225,7 @@ struct SettingView: View {
             }
             .padding(18)
             .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                     .fill(Color.white.opacity(0.78))
             )
             .onChange(of: selectedLanguage) { _ in
@@ -237,10 +239,10 @@ struct SettingView: View {
             HStack(spacing: 12) {
                 Image(systemName: "translate")
                     .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(Color.black.opacity(0.7))
+                    .foregroundStyle(HaruStyle.ink)
 
                 Text(localized("화면 표시 언어"))
-                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .font(.system(.body).weight(.semibold))
                     .foregroundStyle(.black)
 
                 Spacer()
@@ -257,7 +259,7 @@ struct SettingView: View {
             }
             .padding(18)
             .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                     .fill(Color.white.opacity(0.78))
             )
             .onChange(of: selectedAppLanguage) { language in
@@ -271,14 +273,14 @@ struct SettingView: View {
             HStack(spacing: 14) {
                 Image(systemName: "phone.badge.clock.fill")
                     .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.47, green: 0.61, blue: 0.92))
+                    .foregroundStyle(HaruStyle.ink)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(localized("남은 전화 횟수"))
-                        .font(.system(.body, design: .rounded).weight(.semibold))
+                        .font(.system(.body).weight(.semibold))
                         .foregroundStyle(.black)
                     Text(localized("일반 모닝콜과 재통화를 합쳐 하루 최대 3회예요."))
-                        .font(.system(.footnote, design: .rounded))
+                        .font(.system(.footnote))
                         .foregroundStyle(Color.black.opacity(0.58))
                 }
 
@@ -290,17 +292,17 @@ struct SettingView: View {
                 } else {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(dailyCallUsage.map { "\($0.remaining) / \($0.limit)" } ?? "--")
-                            .font(.system(.title3, design: .rounded).weight(.bold))
+                            .font(.system(.title3).weight(.bold))
                             .foregroundStyle(.black)
                         Text(localized("회 남음"))
-                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .font(.system(.caption).weight(.semibold))
                             .foregroundStyle(Color.black.opacity(0.52))
                     }
                 }
             }
             .padding(18)
             .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                     .fill(Color.white.opacity(0.78))
             )
         }
@@ -312,25 +314,25 @@ struct SettingView: View {
                 HStack(spacing: 12) {
                     Image(systemName: isCalendarConnected ? "calendar.badge.checkmark" : "calendar.badge.exclamationmark")
                         .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(isCalendarConnected ? Color(red: 0.2, green: 0.55, blue: 0.32) : Color.black.opacity(0.68))
+                        .foregroundStyle(HaruStyle.ink)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(localized(isCalendarConnected ? "연동됨" : "연동 안 됨"))
-                            .font(.system(.body, design: .rounded).weight(.semibold))
+                            .font(.system(.body).weight(.semibold))
                             .foregroundStyle(.black)
                         Text(
                             isCalendarConnected
                             ? String(format: localized("%@가 연결되어 있어요."), calendarProvider?.displayName ?? localized("캘린더"))
                             : localized("일정 추가를 사용하려면 캘린더를 연결해 주세요.")
                         )
-                            .font(.system(.footnote, design: .rounded))
+                            .font(.system(.footnote))
                             .foregroundStyle(Color.black.opacity(0.58))
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(18)
                 .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                         .fill(Color.white.opacity(0.78))
                 )
 
@@ -346,14 +348,14 @@ struct SettingView: View {
                                 ),
                                 systemImage: "arrow.triangle.2.circlepath"
                             )
-                            .font(.system(.body, design: .rounded).weight(.semibold))
+                            .font(.system(.body).weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
                         }
                         .disabled(isCalendarConnecting || isCalendarDisconnecting)
                         .foregroundStyle(.black)
                         .background(
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                                 .fill(Color.white.opacity(0.78))
                         )
                     }
@@ -362,14 +364,14 @@ struct SettingView: View {
                         disconnectCalendar()
                     } label: {
                         Text(localized(isCalendarDisconnecting ? "해제 중..." : "캘린더 연동 해제"))
-                            .font(.system(.body, design: .rounded).weight(.semibold))
+                            .font(.system(.body).weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
                     }
                     .disabled(isCalendarDisconnecting)
                     .foregroundStyle(Color(red: 0.84, green: 0.16, blue: 0.16))
                     .background(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                             .fill(Color.white.opacity(0.82))
                     )
                 } else {
@@ -379,7 +381,7 @@ struct SettingView: View {
 
                 if let calendarConnectionErrorKey {
                     Text(localized(calendarConnectionErrorKey))
-                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .font(.system(.footnote).weight(.semibold))
                         .foregroundStyle(Color.red.opacity(0.8))
                 }
             }
@@ -402,7 +404,7 @@ struct SettingView: View {
                         .font(.system(size: 17, weight: .semibold))
                 }
                 Text(String(format: localized("%@ 연결하기"), provider.displayName))
-                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .font(.system(.body).weight(.semibold))
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
@@ -410,7 +412,7 @@ struct SettingView: View {
         .disabled(isCalendarConnecting)
         .foregroundStyle(.black)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                 .fill(Color.white.opacity(0.78))
         )
     }
@@ -420,12 +422,12 @@ struct SettingView: View {
             Button(localized("로그아웃")) {
                 authVM.signOut()
             }
-            .font(.system(.body, design: .rounded).weight(.semibold))
+            .font(.system(.body).weight(.semibold))
             .foregroundStyle(Color(red: 0.84, green: 0.16, blue: 0.16))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 17)
             .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                     .fill(Color.white.opacity(0.82))
             )
 
@@ -433,12 +435,12 @@ struct SettingView: View {
                 showDeleteAccountAlert = true
             }
             .disabled(isDeletingAccount)
-            .font(.system(.body, design: .rounded).weight(.semibold))
+            .font(.system(.body).weight(.semibold))
             .foregroundStyle(Color(red: 0.84, green: 0.16, blue: 0.16))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 17)
             .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                     .fill(Color.white.opacity(0.82))
             )
         }
@@ -450,21 +452,21 @@ struct SettingView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(AppLocalizer.string(title, language: env.appLanguage))
-                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .font(.system(.headline).weight(.semibold))
                 .foregroundStyle(.black)
 
             content()
         }
-        .padding(22)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(settingsSectionBackground)
     }
 
     private var settingsSectionBackground: some View {
-        RoundedRectangle(cornerRadius: 28, style: .continuous)
+        RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
             .fill(.ultraThinMaterial)
             .overlay(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                     .stroke(Color.white.opacity(0.55), lineWidth: 1)
             )
     }

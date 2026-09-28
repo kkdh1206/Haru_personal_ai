@@ -18,10 +18,10 @@ struct SinInButtonStyle: ButtonStyle {
             .padding(.vertical, 15)
             .background(configuration.isPressed ? Color.white.opacity(0.74) : Color.white)
             .foregroundColor(Color.black.opacity(0.84))
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous))
             .fontWeight(.bold)
             .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                     .stroke(Color.black.opacity(0.08), lineWidth: 1)
             )
     }
@@ -38,7 +38,7 @@ struct SignInWithGoogleButton: View {
                 Image(systemName: "g.circle.fill")
                     .font(.system(size: 18, weight: .semibold))
                 Text("Google로 계속하기")
-                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .font(.system(.body).weight(.semibold))
             }
         }
         .buttonStyle(SinInButtonStyle())

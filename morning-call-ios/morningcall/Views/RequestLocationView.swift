@@ -163,59 +163,38 @@ struct RequestLocationView: View {
     }
 
     var body: some View {
-        ZStack {
-            fixedBackground
+        OnboardingLayout(step: 3) {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("오늘 날씨를 알려드릴게요")
+                        .font(.system(.title).weight(.bold))
+                        .foregroundStyle(Color.black.opacity(0.92))
 
-            GeometryReader { proxy in
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("2 / 2")
-                        .font(.system(.headline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.black.opacity(0.56))
-                        .lineLimit(1)
-                        .frame(height: 28)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-
-                    Spacer(minLength: 24)
-
-                    VStack(alignment: .leading, spacing: 18) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("오늘 날씨를 알려드릴게요")
-                                .font(.system(.title, design: .rounded).weight(.bold))
-                                .foregroundStyle(Color.black.opacity(0.92))
-
-                            Text("현재 위치는 앱을 열 때마다 한 번씩 갱신돼요.")
-                                .font(.system(.subheadline, design: .rounded))
-                                .foregroundStyle(Color.black.opacity(0.58))
-                        }
-
-                        locationStatusCard
-                    }
-                    .frame(maxWidth: .infinity)
-
-                    Spacer(minLength: 24)
-
-                    Button(primaryButtonTitle) {
-                        if locationManager.cityAndProvince != nil {
-                            completeOnboarding()
-                        } else {
-                            switch locationManager.authStatus {
-                            case .notDetermined, .authorizedWhenInUse, .authorizedAlways:
-                                locationManager.requestLocationFlow()
-                            case .denied, .restricted:
-                                showSettingsAlert = true
-                            @unknown default:
-                                showSettingsAlert = true
-                            }
-                        }
-                    }
-                    .disabled(locationManager.isLoading || isSaving)
-                    .buttonStyle(PrimaryButtonStyle())
-                    .padding(.bottom, proxy.safeAreaInsets.bottom + 44)
+                    Text("현재 위치는 앱을 열 때마다 한 번씩 갱신돼요.")
+                        .font(.system(.subheadline))
+                        .foregroundStyle(Color.black.opacity(0.58))
                 }
-                .padding(.horizontal, 22)
-                .padding(.top, proxy.safeAreaInsets.top + 44)
-                .frame(width: proxy.size.width, height: proxy.size.height)
+
+                locationStatusCard
             }
+            .frame(maxWidth: .infinity)
+        } actions: {
+            Button(primaryButtonTitle) {
+                if locationManager.cityAndProvince != nil {
+                    completeOnboarding()
+                } else {
+                    switch locationManager.authStatus {
+                    case .notDetermined, .authorizedWhenInUse, .authorizedAlways:
+                        locationManager.requestLocationFlow()
+                    case .denied, .restricted:
+                        showSettingsAlert = true
+                    @unknown default:
+                        showSettingsAlert = true
+                    }
+                }
+            }
+            .disabled(locationManager.isLoading || isSaving)
+            .buttonStyle(PrimaryButtonStyle())
         }
         .alert("권한이 필요합니다",
                isPresented: $showSettingsAlert,
@@ -234,38 +213,29 @@ struct RequestLocationView: View {
         .preferredColorScheme(.light)
     }
 
-    private var fixedBackground: some View {
-        Image("Background_morning")
-            .resizable()
-            .scaledToFill()
-            .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-            .clipped()
-            .ignoresSafeArea(.all)
-    }
-
     private var locationStatusCard: some View {
         VStack(spacing: 14) {
             Image(systemName: locationManager.cityAndProvince == nil ? "location.circle" : "location.circle.fill")
                 .font(.system(size: 44, weight: .semibold))
-                .foregroundStyle(Color(red: 0.49, green: 0.39, blue: 0.28))
+                .foregroundStyle(HaruStyle.ink)
 
             if locationManager.isLoading {
                 ProgressView("위치 확인 중...")
-                    .font(.system(.body, design: .rounded))
+                    .font(.system(.body))
                     .tint(Color.black.opacity(0.72))
             } else if let location = locationManager.cityAndProvince, !location.isEmpty {
                 Text(location)
-                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                    .font(.system(.title3).weight(.semibold))
                     .foregroundStyle(Color.black.opacity(0.86))
                     .multilineTextAlignment(.center)
             } else if locationManager.permissionDenied {
                 Text("위치 권한이 꺼져 있어요.")
-                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .font(.system(.body).weight(.semibold))
                     .foregroundStyle(Color.red.opacity(0.78))
                     .multilineTextAlignment(.center)
             } else {
                 Text("현재 위치 권한이 필요해요.")
-                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .font(.system(.body).weight(.semibold))
                     .foregroundStyle(Color.black.opacity(0.72))
                     .multilineTextAlignment(.center)
             }
@@ -273,10 +243,10 @@ struct RequestLocationView: View {
         .frame(maxWidth: .infinity)
         .padding(24)
         .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                 .fill(Color.white.opacity(0.88))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                         .stroke(Color.white.opacity(0.72), lineWidth: 1)
                 )
         )

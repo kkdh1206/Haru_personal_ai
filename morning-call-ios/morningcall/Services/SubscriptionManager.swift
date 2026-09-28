@@ -53,7 +53,7 @@ final class SubscriptionManager: ObservableObject {
 
     var isActive: Bool { entitlement?.isActive == true }
     var isTrial: Bool { entitlement?.status == "trial" }
-    var localizedMonthlyPrice: String { monthlyProduct?.displayPrice ?? "₩14,900" }
+    var localizedMonthlyPrice: String { monthlyProduct?.displayPrice ?? "₩9,900" }
 
     deinit {
         transactionListener?.cancel()

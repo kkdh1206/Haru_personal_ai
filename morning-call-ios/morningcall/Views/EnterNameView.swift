@@ -15,89 +15,59 @@ struct EnterNameView: View {
     @State private var isSaving = false
 
     var body: some View {
-        ZStack {
-            fixedBackground
+        OnboardingLayout(step: 1) {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(verbatim: "What should I call you?")
+                        .font(.system(.title).weight(.bold))
+                        .foregroundStyle(Color.black.opacity(0.92))
 
-            GeometryReader { proxy in
-                VStack(alignment: .leading, spacing: 0) {
-                    // Before language selection, use English with Korean/Japanese hints for key actions.
-                    Text(verbatim: "Profile")
-                        .font(.system(.headline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.black.opacity(0.56))
-                        .lineLimit(1)
-                        .frame(height: 28)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-
-                    Spacer(minLength: 24)
-
-                    VStack(alignment: .leading, spacing: 18) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(verbatim: "What should I call you?")
-                                .font(.system(.title, design: .rounded).weight(.bold))
-                                .foregroundStyle(Color.black.opacity(0.92))
-
-                            Text(verbatim: "뭐라고 불러드릴까요?\nなんとお呼びすればいいですか？")
-                                .font(.system(.subheadline, design: .rounded))
-                                .foregroundStyle(Color.black.opacity(0.58))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        TextField(text: $name) {
-                            Text(verbatim: "Your name")
-                        }
-                            .textInputAutocapitalization(.never)
-                            .padding(16)
-                            .background(Color.white.opacity(0.88), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            .foregroundStyle(Color.black.opacity(0.90))
-                            .submitLabel(.done)
-                            .disabled(isSaving)
-                            .onSubmit {
-                                goNext()
-                            }
-
-                        if showNameError {
-                            Text(verbatim: "Please enter your name to continue.")
-                                .font(.system(.footnote, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.red.opacity(0.82))
-                        }
-
-                        if showSaveError {
-                            Text(verbatim: "Couldn't save your profile. Please try again.")
-                                .font(.system(.footnote, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.red.opacity(0.82))
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-
-                    Spacer(minLength: 24)
-
-                    Button {
-                        goNext()
-                    } label: {
-                        Text(verbatim: isSaving ? "Saving..." : "Next")
-                    }
-                    .disabled(isSaving)
-                    .buttonStyle(PrimaryButtonStyle())
-                    .padding(.bottom, proxy.safeAreaInsets.bottom + 44)
+                    Text(verbatim: "뭐라고 불러드릴까요?\nなんとお呼びすればいいですか？")
+                        .font(.system(.subheadline))
+                        .foregroundStyle(Color.black.opacity(0.58))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.horizontal, 22)
-                .padding(.top, proxy.safeAreaInsets.top + 44)
-                .frame(width: proxy.size.width, height: proxy.size.height)
+
+                TextField(text: $name) {
+                    Text("이름을 입력해 주세요")
+                }
+                    .textContentType(.name)
+                    .textInputAutocapitalization(.words)
+                    .padding(16)
+                    .background(Color.white.opacity(0.88), in: RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous))
+                    .foregroundStyle(Color.black.opacity(0.90))
+                    .submitLabel(.done)
+                    .disabled(isSaving)
+                    .onSubmit {
+                        goNext()
+                    }
+
+                if showNameError {
+                    Text(verbatim: "Please enter your name to continue.")
+                        .font(.system(.footnote).weight(.semibold))
+                        .foregroundStyle(Color.red.opacity(0.82))
+                }
+
+                if showSaveError {
+                    Text(verbatim: "Couldn't save your profile. Please try again.")
+                        .font(.system(.footnote).weight(.semibold))
+                        .foregroundStyle(Color.red.opacity(0.82))
+                }
             }
+            .frame(maxWidth: .infinity)
+        } actions: {
+            Button {
+                goNext()
+            } label: {
+                Text(verbatim: isSaving ? "Saving..." : "Next")
+            }
+            .disabled(isSaving)
+            .buttonStyle(PrimaryButtonStyle())
         }
         .onAppear {
             name = env.user?.name ?? ""
         }
         .preferredColorScheme(.light)
-    }
-
-    private var fixedBackground: some View {
-        Image("Background_morning")
-            .resizable()
-            .scaledToFill()
-            .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-            .clipped()
-            .ignoresSafeArea(.all)
     }
 
     private func goNext() {

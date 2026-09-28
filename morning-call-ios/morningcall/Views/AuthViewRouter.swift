@@ -174,11 +174,11 @@ struct LoginView: View {
                 VStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("하루")
-                            .font(.system(size: 44, weight: .bold, design: .rounded))
+                            .font(.system(size: 44, weight: .bold))
                             .foregroundStyle(Color.black.opacity(0.92))
 
                         Text("따뜻한 아침을 함께 준비해요.")
-                            .font(.system(.headline, design: .rounded).weight(.medium))
+                            .font(.system(.headline).weight(.medium))
                             .foregroundStyle(Color.black.opacity(0.62))
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -191,21 +191,12 @@ struct LoginView: View {
                         SignInWithGoogleButton()
 
                         Text(agreementText)
-                            .font(.system(.footnote, design: .rounded))
+                            .font(.system(.footnote))
                             .tint(Color.black.opacity(0.72))
                             .foregroundStyle(Color.black.opacity(0.56))
                             .multilineTextAlignment(.center)
                             .padding(.top, 6)
                     }
-                    .padding(18)
-                    .background(
-                        RoundedRectangle(cornerRadius: 28, style: .continuous)
-                            .fill(Color.white.opacity(0.86))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                                    .stroke(Color.white.opacity(0.72), lineWidth: 1)
-                            )
-                    )
                     .padding(.bottom, proxy.safeAreaInsets.bottom + 44)
                 }
                 .padding(.horizontal, 22)
@@ -227,7 +218,7 @@ struct LoginView: View {
     private func agreementLinkText(_ title: String, url: String) -> AttributedString {
         var text = AttributedString(title)
         text.link = URL(string: url)
-        text.font = .system(.footnote, design: .rounded).weight(.bold)
+        text.font = .system(.footnote).weight(.bold)
         return text
     }
 }
@@ -245,7 +236,7 @@ struct AppleSignInButton: View {
                 Image(systemName: "applelogo")
                     .font(.system(size: 18, weight: .semibold))
                 Text("Apple로 계속하기")
-                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .font(.system(.body).weight(.semibold))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .foregroundStyle(.white)
@@ -253,7 +244,7 @@ struct AppleSignInButton: View {
         }
         .buttonStyle(.plain)
         .frame(height: 52)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous))
     }
 
     private func startAppleSignIn() {

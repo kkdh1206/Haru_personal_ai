@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 
 data class SubscriptionUiState(
     val entitlement: BillingEntitlement? = null,
-    val localizedMonthlyPrice: String = "₩14,900",
+    val localizedMonthlyPrice: String = "₩9,900",
     val isLoading: Boolean = false,
     val error: String? = null,
 ) {

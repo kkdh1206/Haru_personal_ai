@@ -17,7 +17,7 @@
 "2 / 2" = "2 / 2";
 "뭐라고 불러드릴까요?" = "What should I call you?";
 "첫 대화부터 자연스럽게 이름을 불러드릴게요." = "I'll use your name naturally from the first call.";
-"예: 원빈" = "Ex: Wonbin";
+"이름을 입력해 주세요" = "Enter your name";
 "이름을 입력해야 다음으로 넘어갈 수 있어요." = "Enter your name to continue.";
 "다음" = "Next";
 "오늘 날씨를 알려드릴게요" = "I'll share today's weather";
@@ -250,3 +250,6 @@
 "구독에는 매일 1회의 모닝콜과 필요할 때 재통화가 포함됩니다." = "Includes one daily morning call and wake-up retries when needed.";
 "이용약관" = "Terms";
 "닫기" = "Close";
+
+"알람 삭제 실패" = "Couldn’t delete alarm";
+"알람을 삭제하지 못했어요. 다시 시도해 주세요." = "The alarm couldn’t be deleted. Please try again.";

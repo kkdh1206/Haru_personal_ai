@@ -228,82 +228,69 @@ struct FeatureIntroView: View {
     }
 
     var body: some View {
-        ZStack {
-            fixedBackground
+        OnboardingLayout(step: 2) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("시작하기 전에")
+                    .font(.system(.largeTitle).weight(.bold))
+                    .foregroundStyle(Color.black.opacity(0.92))
 
-            GeometryReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("시작하기 전에")
-                                .font(.system(.largeTitle, design: .rounded).weight(.bold))
-                                .foregroundStyle(Color.black.opacity(0.92))
-
-                            Text("Haru가 안정적으로 아침 전화를 드릴 수 있도록 몇 가지만 알려드릴게요.")
-                                .font(.system(.subheadline, design: .rounded).weight(.medium))
-                                .foregroundStyle(Color.black.opacity(0.62))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label("앱과 통화 언어", systemImage: "translate")
-                                .font(.system(.headline, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.black.opacity(0.82))
-
-                            Text("선택한 언어가 앱 화면과 모닝콜에 함께 적용돼요.")
-                                .font(.system(.footnote, design: .rounded).weight(.medium))
-                                .foregroundStyle(Color.black.opacity(0.58))
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            Picker("앱과 통화 언어", selection: $selectedLanguage) {
-                                ForEach(AppLanguage.allCases) { language in
-                                    Text(language.nativeLabel)
-                                        .tag(language)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                        }
-                        .padding(16)
-                        .background(Color.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-                        VStack(spacing: 12) {
-                            ForEach(items) { item in
-                                FeatureIntroCard(item: item)
-                            }
-                        }
-
-                        if microphonePermission == .denied {
-                            HStack(alignment: .top, spacing: 8) {
-                                Image(systemName: "mic.slash.fill")
-                                    .font(.system(size: 14, weight: .semibold))
-                                Text("마이크 권한은 통화 전에 설정에서 다시 허용할 수 있어요.")
-                                    .font(.system(.footnote, design: .rounded).weight(.semibold))
-                            }
-                            .foregroundStyle(Color.black.opacity(0.58))
-                        }
-
-                        if showLanguageSaveError {
-                            Text("언어 설정을 저장하지 못했어요. 다시 시도해 주세요.")
-                                .font(.system(.footnote, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.red.opacity(0.82))
-                                .frame(maxWidth: .infinity, alignment: .center)
-                        }
-
-                        Button {
-                            handleStart()
-                        } label: {
-                            Text(LocalizedStringKey(primaryButtonTitle))
-                        }
-                        .disabled(isRequestingMicrophone || isSavingLanguage)
-                        .buttonStyle(PrimaryButtonStyle())
-                    }
-                    .padding(.horizontal, 22)
-                    .padding(.top, proxy.safeAreaInsets.top + 44)
-                    .padding(.bottom, proxy.safeAreaInsets.bottom + 44)
-                    .frame(minHeight: proxy.size.height, alignment: .top)
-                }
-                .scrollIndicators(.hidden)
+                Text("Haru가 안정적으로 아침 전화를 드릴 수 있도록 몇 가지만 알려드릴게요.")
+                    .font(.system(.subheadline).weight(.medium))
+                    .foregroundStyle(Color.black.opacity(0.62))
+                    .fixedSize(horizontal: false, vertical: true)
             }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Label("앱과 통화 언어", systemImage: "translate")
+                    .font(.system(.headline).weight(.semibold))
+                    .foregroundStyle(Color.black.opacity(0.82))
+
+                Text("선택한 언어가 앱 화면과 모닝콜에 함께 적용돼요.")
+                    .font(.system(.footnote).weight(.medium))
+                    .foregroundStyle(Color.black.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Picker("앱과 통화 언어", selection: $selectedLanguage) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(language.nativeLabel)
+                            .tag(language)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            .padding(16)
+            .background(Color.white.opacity(0.86), in: RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous))
+
+            VStack(spacing: 12) {
+                ForEach(items) { item in
+                    FeatureIntroCard(item: item)
+                }
+            }
+
+            if microphonePermission == .denied {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "mic.slash.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("마이크 권한은 통화 전에 설정에서 다시 허용할 수 있어요.")
+                        .font(.system(.footnote).weight(.semibold))
+                }
+                .foregroundStyle(Color.black.opacity(0.58))
+            }
+
+            if showLanguageSaveError {
+                Text("언어 설정을 저장하지 못했어요. 다시 시도해 주세요.")
+                    .font(.system(.footnote).weight(.semibold))
+                    .foregroundStyle(Color.red.opacity(0.82))
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        } actions: {
+            Button {
+                handleStart()
+            } label: {
+                Text(LocalizedStringKey(primaryButtonTitle))
+            }
+            .disabled(isRequestingMicrophone || isSavingLanguage)
+            .buttonStyle(PrimaryButtonStyle())
         }
         .onAppear {
             microphonePermission = AVAudioApplication.shared.recordPermission
@@ -314,15 +301,6 @@ struct FeatureIntroView: View {
             showLanguageSaveError = false
         }
         .preferredColorScheme(.light)
-    }
-
-    private var fixedBackground: some View {
-        Image("Background_morning")
-            .resizable()
-            .scaledToFill()
-            .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-            .clipped()
-            .ignoresSafeArea(.all)
     }
 
     private func handleStart() {
@@ -397,7 +375,7 @@ private struct FeatureIntroCard: View {
             ZStack(alignment: .bottomTrailing) {
                 Image(systemName: item.iconName)
                     .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.47, green: 0.61, blue: 0.92))
+                    .foregroundStyle(HaruStyle.ink)
                     .frame(width: 42, height: 42)
                     .background(
                         Circle()
@@ -411,7 +389,7 @@ private struct FeatureIntroCard: View {
                         .frame(width: 20, height: 20)
                         .background(
                             Circle()
-                                .fill(Color(red: 0.47, green: 0.61, blue: 0.92))
+                                .fill(HaruStyle.ink)
                         )
                         .offset(x: 4, y: 4)
                 }
@@ -419,12 +397,12 @@ private struct FeatureIntroCard: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(LocalizedStringKey(item.title))
-                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .font(.system(.body).weight(.semibold))
                     .foregroundStyle(Color.black.opacity(0.88))
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(LocalizedStringKey(item.description))
-                    .font(.system(.footnote, design: .rounded).weight(.medium))
+                    .font(.system(.footnote).weight(.medium))
                     .foregroundStyle(Color.black.opacity(0.58))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -432,10 +410,10 @@ private struct FeatureIntroCard: View {
         }
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                 .fill(Color.white.opacity(0.86))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                         .stroke(Color.white.opacity(0.70), lineWidth: 1)
                 )
         )

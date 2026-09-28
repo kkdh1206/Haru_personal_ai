@@ -128,11 +128,11 @@ struct AlarmEditView: View {
                             dismiss()
                         } label: {
                             Text(localized(context.isException ? "예외 알람 삭제" : "이 요일 알람 삭제"))
-                                .font(.system(.body, design: .rounded).weight(.semibold))
+                                .font(.system(.body).weight(.semibold))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 16)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                    RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                                         .fill(Color.white.opacity(0.82))
                                 )
                         }
@@ -182,7 +182,7 @@ struct AlarmEditView: View {
     private var timeSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(localized("시간 변경"))
-                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .font(.system(.headline).weight(.semibold))
                 .foregroundStyle(.black)
 
             DatePicker(
@@ -204,7 +204,7 @@ struct AlarmEditView: View {
     private var wakeStyleSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(localized("깨우기 방식"))
-                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .font(.system(.headline).weight(.semibold))
                 .foregroundStyle(.black)
 
             VStack(spacing: 12) {
@@ -231,10 +231,10 @@ struct AlarmEditView: View {
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(localized(title))
-                        .font(.system(.body, design: .rounded).weight(.semibold))
+                        .font(.system(.body).weight(.semibold))
                         .foregroundStyle(.black)
                     Text(localized(detail))
-                        .font(.system(.footnote, design: .rounded))
+                        .font(.system(.footnote))
                         .foregroundStyle(Color.black.opacity(0.58))
                         .multilineTextAlignment(.leading)
                 }
@@ -251,7 +251,7 @@ struct AlarmEditView: View {
             }
             .padding(18)
             .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                     .fill(wakeStyle == id ? Color.white.opacity(0.9) : Color.white.opacity(0.58))
             )
         }
@@ -260,10 +260,10 @@ struct AlarmEditView: View {
     }
 
     private var sectionBackground: some View {
-        RoundedRectangle(cornerRadius: 28, style: .continuous)
+        RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
             .fill(.ultraThinMaterial)
             .overlay(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                     .stroke(Color.white.opacity(0.55), lineWidth: 1)
             )
     }

@@ -8,6 +8,9 @@ Haru AI assistant built with LiveKit Agents for Python
 
 ## Dev Setup
 
+Use Python 3.13, matching the Docker image. The `.python-version` file pins this
+version for uv because the locked `onnxruntime==1.23.1` does not support Python 3.14.
+
 Clone the repository and install dependencies to a virtual environment:
 
 ```console

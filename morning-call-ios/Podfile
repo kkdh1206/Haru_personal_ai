@@ -11,3 +11,13 @@ target 'morningcall' do
   pod 'GoogleSignIn'
   pod 'GoogleSignInSwift'
 end
+
+# Xcode 27 no longer builds dependencies targeting iOS versions below 15.
+# Keep generated pod targets aligned with the app's minimum deployment target.
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '18.5'
+    end
+  end
+end

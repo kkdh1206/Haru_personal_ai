@@ -9,10 +9,10 @@ struct ControlTabView: View {
                     .foregroundStyle(Color(red: 0.48, green: 0.61, blue: 0.91))
 
                 Text("제어 탭은 잠시 비워두었어요.")
-                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                    .font(.system(.title3).weight(.semibold))
 
                 Text("지금은 기상 화면과 브리핑 화면 중심으로 다듬는 중입니다.")
-                    .font(.system(.subheadline, design: .rounded))
+                    .font(.system(.subheadline))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }

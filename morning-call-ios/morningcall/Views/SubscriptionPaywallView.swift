@@ -15,9 +15,9 @@ struct SubscriptionPaywallView: View {
 
                     VStack(spacing: 8) {
                         Text(localized("하루 플러스"))
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .font(.system(size: 32, weight: .bold))
                         Text(localized("매일 아침, AI가 직접 전화해 깨워드려요."))
-                            .font(.system(.body, design: .rounded))
+                            .font(.system(.body))
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     }
@@ -28,15 +28,15 @@ struct SubscriptionPaywallView: View {
                         benefit("cloud.sun.fill", "날씨와 오늘 일정 브리핑")
                     }
                     .padding(22)
-                    .background(RoundedRectangle(cornerRadius: 24).fill(Color.white.opacity(0.86)))
+                    .background(RoundedRectangle(cornerRadius: HaruStyle.cardRadius).fill(Color.white.opacity(0.86)))
 
                     VStack(spacing: 8) {
                         Text(localized("신규 이용자 3일 무료 체험"))
-                            .font(.system(.title3, design: .rounded).weight(.bold))
+                            .font(.system(.title3).weight(.bold))
                         Text("\(subscriptionManager.localizedMonthlyPrice)\(localized("/월"))")
-                            .font(.system(.title2, design: .rounded).weight(.bold))
+                            .font(.system(.title2).weight(.bold))
                         Text(localized("신규 이용자는 무료 체험 종료 후 자동으로 갱신돼요. 언제든 취소할 수 있어요."))
-                            .font(.system(.footnote, design: .rounded))
+                            .font(.system(.footnote))
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     }
@@ -47,14 +47,14 @@ struct SubscriptionPaywallView: View {
                         HStack {
                             if subscriptionManager.isLoading { ProgressView().tint(.white) }
                             Text(localized("구독 시작하기"))
-                                .font(.system(.headline, design: .rounded).weight(.bold))
+                                .font(.system(.headline).weight(.bold))
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 17)
                     }
                     .disabled(subscriptionManager.isLoading)
                     .foregroundStyle(.white)
-                    .background(RoundedRectangle(cornerRadius: 20).fill(Color.black.opacity(0.9)))
+                    .background(RoundedRectangle(cornerRadius: HaruStyle.cardRadius).fill(Color.black.opacity(0.9)))
 
                     Button(localized("구매 복원")) {
                         subscriptionManager.restorePurchases()
@@ -69,7 +69,7 @@ struct SubscriptionPaywallView: View {
                     }
 
                     Text(localized("구독에는 매일 1회의 모닝콜과 필요할 때 재통화가 포함됩니다."))
-                        .font(.system(.caption, design: .rounded))
+                        .font(.system(.caption))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
 
@@ -92,8 +92,8 @@ struct SubscriptionPaywallView: View {
 
     private func benefit(_ icon: String, _ title: String) -> some View {
         HStack(spacing: 14) {
-            Image(systemName: icon).frame(width: 28).foregroundStyle(Color(red: 0.47, green: 0.61, blue: 0.92))
-            Text(localized(title)).font(.system(.body, design: .rounded).weight(.semibold))
+            Image(systemName: icon).frame(width: 28).foregroundStyle(HaruStyle.ink)
+            Text(localized(title)).font(.system(.body).weight(.semibold))
         }
     }
 

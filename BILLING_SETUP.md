@@ -3,7 +3,7 @@
 ## 확정 상품
 
 - 상품명: 하루 플러스 월간
-- 한국 가격: 월 14,900원
+- 한국 가격: 월 9,900원
 - 무료 체험: 신규 구독자 3일, 이후 자동 갱신
 - 제공 범위: 하루 1회 모닝콜과 필요할 때 최대 2회 재통화
 - 내부 비용 보호: 연결된 각 통화는 4분 30초부터 자연스럽게 마무리하고 5분에 종료
@@ -17,7 +17,7 @@
 
 1. 자동 갱신 구독 그룹 `하루 플러스`를 만든다.
 2. 상품 ID를 코드와 동일한 `haru.plus.monthly`로 만든다.
-3. 기간은 1개월, 대한민국 가격은 14,900원으로 지정한다. App Store Connect에서 표시되는 지원 가격 포인트 중 14,900원을 선택하면 된다.
+3. 기간은 1개월, 대한민국 가격은 9,900원으로 지정한다. App Store Connect에서 표시되는 지원 가격 포인트 중 9,900원을 선택하면 된다.
 4. 신규 구독자용 introductory offer를 `Free Trial / 3 Days`로 만든다.
 5. App Store Server Notifications V2의 Production URL을 `https://<API_HOST>/billing/apple/notifications`로 지정한다. Sandbox URL은 `APPLE_ENVIRONMENT=Sandbox`인 staging 서버로 분리한다.
 6. 심사 메모에 결제 화면 진입 경로, Sandbox 테스트 계정, 구매 복원과 구독 관리 경로를 적는다.
@@ -27,7 +27,7 @@
 ## Google Play Console
 
 1. 구독 상품 ID를 코드와 동일한 `haru_plus_monthly`로 만든다.
-2. 월간 자동 갱신 base plan을 만들고 한국 가격을 14,900원으로 지정한다.
+2. 월간 자동 갱신 base plan을 만들고 한국 가격을 9,900원으로 지정한다.
 3. 신규 고객 대상 3일 무료 체험 offer를 만들고 offer tag에 `free-trial`을 추가한다.
 4. Google Play Android Developer API를 활성화하고, Play Console에서 서버 서비스 계정에 주문·구독 조회 및 관리 권한을 부여한다.
 5. Real-time Developer Notifications용 Pub/Sub topic과 push subscription을 만들고 URL을 `https://<API_HOST>/billing/google/notifications`로 지정한다.
@@ -72,13 +72,13 @@ Google 서비스 계정 JSON과 Apple 루트 인증서는 서버에만 저장한
 1. `BILLING_ENFORCEMENT_ENABLED=false`로 서버와 앱을 먼저 배포한다.
 2. Apple Sandbox와 Google license tester에서 신규 체험, 일반 결제, 갱신, 취소, 만료, 결제 실패, 구매 복원을 확인한다.
 3. 앱 동기화와 스토어 알림이 같은 Firebase 사용자 구독 상태를 갱신하는지 확인한다.
-4. App Store Connect/Play Console에서 14,900원과 3일 무료 체험 문구가 실제 결제창에 정확히 표시되는지 확인한다.
+4. App Store Connect/Play Console에서 9,900원과 3일 무료 체험 문구가 실제 결제창에 정확히 표시되는지 확인한다.
 5. 기존 사용자에게 전환을 공지한 뒤 `BILLING_ENFORCEMENT_ENABLED=true`를 켠다.
 6. 첫 2주 동안 연결 시간, 응답률, 재통화율, 사용자당 AI 원가와 스토어 수수료를 매일 확인한다.
 
 ## 가격과 추가 사용량 정책
 
-14,900원은 하루 한 번 3~5분 정도 이용하는 초기 월 구독 가격으로 유지한다. 처음부터 자동 초과 과금은 붙이지 않는다. 최소 한 달의 실제 사용량을 수집한 뒤 상위 사용자의 연결 시간과 기여이익을 보고 별도 통화팩을 검토한다.
+9,900원은 하루 한 번 3~5분 정도 이용하는 초기 월 구독 가격으로 유지한다. 처음부터 자동 초과 과금은 붙이지 않는다. 최소 한 달의 실제 사용량을 수집한 뒤 상위 사용자의 연결 시간과 기여이익을 보고 별도 통화팩을 검토한다.
 
 추가 상품은 동의 없는 자동 청구가 아니라 사용자가 직접 구매하는 스토어 consumable `추가 통화팩`으로 만든다. 구매 전에 제공 분량과 가격을 보여주고, 소진할 때마다 다시 명시적으로 결제하게 한다.
 
