@@ -15,18 +15,12 @@ struct EnterNameView: View {
     @State private var isSaving = false
 
     var body: some View {
-        OnboardingLayout(step: 1) {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(verbatim: "What should I call you?")
-                        .font(.system(.title).weight(.bold))
-                        .foregroundStyle(Color.black.opacity(0.92))
-
-                    Text(verbatim: "뭐라고 불러드릴까요?\nなんとお呼びすればいいですか？")
-                        .font(.system(.subheadline))
-                        .foregroundStyle(Color.black.opacity(0.58))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        OnboardingLayout(step: .enterName) {
+            VStack(alignment: .leading, spacing: 24) {
+                OnboardingHeading(
+                    title: "뭐라고 불러드릴까요?",
+                    subtitle: "첫 대화부터 자연스럽게 이름을 불러드릴게요."
+                )
 
                 TextField(text: $name) {
                     Text("이름을 입력해 주세요")
@@ -43,13 +37,13 @@ struct EnterNameView: View {
                     }
 
                 if showNameError {
-                    Text(verbatim: "Please enter your name to continue.")
+                    Text("이름을 입력해야 다음으로 넘어갈 수 있어요.")
                         .font(.system(.footnote).weight(.semibold))
                         .foregroundStyle(Color.red.opacity(0.82))
                 }
 
                 if showSaveError {
-                    Text(verbatim: "Couldn't save your profile. Please try again.")
+                    Text("프로필 저장에 실패했어요. 다시 시도해 주세요.")
                         .font(.system(.footnote).weight(.semibold))
                         .foregroundStyle(Color.red.opacity(0.82))
                 }
@@ -59,7 +53,7 @@ struct EnterNameView: View {
             Button {
                 goNext()
             } label: {
-                Text(verbatim: isSaving ? "Saving..." : "Next")
+                Text(LocalizedStringKey(isSaving ? "저장 중..." : "다음"))
             }
             .disabled(isSaving)
             .buttonStyle(PrimaryButtonStyle())
@@ -71,6 +65,7 @@ struct EnterNameView: View {
     }
 
     private func goNext() {
+        guard !isSaving else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             showNameError = true
@@ -81,7 +76,7 @@ struct EnterNameView: View {
         showSaveError = false
         isSaving = true
 
-        let language = env.user?.language ?? "한국어"
+        let language = env.appLanguage.callLanguageValue
         let speechStyle = SpeechStyle.value(
             forCallLanguage: language,
             preserving: env.user?.speechStyle,
@@ -103,8 +98,7 @@ struct EnterNameView: View {
                     env.user?.language = user.language ?? env.user?.language
                     env.user?.speechStyle = user.speechStyle ?? env.user?.speechStyle
 
-                    FeatureIntroStore.advance(to: .featureIntro)
-                    env.onboardingStep = .featureIntro
+                    env.advanceOnboarding(from: .enterName)
                 case .failure(let error):
                     showSaveError = true
                     print("❌ 프로필 저장 실패: \(error)")

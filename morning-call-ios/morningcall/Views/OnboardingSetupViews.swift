@@ -31,19 +31,14 @@ struct OnboardingAlarmSetupView: View {
     }
 
     var body: some View {
-        OnboardingLayout(step: 4) {
-            VStack(alignment: .leading, spacing: 9) {
-                Text("첫 모닝콜을 설정해볼게요")
-                    .font(.system(.largeTitle).weight(.bold))
-                    .foregroundStyle(Color.black.opacity(0.92))
-
-                Text("원하는 시간과 깨우기 방식을 선택해 주세요.")
-                    .font(.system(.subheadline).weight(.medium))
-                    .foregroundStyle(Color.black.opacity(0.60))
-            }
+        OnboardingLayout(step: .alarmSetup) {
+            OnboardingHeading(
+                title: "몇 시에 깨워드릴까요?",
+                subtitle: "원하는 시간과 깨우기 방식을 선택해 주세요."
+            )
 
             VStack(alignment: .leading, spacing: 14) {
-                Label("알람 시간", systemImage: "alarm.fill")
+                Text("알람 시간")
                     .font(.system(.headline).weight(.semibold))
 
                 DatePicker("", selection: $time, displayedComponents: .hourAndMinute)
@@ -55,7 +50,7 @@ struct OnboardingAlarmSetupView: View {
             .onboardingPanel()
 
             VStack(alignment: .leading, spacing: 16) {
-                Label("반복 요일", systemImage: "repeat")
+                Text("반복 요일")
                     .font(.system(.headline).weight(.semibold))
 
                 HStack(spacing: 7) {
@@ -90,7 +85,7 @@ struct OnboardingAlarmSetupView: View {
             .onboardingPanel()
 
             VStack(alignment: .leading, spacing: 14) {
-                Label("깨우기 강도", systemImage: "speaker.wave.2.fill")
+                Text("깨우기 강도")
                     .font(.system(.headline).weight(.semibold))
 
                 Picker("깨우기 강도", selection: $wakeIntensity) {
@@ -115,7 +110,7 @@ struct OnboardingAlarmSetupView: View {
                     ProgressView()
                         .tint(.white)
                 } else {
-                    Text("알람 저장하고 계속하기")
+                    Text("다음")
                 }
             }
             .disabled(isSaving || isLoading || repeatDays.isEmpty)
@@ -181,8 +176,7 @@ struct OnboardingAlarmSetupView: View {
                 let alarms = try await WeekdayAlarmService(repository: .live)
                     .configure(days: selectedDays, template: template)
                 LocalCallFallbackScheduler.shared.syncFallbacks(with: alarms)
-                FeatureIntroStore.advance(to: .calendarIntro)
-                env.onboardingStep = .calendarIntro
+                env.advanceOnboarding(from: .alarmSetup)
             } catch {
                 showSaveError = true
                 // Partial saves remain recoverable; retry reads their IDs first.
@@ -215,34 +209,20 @@ struct CalendarIntroView: View {
     @State private var retryAppleCalendarAfterSettings = false
 
     var body: some View {
-        OnboardingLayout(step: 5) {
-            VStack(alignment: .leading, spacing: 10) {
-                Image(systemName: "calendar.badge.plus")
-                    .font(.system(size: 36, weight: .semibold))
-                    .foregroundStyle(HaruStyle.ink)
+        OnboardingLayout(step: .calendarIntro) {
+            OnboardingHeading(
+                title: "오늘 일정도 함께 챙겨요",
+                subtitle: "캘린더를 연결하면 아침에 일정을 듣고, 통화 중 새 일정을 추가할 수 있어요."
+            )
 
-                Text("캘린더를 연결할까요?")
-                    .font(.system(.largeTitle).weight(.bold))
-                    .foregroundStyle(Color.black.opacity(0.92))
-
-                Text("Haru가 오늘 일정을 가져와 아침에 브리핑하고, 통화 중 말로 새 일정을 추가할 수 있어요.")
-                    .font(.system(.body).weight(.medium))
-                    .foregroundStyle(Color.black.opacity(0.60))
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 12) {
+                calendarConnectButton(provider: .google, systemImage: "g.circle")
+                calendarConnectButton(provider: .apple, systemImage: "apple.logo")
             }
 
-            VStack(spacing: 14) {
-                calendarBenefit(
-                    icon: "list.bullet.clipboard.fill",
-                    title: "오늘 일정을 아침 브리핑에 담아요",
-                    description: "첫 일정과 준비할 내용을 모닝콜에서 자연스럽게 알려드려요."
-                )
-                calendarBenefit(
-                    icon: "text.bubble.fill",
-                    title: "말로 일정을 추가할 수 있어요",
-                    description: "통화 중 일정과 시간을 말하면 선택한 캘린더에 추가할 수 있어요."
-                )
-            }
+            Text("연결은 선택이에요. 나중에 설정에서 바꿀 수 있어요.")
+                .font(.footnote)
+                .foregroundStyle(HaruStyle.ink.opacity(0.65))
 
             if let connectionErrorKey {
                 Text(AppLocalizer.string(connectionErrorKey, language: env.appLanguage))
@@ -252,28 +232,11 @@ struct CalendarIntroView: View {
                     .padding(.bottom, 12)
             }
         } actions: {
-            if isConnected {
-                Button {
-                    continueToTest()
-                } label: {
-                    Label("연결됨, 계속하기", systemImage: "checkmark.circle.fill")
-                }
-                .disabled(isLoading || isConnecting)
-                .buttonStyle(PrimaryButtonStyle())
-            } else {
-                VStack(spacing: 12) {
-                    calendarConnectButton(provider: .google, systemImage: "g.circle.fill")
-                    calendarConnectButton(provider: .apple, systemImage: "apple.logo")
-                }
-            }
-
-            Button("지금은 건너뛰기") {
+            Button(LocalizedStringKey(isConnected ? "다음" : "나중에 설정하기")) {
                 continueToTest()
             }
-            .font(.system(.subheadline).weight(.semibold))
-            .foregroundStyle(Color.black.opacity(0.58))
-            .frame(maxWidth: .infinity)
-            .padding(.top, 14)
+            .disabled(isConnecting)
+            .buttonStyle(PrimaryButtonStyle())
         }
         .task {
             loadCalendarStatus()
@@ -310,52 +273,31 @@ struct CalendarIntroView: View {
         .preferredColorScheme(.light)
     }
 
-    private func calendarBenefit(icon: String, title: LocalizedStringKey, description: LocalizedStringKey) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(HaruStyle.ink)
-                .frame(width: 42, height: 42)
-                .background(Color.white.opacity(0.82), in: Circle())
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title)
-                    .font(.system(.body).weight(.semibold))
-                    .foregroundStyle(Color.black.opacity(0.86))
-                Text(description)
-                    .font(.system(.footnote).weight(.medium))
-                    .foregroundStyle(Color.black.opacity(0.57))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .onboardingPanel()
-    }
-
-    private func calendarConnectButton(
-        provider: CalendarProvider,
-        systemImage: String
-    ) -> some View {
+    private func calendarConnectButton(provider: CalendarProvider, systemImage: String) -> some View {
         Button {
             connectCalendar(provider)
         } label: {
-            HStack(spacing: 9) {
-                if isLoading || isConnecting {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 22, weight: .medium))
+                    .frame(width: 28)
+                Text(provider.displayName)
+                    .font(.body.weight(.semibold))
+                Spacer(minLength: 8)
+                if isConnecting {
                     ProgressView()
-                        .tint(.white)
                 } else {
-                    Image(systemName: systemImage)
+                    Image(systemName: isConnected && connectedProvider == provider ? "checkmark.circle.fill" : "chevron.right")
+                        .font(.system(size: 18, weight: .medium))
                 }
-                Text(
-                    String(
-                        format: AppLocalizer.string("%@ 연결하기", language: env.appLanguage),
-                        provider.displayName
-                    )
-                )
             }
+            .frame(maxWidth: .infinity, minHeight: 32)
+            .onboardingPanel()
+            .contentShape(RoundedRectangle(cornerRadius: HaruStyle.cardRadius))
         }
+        .buttonStyle(.plain)
         .disabled(isLoading || isConnecting)
-        .buttonStyle(PrimaryButtonStyle())
+        .foregroundStyle(HaruStyle.ink)
     }
 
     private func loadCalendarStatus() {
@@ -384,7 +326,6 @@ struct CalendarIntroView: View {
                 case .connected:
                     isConnected = true
                     connectedProvider = provider
-                    continueToTest()
                 case .permissionDenied where provider == .apple:
                     appleCalendarPermissionRestricted = false
                     connectionErrorKey = "Apple Calendar 전체 접근 권한을 허용해 주세요."
@@ -417,8 +358,7 @@ struct CalendarIntroView: View {
     }
 
     private func continueToTest() {
-        FeatureIntroStore.advance(to: .testCallSetup)
-        env.onboardingStep = .testCallSetup
+        env.advanceOnboarding(from: .calendarIntro)
     }
 }
 
@@ -472,105 +412,72 @@ struct OnboardingTestCallView: View {
     }
 
     var body: some View {
-        OnboardingLayout(step: 6) {
-            VStack(alignment: .leading, spacing: 10) {
-                Image(systemName: scheduledAt == nil ? "phone.badge.checkmark" : "phone.arrow.down.left.fill")
-                    .font(.system(size: 36, weight: .semibold))
-                    .foregroundStyle(HaruStyle.ink)
-
-                Text(LocalizedStringKey(scheduledAt == nil ? "실제로 전화를 한번 해드릴게요" : "테스트 전화가 곧 울려요"))
-                    .font(.system(.largeTitle).weight(.bold))
-                    .foregroundStyle(Color.black.opacity(0.92))
-
-                Text(LocalizedStringKey(
-                    scheduledAt == nil
-                    ? "권한과 설정을 확인하면 10초 후 Haru가 짧은 테스트 전화를 걸어요."
-                    : "전화를 받아 목소리를 확인해 주세요. 통화가 끝나면 테스트 완료 화면으로 넘어가요."
-                ))
-                .font(.system(.body).weight(.medium))
-                .foregroundStyle(Color.black.opacity(0.60))
-                .fixedSize(horizontal: false, vertical: true)
-            }
+        OnboardingLayout(step: .testCallSetup) {
+            OnboardingHeading(
+                title: testCallCompleted ? "테스트 통화를 마쳤어요" : scheduledAt == nil ? "마지막으로 통화를 확인해요" : "테스트 전화가 곧 울려요",
+                subtitle: testCallCompleted
+                    ? "이제 설정한 시간에 하루가 전화드릴게요."
+                    : scheduledAt == nil
+                        ? "아래 항목을 확인하면 10초 뒤 테스트 전화를 받을 수 있어요."
+                        : "전화를 받아 목소리를 확인해 주세요. 통화가 끝나면 테스트 완료 화면으로 넘어가요."
+            )
 
             if scheduledAt == nil {
                 VStack(spacing: 12) {
-                    readinessRow(
-                        icon: microphonePermission == .granted ? "mic.fill" : "mic.slash.fill",
-                        title: "마이크 권한",
-                        detail: microphonePermission == .granted ? "허용됨" : "설정에서 마이크를 허용해 주세요.",
-                        isReady: microphonePermission == .granted
-                    )
-
-                    readinessRow(
-                        icon: "antenna.radiowaves.left.and.right",
-                        title: "전화 수신 연결",
-                        detail: tokenManager.isRegistering
-                            ? "전화 수신 토큰을 등록하고 있어요."
-                            : tokenManager.isRegistered
-                                ? "테스트 전화를 받을 준비가 됐어요."
-                                : "기기 연결을 확인하고 있어요.",
-                        isReady: tokenManager.isRegistered
-                    )
-
-                    Button {
-                        requestOrOpenNotificationSettings()
-                    } label: {
+                    Button { requestOrOpenMicrophoneSettings() } label: {
                         readinessRow(
-                            icon: notificationPermissionGranted ? "bell.badge.fill" : "bell.slash.fill",
-                            title: "알림 권한",
-                            detail: notificationPermissionGranted ? "기본 알람 알림을 받을 수 있어요." : "설정에서 알림을 허용해 주세요.",
-                            isReady: notificationPermissionGranted,
-                            showsSettingsDisclosure: true
+                            icon: "mic",
+                            title: "마이크 권한",
+                            detail: microphonePermission == .granted ? "허용됨" : "눌러서 마이크 사용을 허용해 주세요.",
+                            isReady: microphonePermission == .granted,
+                            showsSettingsDisclosure: microphonePermission != .granted
                         )
                     }
                     .buttonStyle(.plain)
+                    .disabled(microphonePermission == .granted)
 
-                    readinessRow(
-                        icon: "moon.zzz.fill",
-                        title: "테스트 중 방해금지 모드 끄기",
-                        detail: "테스트 전화가 울리는지 확인할 때만 잠시 꺼 주세요.",
-                        isReady: confirmedDoNotDisturb
-                    )
-
-                    Button {
-                        confirmedDoNotDisturb.toggle()
-                    } label: {
-                        HStack(spacing: 9) {
-                            Image(systemName: confirmedDoNotDisturb ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 22, weight: .semibold))
-                                .foregroundStyle(
-                                    confirmedDoNotDisturb
-                                    ? HaruStyle.ink
-                                    : Color.black.opacity(0.30)
-                                )
-                            Text("방해금지 모드를 껐어요")
-                                .font(.system(.subheadline).weight(.semibold))
-                                .foregroundStyle(Color.black.opacity(0.72))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .contentShape(Rectangle())
+                    Button { requestOrOpenNotificationSettings() } label: {
+                        readinessRow(
+                            icon: "bell",
+                            title: "알림 권한",
+                            detail: notificationPermissionGranted ? "기본 알람 알림을 받을 수 있어요." : "눌러서 알림을 허용해 주세요.",
+                            isReady: notificationPermissionGranted,
+                            showsSettingsDisclosure: !notificationPermissionGranted
+                        )
                     }
                     .buttonStyle(.plain)
+                    .disabled(notificationPermissionGranted)
+
+                    Button { confirmedDoNotDisturb.toggle() } label: {
+                        readinessRow(
+                            icon: "moon",
+                            title: "방해금지 모드 확인",
+                            detail: "집중 모드를 끈 뒤 눌러서 확인해 주세요.",
+                            isReady: confirmedDoNotDisturb
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(confirmedDoNotDisturb ? .isSelected : [])
                 }
 
-                if microphonePermission != .granted {
-                    Button("마이크 권한 설정하기") {
-                        requestOrOpenMicrophoneSettings()
+                if !tokenManager.isRegistered {
+                    HStack(spacing: 8) {
+                        if tokenManager.isRegistering { ProgressView() }
+                        Text("전화 수신 연결을 확인하고 있어요.")
+                            .font(.footnote)
                     }
-                    .font(.system(.subheadline).weight(.semibold))
-                    .foregroundStyle(Color.black.opacity(0.72))
-                    .frame(maxWidth: .infinity)
+                    .foregroundStyle(HaruStyle.ink.opacity(0.65))
                 }
             } else {
                 VStack(spacing: 10) {
-                    Text(testCallCompleted ? "테스트 통화 발송 완료" : secondsRemaining > 0 ? "\(secondsRemaining)" : "전화 수신 대기 중")
+                    Text(LocalizedStringKey(testCallCompleted ? "테스트 완료" : secondsRemaining > 0 ? "\(secondsRemaining)" : "전화 수신 대기 중"))
                         .font(.system(size: secondsRemaining > 0 && !testCallCompleted ? 72 : 28, weight: .bold))
                         .foregroundStyle(Color.black.opacity(0.88))
                         .contentTransition(.numericText())
 
                     Text(LocalizedStringKey(
                         testCallCompleted
-                            ? "걸려오는 전화를 받아 확인해보세요."
+                            ? "이제 설정한 시간에 하루가 전화드릴게요."
                             : secondsRemaining > 0
                                 ? "초 뒤에 전화가 울려요"
                                 : "곧 Haru의 전화가 도착합니다."
@@ -582,17 +489,6 @@ struct OnboardingTestCallView: View {
                 .padding(.vertical, 34)
                 .onboardingPanel()
             }
-
-            VStack(alignment: .leading, spacing: 11) {
-                Label("일반 모닝콜은 최대 총 3회", systemImage: "phone.badge.clock.fill")
-                    .font(.system(.headline).weight(.semibold))
-                    .foregroundStyle(Color.black.opacity(0.84))
-                Text("일어나지 않으면 최초 전화 후 최대 두 번 더 연락해요. 지금 진행하는 테스트 전화는 1회만 울리고 재통화하지 않아요.")
-                    .font(.system(.footnote).weight(.medium))
-                    .foregroundStyle(Color.black.opacity(0.57))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .onboardingPanel()
 
             if showScheduleError {
                 Text("테스트 전화를 예약하지 못했어요. 기기 연결과 네트워크를 확인한 뒤 다시 시도해 주세요.")
@@ -621,10 +517,8 @@ struct OnboardingTestCallView: View {
                 Button("테스트를 건너뛰고 홈으로") {
                     endTestAndFinishOnboarding()
                 }
-                .disabled(!allRequirementsReady || isScheduling || isFinishing)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(HaruStyle.ink.opacity(allRequirementsReady ? 1 : 0.4))
-                .frame(maxWidth: .infinity)
+                .disabled(isScheduling || isFinishing)
+                .buttonStyle(QuietButtonStyle())
             } else if testCallCompleted {
                 Button {
                     endTestAndFinishOnboarding()
@@ -648,17 +542,13 @@ struct OnboardingTestCallView: View {
                     endTestAndFinishOnboarding()
                 }
                 .disabled(isFinishing)
-                .font(.system(.subheadline).weight(.semibold))
-                .foregroundStyle(Color.black.opacity(0.56))
-                .frame(maxWidth: .infinity)
+                .buttonStyle(QuietButtonStyle())
             } else {
                 Button("테스트 종료하고 홈으로") {
                     endTestAndFinishOnboarding()
                 }
                 .disabled(isFinishing)
-                .font(.system(.subheadline).weight(.semibold))
-                .foregroundStyle(Color.black.opacity(0.56))
-                .frame(maxWidth: .infinity)
+                .buttonStyle(QuietButtonStyle())
             }
         }
         .onAppear {
@@ -687,27 +577,13 @@ struct OnboardingTestCallView: View {
 
     private func readinessRow(
         icon: String,
-        title: LocalizedStringKey,
-        detail: LocalizedStringKey,
+        title: String,
+        detail: String,
         isReady: Bool,
         showsSettingsDisclosure: Bool = false
     ) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(HaruStyle.ink)
-                .frame(width: 42, height: 42)
-                .background(Color.white.opacity(0.82), in: Circle())
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(.body).weight(.semibold))
-                    .foregroundStyle(Color.black.opacity(0.86))
-                Text(detail)
-                    .font(.system(.footnote).weight(.medium))
-                    .foregroundStyle(Color.black.opacity(0.57))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 12) {
+            OnboardingInfoRow(icon: icon, title: title, detail: detail)
 
             Image(systemName: isReady ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                 .font(.system(size: 22, weight: .semibold))
@@ -827,6 +703,10 @@ struct OnboardingTestCallView: View {
     private func endTestAndFinishOnboarding() {
         guard !isFinishing else { return }
         isFinishing = true
+        guard scheduledAt != nil else {
+            completeOnboarding()
+            return
+        }
 
         var cancelBody: [String: Any] = [:]
         if let jobID = FeatureIntroStore.testCallJobID {

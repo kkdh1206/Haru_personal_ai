@@ -253,3 +253,37 @@
 
 "알람 삭제 실패" = "Couldn’t delete alarm";
 "알람을 삭제하지 못했어요. 다시 시도해 주세요." = "The alarm couldn’t be deleted. Please try again.";
+
+"어떤 언어로 시작할까요?" = "Which language feels right?";
+"앱과 모닝콜에 사용할 언어를 골라 주세요. 나중에 설정에서 각각 바꿀 수 있어요." = "Choose a language for the app and your calls. You can change them separately in Settings later.";
+"몇 시에 깨워드릴까요?" = "When should we wake you?";
+"아침 날씨도 함께 알려드릴까요?" = "Add the morning weather?";
+"위치를 연결하면 모닝콜에 우리 동네 날씨를 담아드려요." = "Add your location to hear the local weather during your morning call.";
+"나중에 설정하기" = "Set up later";
+"현재 위치" = "Current location";
+"위치 권한을 허용하면 날씨를 확인할 수 있어요." = "Allow location access to include your local weather.";
+"오늘 일정도 함께 챙겨요" = "Bring your day into focus";
+"캘린더를 연결하면 아침에 일정을 듣고, 통화 중 새 일정을 추가할 수 있어요." = "Connect a calendar to hear your schedule and add events during a call.";
+"연결은 선택이에요. 나중에 설정에서 바꿀 수 있어요." = "Connecting is optional. You can change this in Settings later.";
+"테스트 통화를 마쳤어요" = "Your test call is complete";
+"마지막으로 통화를 확인해요" = "Try your first call";
+"이제 설정한 시간에 하루가 전화드릴게요." = "Haru is ready for your scheduled mornings.";
+"아래 항목을 확인하면 10초 뒤 테스트 전화를 받을 수 있어요." = "Check these settings, then try a call in 10 seconds.";
+"눌러서 마이크 사용을 허용해 주세요." = "Tap to allow microphone access.";
+"눌러서 알림을 허용해 주세요." = "Tap to allow notifications.";
+"집중 모드를 끈 뒤 눌러서 확인해 주세요." = "Turn off Focus, then tap to confirm.";
+"전화 연결이 어려우면 알림 권한을 사용해 기본 알람으로 알려드려요." = "Notifications let the backup alarm alert you if a call cannot connect.";
+"전화 수신 연결을 확인하고 있어요." = "Checking your incoming call connection.";
+"테스트 완료" = "Test complete";
+"월간 구독" = "Monthly plan";
+"무료 체험 종료 후 위 가격으로 매월 자동 갱신돼요. 언제든 취소할 수 있어요." = "After the trial, your subscription renews monthly at the price above. Cancel anytime.";
+"매월 자동 갱신되며, 언제든 취소할 수 있어요." = "Renews monthly. Cancel anytime.";
+"구독에 포함돼요" = "Included in your plan";
+"정한 시간에 전화로 하루를 시작해요." = "Start your day with a call at your chosen time.";
+"첫 전화를 놓쳐도 다시 깨워드려요." = "Get another wake-up call if you miss the first.";
+"연결한 위치와 캘린더로 아침을 준비해요." = "Prepare for the day with your connected location and calendar.";
+"다시 시도" = "Try again";
+
+"위치 없이도 모닝콜을 받을 수 있어요. 나중에 설정에서 연결해 주세요." = "You can receive calls without sharing your location. Add it in Settings whenever you like.";
+"상품 불러오는 중..." = "Loading plan...";
+"월간 구독 상품을 불러오지 못했어요." = "Couldn’t load the monthly plan.";

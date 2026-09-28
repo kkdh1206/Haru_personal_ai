@@ -19,3 +19,17 @@ dated-alarm preservation, and failed deletion.
 
 Build the app through `morningcall.xcworkspace` after running `pod install` in
 `morning-call-ios`. The Podfile aligns dependency deployment targets with iOS 18.5.
+
+# Onboarding order and resume checks
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swiftc \
+  -module-cache-path /tmp/haru-swift-module-cache \
+  morning-call-ios/morningcall/Models/OnboardingStep.swift \
+  morning-call-ios/Tests/OnboardingFlowTests.swift \
+  -o /tmp/haru-onboarding-tests
+/tmp/haru-onboarding-tests
+```
+
+Checks the language-first sequence, progress numbers, profile prerequisites,
+completed-user handling, and migration from the previous onboarding order.

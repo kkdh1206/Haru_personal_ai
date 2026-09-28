@@ -142,13 +142,14 @@ struct RequestLocationView: View {
     @ObservedObject private var locationManager = CurrentLocationManager.shared
     @State private var showSettingsAlert = false
     @State private var isSaving = false
+    @State private var showSaveError = false
 
     private var primaryButtonTitle: String {
         if locationManager.isLoading || isSaving {
             return "위치 확인 중..."
         }
         if locationManager.cityAndProvince != nil {
-            return "완료"
+            return "다음"
         }
         switch locationManager.authStatus {
         case .notDetermined:
@@ -163,23 +164,26 @@ struct RequestLocationView: View {
     }
 
     var body: some View {
-        OnboardingLayout(step: 3) {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("오늘 날씨를 알려드릴게요")
-                        .font(.system(.title).weight(.bold))
-                        .foregroundStyle(Color.black.opacity(0.92))
-
-                    Text("현재 위치는 앱을 열 때마다 한 번씩 갱신돼요.")
-                        .font(.system(.subheadline))
-                        .foregroundStyle(Color.black.opacity(0.58))
-                }
+        OnboardingLayout(step: .requestLocation) {
+            VStack(alignment: .leading, spacing: 24) {
+                OnboardingHeading(
+                    title: "아침 날씨도 함께 알려드릴까요?",
+                    subtitle: "위치를 연결하면 모닝콜에 우리 동네 날씨를 담아드려요."
+                )
 
                 locationStatusCard
+                Text("위치 없이도 모닝콜을 받을 수 있어요. 나중에 설정에서 연결해 주세요.")
+                    .font(.footnote)
+                    .foregroundStyle(HaruStyle.ink.opacity(0.65))
+                if showSaveError {
+                    Text("프로필 저장에 실패했어요. 다시 시도해 주세요.")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
             }
             .frame(maxWidth: .infinity)
         } actions: {
-            Button(primaryButtonTitle) {
+            Button(LocalizedStringKey(primaryButtonTitle)) {
                 if locationManager.cityAndProvince != nil {
                     completeOnboarding()
                 } else {
@@ -195,6 +199,11 @@ struct RequestLocationView: View {
             }
             .disabled(locationManager.isLoading || isSaving)
             .buttonStyle(PrimaryButtonStyle())
+            Button("나중에 설정하기") {
+                env.advanceOnboarding(from: .requestLocation)
+            }
+            .disabled(isSaving || locationManager.isLoading)
+            .buttonStyle(QuietButtonStyle())
         }
         .alert("권한이 필요합니다",
                isPresented: $showSettingsAlert,
@@ -214,42 +223,19 @@ struct RequestLocationView: View {
     }
 
     private var locationStatusCard: some View {
-        VStack(spacing: 14) {
-            Image(systemName: locationManager.cityAndProvince == nil ? "location.circle" : "location.circle.fill")
-                .font(.system(size: 44, weight: .semibold))
-                .foregroundStyle(HaruStyle.ink)
-
-            if locationManager.isLoading {
-                ProgressView("위치 확인 중...")
-                    .font(.system(.body))
-                    .tint(Color.black.opacity(0.72))
-            } else if let location = locationManager.cityAndProvince, !location.isEmpty {
-                Text(location)
-                    .font(.system(.title3).weight(.semibold))
-                    .foregroundStyle(Color.black.opacity(0.86))
-                    .multilineTextAlignment(.center)
-            } else if locationManager.permissionDenied {
-                Text("위치 권한이 꺼져 있어요.")
-                    .font(.system(.body).weight(.semibold))
-                    .foregroundStyle(Color.red.opacity(0.78))
-                    .multilineTextAlignment(.center)
-            } else {
-                Text("현재 위치 권한이 필요해요.")
-                    .font(.system(.body).weight(.semibold))
-                    .foregroundStyle(Color.black.opacity(0.72))
-                    .multilineTextAlignment(.center)
-            }
+        HStack(spacing: 12) {
+            OnboardingInfoRow(
+                icon: "location",
+                title: locationManager.cityAndProvince ?? "현재 위치",
+                detail: locationManager.cityAndProvince != nil
+                    ? "현재 위치는 앱을 열 때마다 한 번씩 갱신돼요."
+                    : locationManager.permissionDenied
+                        ? "위치 권한이 꺼져 있어요."
+                        : "위치 권한을 허용하면 날씨를 확인할 수 있어요."
+            )
+            if locationManager.isLoading { ProgressView() }
         }
-        .frame(maxWidth: .infinity)
-        .padding(24)
-        .background(
-            RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
-                .fill(Color.white.opacity(0.88))
-                .overlay(
-                    RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
-                        .stroke(Color.white.opacity(0.72), lineWidth: 1)
-                )
-        )
+        .onboardingPanel()
     }
 
     private func completeOnboarding() {
@@ -261,7 +247,7 @@ struct RequestLocationView: View {
         }
 
         isSaving = true
-        env.user?.location = location
+        showSaveError = false
 
         let language = env.user?.language ?? "한국어"
         let speechStyle = SpeechStyle.value(
@@ -283,9 +269,9 @@ struct RequestLocationView: View {
                     env.user?.location = user.location ?? location
                     env.user?.language = user.language ?? env.user?.language
                     env.user?.speechStyle = user.speechStyle ?? env.user?.speechStyle
-                    FeatureIntroStore.advance(to: .alarmSetup)
-                    env.onboardingStep = .alarmSetup
+                    env.advanceOnboarding(from: .requestLocation)
                 case .failure(let error):
+                    showSaveError = true
                     print("❌ 유저 정보 저장 실패: \(error)")
                 }
             }

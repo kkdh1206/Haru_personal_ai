@@ -108,12 +108,12 @@ struct RootView: View {
                     DeviceTokenManager.shared.registerTokensToAPI()
                     let trimmedName = user.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-                    if trimmedName.isEmpty {
-                        env.onboardingStep = .enterName
-                    } else if FeatureIntroStore.shouldShow(for: user) {
-                        env.onboardingStep = FeatureIntroStore.currentStep()
-                    } else {
-                        env.onboardingStep = .completed
+                    env.onboardingStep = OnboardingStep.resume(
+                        saved: FeatureIntroStore.currentStep(),
+                        hasName: !trimmedName.isEmpty,
+                        completed: !FeatureIntroStore.shouldShow(for: user)
+                    )
+                    if env.onboardingStep == .completed {
                         showRequiredPaywallIfNeeded()
                     }
                 case .failure(let error):

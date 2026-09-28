@@ -8,7 +8,7 @@ enum HaruStyle {
 
 /// Every step shares the same safe-area-aware header, content and action area.
 struct OnboardingLayout<Content: View, Actions: View>: View {
-    let step: Int
+    let step: OnboardingStep
     @ViewBuilder let content: () -> Content
     @ViewBuilder let actions: () -> Actions
 
@@ -16,14 +16,14 @@ struct OnboardingLayout<Content: View, Actions: View>: View {
         GeometryReader { proxy in
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(verbatim: "\(step) / 6")
+                    Text(verbatim: "\(step.number) / \(OnboardingStep.steps.count)")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(HaruStyle.ink)
                         .monospacedDigit()
                     HStack(spacing: 6) {
-                        ForEach(1...6, id: \.self) { index in
+                        ForEach(1...OnboardingStep.steps.count, id: \.self) { index in
                             Capsule()
-                                .fill(HaruStyle.ink.opacity(index <= step ? 1 : 0.12))
+                                .fill(HaruStyle.ink.opacity(index <= step.number ? 1 : 0.12))
                                 .frame(height: 3)
                         }
                     }
@@ -58,6 +58,51 @@ struct OnboardingLayout<Content: View, Actions: View>: View {
         .tint(HaruStyle.ink)
         .symbolRenderingMode(.monochrome)
         .preferredColorScheme(.light)
+    }
+}
+
+struct OnboardingHeading: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(LocalizedStringKey(title))
+                .font(.title.bold())
+                .foregroundStyle(HaruStyle.ink)
+            Text(LocalizedStringKey(subtitle))
+                .font(.subheadline)
+                .foregroundStyle(HaruStyle.ink.opacity(0.65))
+                .lineSpacing(3)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct OnboardingInfoRow: View {
+    let icon: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(HaruStyle.ink)
+                .frame(width: 28, height: 28)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(LocalizedStringKey(title))
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(HaruStyle.ink)
+                Text(LocalizedStringKey(detail))
+                    .font(.subheadline)
+                    .foregroundStyle(HaruStyle.ink.opacity(0.65))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 

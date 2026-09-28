@@ -44,6 +44,7 @@ final class SubscriptionManager: ObservableObject {
     @Published private(set) var monthlyProduct: Product?
     @Published private(set) var isEligibleForTrial = false
     @Published private(set) var isLoading = false
+    @Published private(set) var isLoadingProduct = false
     @Published var errorMessage: String?
     @Published var showPaywall = false
 
@@ -141,10 +142,21 @@ final class SubscriptionManager: ObservableObject {
     }
 
     private func loadProduct() async {
+        guard !isLoadingProduct else { return }
+        isLoadingProduct = true
+        errorMessage = nil
+        defer { isLoadingProduct = false }
         do {
             monthlyProduct = try await Product.products(for: [productID]).first
-            if let subscription = monthlyProduct?.subscription {
+            guard let monthlyProduct else {
+                isEligibleForTrial = false
+                errorMessage = "월간 구독 상품을 불러오지 못했어요."
+                return
+            }
+            if let subscription = monthlyProduct.subscription {
                 isEligibleForTrial = await subscription.isEligibleForIntroOffer
+            } else {
+                isEligibleForTrial = false
             }
         } catch {
             errorMessage = error.localizedDescription

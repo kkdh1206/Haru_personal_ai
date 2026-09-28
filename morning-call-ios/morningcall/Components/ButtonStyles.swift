@@ -34,3 +34,16 @@ struct SecondaryButtonStyle: ButtonStyle {
             .fontWeight(.bold)
     }
 }
+
+struct QuietButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(HaruStyle.ink.opacity(isEnabled ? 0.65 : 0.35))
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.65 : 1)
+    }
+}
