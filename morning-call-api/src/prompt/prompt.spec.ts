@@ -34,14 +34,16 @@ describe('buildMorningCallPrompt', () => {
     expect(prompt).toContain('산수 문제로 바로 넘어가지 말고');
     expect(prompt).toContain('3+4, 5+6, 7x8, 12-5');
     expect(prompt).toContain('ko-gyeongsang');
-    expect(prompt).toContain('경상도 사투리는 짧은 깨움이나 재촉에만');
+    expect(prompt).toContain('한국어 통화는 처음부터 끝까지');
     expect(prompt).toContain('인났나?');
     expect(prompt).toContain(
       '바로 끊거나 작별하지 말고 먼저 "짧게 브리핑해줄까?"라고',
     );
     expect(prompt).toContain('같은 정보를 말만 바꿔 다시 시작하거나 반복하지 않는다');
     expect(prompt).toContain('좋은 하루 보내. 이제 끊을게.');
-    expect(prompt).toContain('한 발화에 사투리 표현은 최대 하나');
+    expect(prompt).toContain('확인 질문, 브리핑, 날씨, 일정, 작별 인사에서도 같은 말투');
+    expect(prompt).not.toContain('표준 구어체로 말한다');
+    expect(prompt).not.toContain('사투리 표현은 최대 하나');
     expect(prompt).not.toContain('뭐 하노');
     expect(prompt).not.toContain('일어날 시간이다');
     expect(prompt).toContain('특정 정체성 비하, 혐오, 위협은 하지 않는다');

@@ -42,9 +42,9 @@ When using the user's name, use the stored name as-is. Do not add honorific suff
 Ask naturally whether the user is awake, for example "일어났어?" or "일어났으면 말 좀 해봐." Do not repeatedly demand an exact passphrase; accept a clear wake confirmation or a concrete action.
 If speech is unclear, mumbled, or sleep-talk-like, ask once in the configured conversation language: "방금 뭐라고 했어? 다시 한 번만 또박또박 말해줘.", "今なんて言った? もう一回はっきり言って。", or "Sorry, what did you say? Say that one more time clearly."
 If the user sounds present but the content is still ambiguous, ask one varied easy check, not the same question every time.
-Treat the configured speech style as a light accent, not the main content of every reply.
-For Korean, use at most one short Gyeongsang expression in a wake nudge and keep sentence endings natural and conversational.
-Keep clarification questions, briefings, weather, schedules, and farewells in natural standard conversational language.
+Keep the configured speech style consistent from the opening through clarification, briefing, and farewell.
+For Korean with ko-gyeongsang, use natural, friendly Gyeongsang banmal throughout; do not switch to standard announcer speech or honorific speech during the briefing. Avoid exaggerated dialect and preserve event titles, dates, and times exactly.
+Example phrases describe intent; adapt their wording to the configured speech style rather than copying their register.
 After the user seems awake, always acknowledge it and ask whether they want a quick briefing in the configured conversation language. Do not skip this question or say goodbye in the same reply.
 After the user accepts or declines the briefing, finish that response, say a farewell once, and do not reply or call another tool; the application ends the call.
 In the final briefing, state each weather or schedule fact only once. Never restart the briefing or repeat the same information with different wording. End with one short farewell meaning "Have a good day. I'll hang up now."
@@ -586,7 +586,7 @@ def build_farewell_reply_request(
     normalized_farewell = normalize_farewell_text(farewell_text)
     instructions = (
         f"이제 통화를 종료해야 한다. 다른 질문을 하지 말고, {conversation_language}로 한 문장만 말해. "
-        "아래 참고 문구의 언어와 의미를 유지하고 자연스러운 구어체로 말해. "
+        "아래 참고 문구의 언어와 의미를 유지하고 초기 지침에 설정된 말투로 말해. "
         "참고 문구에 시간이나 횟수 같은 숫자가 있으면 그 숫자는 반드시 그대로 말해. "
         "통화를 지금 종료한다는 뜻이 분명히 들어가야 해. "
         f"사용할 마무리 멘트: {normalized_farewell}"
@@ -594,7 +594,7 @@ def build_farewell_reply_request(
     trigger_text = (
         "시스템 트리거: 통화 종료 전 마무리 멘트를 말해야 한다. "
         f"이 문장을 언급하지 말고 {conversation_language} 한 문장으로만 말해. "
-        f"마무리 멘트: {normalized_farewell}"
+        f"초기 지침에 설정된 말투를 유지해. 마무리 멘트: {normalized_farewell}"
     )
     return instructions, trigger_text
 
@@ -1084,7 +1084,15 @@ def build_apple_calendar_context(payload: dict | None) -> str:
 
 def apply_apple_calendar_snapshot(instructions: str, payload: dict) -> str:
     """Replace the pending block, rather than leaving contradictory calendar context."""
+    payload = normalize_apple_calendar_snapshot(payload)
     context = build_apple_calendar_context(payload)
+    if payload.get("status") == "ok" and not payload.get("events"):
+        context = (
+            "\n\n# 이번 통화의 Apple Calendar 조회 결과\n"
+            "통화 연결 시점의 기기 조회에는 일정이 잡히지 않았다. "
+            "이 결과만으로 오늘 일정이 없다고 확정하지 않는다. "
+            "브리핑 전에 get_today_schedule로 다시 조회한다."
+        )
     instructions, replaced = re.subn(
         r"\[APPLE_CALENDAR_ON_CALL\][^\n]*", lambda _: context.strip(), instructions, count=1,
     )
@@ -1173,7 +1181,7 @@ class Assistant(Agent):
 
     @function_tool
     async def get_today_schedule(self, context: RunContext):
-        """Re-read today's iPhone calendar when unavailable, or the user says an event is missing. Never reuse the initial empty result."""
+        """Read today's iPhone calendar before every requested/accepted briefing and whenever the user reports a missing event. Never reuse the initial empty result."""
         if self._on_calendar_query is None:
             return {"status": "unavailable"}
         snapshot = normalize_apple_calendar_snapshot(
@@ -2248,12 +2256,13 @@ async def entrypoint(ctx: JobContext):
                 f"다음 문장을 자연스럽게 말해: {conversation_phrases['briefing']} "
                 "이미 날씨나 첫 일정을 말했더라도 브리핑이 필요한지는 반드시 물어봐. "
                 "이 응답에서는 작별 인사를 하거나 통화를 종료하지 마. "
-                "자연스러운 표준 구어체로 말해."
+                "초기 지침에 설정된 말투를 그대로 유지해."
             )
             briefing_trigger_text = (
                 "시스템 트리거: 사용자가 깬 것으로 확인됐다. 이 문장을 언급하지 말고 "
                 f"{conversation_language}로 다음 문장을 자연스럽게 말해: "
                 f"{conversation_phrases['briefing']} "
+                "초기 지침에 설정된 말투를 유지해. "
                 f"사용자 응답: {user_text}"
             )
             if await request_agent_reply_with_speech_ack(
@@ -2922,6 +2931,9 @@ async def entrypoint(ctx: JobContext):
         except (KeyError, TypeError, ValueError, ZoneInfoNotFoundError):
             pass
         merged_instructions += (
+            "\n사용자가 브리핑을 요청하거나 수락하면 시작 시점 결과가 비어 있었더라도 "
+            "get_today_schedule로 반드시 새로 조회한 뒤 일정을 안내한다. "
+            "도구 결과를 받기 전에는 일정이 없다고 말하거나 작별하지 않는다. "
             "\n사용자가 일정이 있다고 하거나 일정 누락을 지적하면 get_today_schedule로 기기에서 새로 조회한다. "
             "다시 조회하지 않고 기존의 빈 결과를 반복해서 말하지 않는다. 도구의 최신 조회 결과를 우선한다."
         )
@@ -3080,7 +3092,7 @@ async def entrypoint(ctx: JobContext):
                 "사용자가 통화 중 몇 초간 대답이 없다. "
                 f"자는지 확인하면서 깨우는 말을 {conversation_language}로 한두 문장만 말해. "
                 "현재 단계의 참고 문장을 같은 언어와 비슷한 강도로 자연스럽게 변형해. "
-                "초기 지침의 말투는 짧은 깨움 표현 하나에만 가볍게 반영하고, 문장 전체를 억지로 바꾸지 마. "
+                "초기 지침에 설정된 말투를 계속 유지하고 과장된 표현은 피하라. "
                 "완전히 같은 문장을 반복하지 말고 리듬과 단어를 조금씩 바꿔. "
                 "단순히 대답만 요구하지 말고 앉기, 몸 세우기, 물 한 모금 마시기 중 하나를 바로 시켜. "
                 "일반 모드는 차분하게, 강한 모드는 짧은 명령이나 카운트다운으로 재촉하되 비하, 혐오, 위협은 하지 마. "

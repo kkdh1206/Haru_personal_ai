@@ -120,17 +120,18 @@ final class AppleCalendarService {
     /// One snapshot for the connected call. No HTTP upload or persistent cache.
     func fetchMorningCallSnapshot(requestID: String, completion: @escaping (Data?) -> Void) {
         let accountID = Auth.auth().currentUser?.uid
-        // After reinstall/login the server may still be connected while this
-        // account's local provider preference has not yet been loaded by Settings.
-        if accountID != nil, CalendarProviderStore.selected == nil {
+        let selectedProvider = CalendarProviderStore.selected
+        // The agent uses the server's provider. Reconcile a stale Google/nil
+        // preference too, otherwise an Apple query can return not_connected.
+        if accountID != nil, selectedProvider != .apple {
             APIClient.request(path: "/user/calendar-status", method: .GET) {
                 [weak self] (result: Result<AppleCalendarConnectionResponse, Error>) in
                 guard let self else { completion(nil); return }
                 guard accountID == Auth.auth().currentUser?.uid else { completion(nil); return }
                 if case .success(let status) = result,
-                   status.connected, status.provider == "apple",
-                   CalendarProviderStore.selected == nil {
-                    CalendarProviderStore.selected = .apple
+                   CalendarProviderStore.selected == selectedProvider {
+                    CalendarProviderStore.selected = status.connected
+                        ? status.provider.flatMap(CalendarProvider.init(rawValue:)) : nil
                 }
                 self.readMorningCallSnapshot(requestID: requestID, accountID: accountID, completion: completion)
             }
@@ -146,10 +147,33 @@ final class AppleCalendarService {
         }
     }
 
-    /// UI and calls use the same local-day query. A read uses a new store after
-    /// authorization, independent of the store used for permission and writes.
+    /// Initialize access on the store that will actually perform the read.
+    /// The global authorization status alone does not initialize a new store.
     private func readTodaySnapshot(
         accountID: String?,
+        completion: @escaping (AppleCalendarDaySnapshot) -> Void
+    ) {
+        guard accountID != nil, accountID == Auth.auth().currentUser?.uid,
+              CalendarProviderStore.selected == .apple, hasFullAccess else {
+            readTodaySnapshot(accountID: accountID, readStore: nil, completion: completion)
+            return
+        }
+        let readStore = EKEventStore()
+        // Access is already granted, so this initializes the store without
+        // prompting during a call. Keep it alive through all retry attempts.
+        readStore.requestFullAccessToEvents { [self] granted, error in
+            readTodaySnapshot(
+                accountID: accountID,
+                readStore: granted && error == nil ? readStore : nil,
+                completion: completion
+            )
+        }
+    }
+
+    /// UI and calls share the device's local-day query and the same retry store.
+    private func readTodaySnapshot(
+        accountID: String?,
+        readStore: EKEventStore?,
         attempt: Int = 0,
         completion: @escaping (AppleCalendarDaySnapshot) -> Void
     ) {
@@ -165,7 +189,7 @@ final class AppleCalendarService {
                     date: self.dayString(from: start, timeZone: calendar.timeZone),
                     timeZone: calendar.timeZone.identifier,
                     calendarCount: calendars, events: events,
-                    emptyConfirmed: status == "ok" && events.isEmpty && attempt > 0
+                    emptyConfirmed: status == "ok" && events.isEmpty && attempt >= 2
                 ))
             }
             if accountID == nil || accountID != Auth.auth().currentUser?.uid
@@ -174,8 +198,8 @@ final class AppleCalendarService {
                 return
             }
             guard self.hasFullAccess else { finish("permission_denied"); return }
-
-            let readStore = EKEventStore()
+            guard let readStore else { finish("read_failed"); return }
+            if attempt == 0 { readStore.refreshSourcesIfNecessary() }
             let calendars = readStore.calendars(for: .event)
             let predicate = readStore.predicateForEvents(withStart: start, end: end, calendars: calendars)
             let events: [Event] = calendars.isEmpty ? [] : readStore.events(matching: predicate)
@@ -184,10 +208,12 @@ final class AppleCalendarService {
                     let values = self.eventValues(event)
                     return Event(id: values.id, summary: values.title, start: values.start, end: values.end)
                 }
-            if events.isEmpty && attempt == 0 {
-                readStore.refreshSourcesIfNecessary()
-                self.stateQueue.asyncAfter(deadline: .now() + 0.5) {
-                    self.readTodaySnapshot(accountID: accountID, attempt: 1, completion: completion)
+            if events.isEmpty && attempt < 2 {
+                self.stateQueue.asyncAfter(deadline: .now() + 0.5 * Double(attempt + 1)) {
+                    self.readTodaySnapshot(
+                        accountID: accountID, readStore: readStore,
+                        attempt: attempt + 1, completion: completion
+                    )
                 }
                 return
             }

@@ -84,3 +84,43 @@ async def test_calendar_tool_does_not_report_malformed_success():
     result = await assistant.get_today_schedule(None)
     assert result["status"] == "invalid_snapshot"
     assert "일정이 없는 것이 확인" not in result["schedule"]
+
+
+def test_empty_startup_snapshot_is_not_final_briefing_evidence():
+    prompt = apply_apple_calendar_snapshot(
+        "[APPLE_CALENDAR_ON_CALL]", snapshot(emptyConfirmed=True),
+    )
+    assert "일정이 없는 것이 확인" not in prompt
+    assert "브리핑 전에 get_today_schedule로 다시 조회한다" in prompt
+
+
+@pytest.mark.asyncio
+async def test_briefing_reads_new_events_after_an_empty_startup():
+    data = snapshot(events=[{
+        "title": "회의", "start": "2026-09-12T18:00:00Z",
+        "end": "2026-09-12T19:00:00Z",
+    }])
+    query = AsyncMock(return_value=data)
+    assistant = Assistant(
+        on_hangup=None,
+        instructions=apply_apple_calendar_snapshot(
+            "[APPLE_CALENDAR_ON_CALL]", snapshot(emptyConfirmed=True),
+        ),
+        conversation_id="calendar-refresh", on_calendar_query=query,
+    )
+    result = await assistant.get_today_schedule(None)
+    query.assert_awaited_once_with(timeout_seconds=6.0, force_refresh=True)
+    assert result["status"] == "ok"
+    assert "회의" in result["schedule"]
+    assert "2026-09-12 14:00" in result["schedule"]
+
+
+def test_call_control_preserves_style_during_briefing_and_farewell():
+    from agent import CONTROL_INSTRUCTIONS, build_farewell_reply_request
+
+    assert "Keep the configured speech style consistent" in CONTROL_INSTRUCTIONS
+    assert "standard conversational language" not in CONTROL_INSTRUCTIONS
+    assert "at most one short Gyeongsang" not in CONTROL_INSTRUCTIONS
+    instructions, trigger = build_farewell_reply_request("좋은 하루 보내. 이제 끊을게.")
+    assert "설정된 말투" in instructions
+    assert "설정된 말투" in trigger

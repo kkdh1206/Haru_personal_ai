@@ -250,7 +250,7 @@ async def test_calendar_is_loaded_over_connected_room_before_session_start(
     rt.room.local_participant.publish_data.side_effect = publish
     await agent.entrypoint(rt.ctx)
     assert (
-        "일정이 없는 것이 확인"
+        "브리핑 전에 get_today_schedule로 다시 조회한다"
         in rt.session.start.call_args.kwargs["agent"].instructions
     )
     assert rt.session.start.call_args.kwargs["agent"].on_calendar_query is not None
@@ -298,7 +298,7 @@ async def test_calendar_retries_when_the_first_startup_query_is_lost(call_runtim
     assert len(request_ids) == 2
     assert request_ids[0] == request_ids[1]
     assert (
-        "일정이 없는 것이 확인"
+        "브리핑 전에 get_today_schedule로 다시 조회한다"
         in rt.session.start.call_args.kwargs["agent"].instructions
     )
 
