@@ -1,3 +1,4 @@
 <full-backup-content>
     <exclude domain="sharedpref" path="haru_call_fallback.xml" />
+    <exclude domain="sharedpref" path="haru_assistant_cache.xml" />
 </full-backup-content>

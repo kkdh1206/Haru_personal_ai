@@ -10,13 +10,16 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { AgentSecretGuard } from 'src/auth/agent-secret.guard';
 import { SaveCallRecordDto } from './dto/save-call-record.dto';
 import { SaveReminderDto } from './dto/save-reminder.dto';
 import { SaveUserInfoDto } from './dto/save-user-info.dto';
 import { UpsertLongTermMemoriesDto } from './dto/upsert-long-term-memories.dto';
 import { MemoryService } from './memory.service';
 
+@UseGuards(AgentSecretGuard)
 @Controller('memory')
 export class MemoryController {
   private readonly logger = new Logger(MemoryController.name);
@@ -112,9 +115,8 @@ export class MemoryController {
   ) {
     this.logger.log(`Fetching call record for conversation ${conversationId}`);
 
-    const memories = await this.memoryService.getConversationMemories(
-      conversationId,
-    );
+    const memories =
+      await this.memoryService.getConversationMemories(conversationId);
 
     return {
       success: true,

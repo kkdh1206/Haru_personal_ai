@@ -1,7 +1,9 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { ApiBody, ApiOperation } from '@nestjs/swagger';
+import { AgentSecretGuard } from 'src/auth/agent-secret.guard';
 import { PromptService } from './prompt.service';
 
+@UseGuards(AgentSecretGuard)
 @Controller('prompt')
 export class PromptController {
   constructor(private readonly promptService: PromptService) {}

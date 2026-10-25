@@ -23,6 +23,9 @@ Sign up for [LiveKit Cloud](https://cloud.livekit.io/) then set up the environme
 - `LIVEKIT_URL`
 - `LIVEKIT_API_KEY`
 - `LIVEKIT_API_SECRET`
+- `GEMINI_API_KEY`
+- `HARU_API_URL`
+- `AGENT_SHARED_SECRET`
 
 You can load the LiveKit environment automatically using the [LiveKit CLI](https://docs.livekit.io/home/cli/cli-setup):
 
@@ -72,11 +75,18 @@ Haru Agent includes an API-based memory system that connects to a NestJS backend
 
 ### Setup
 
-1. Set the `BACKEND_API_URL` environment variable in `.env.local`:
+1. Set the backend URL and the same high-entropy shared secret configured on
+   the NestJS API in `.env.local`:
 
 ```bash
-BACKEND_API_URL=http://localhost:3000/api
+HARU_API_URL=http://localhost:3000
+AGENT_SHARED_SECRET=replace-with-the-api-server-secret
 ```
+
+The client adds `X-Haru-Agent-Secret` to every backend request. If the value is
+missing or differs from the API's `AGENT_SHARED_SECRET`, protected worker
+routes fail closed with `403`. Do not log this value or distribute it to mobile
+clients.
 
 2. The agent will automatically:
    - Load user context at call start
@@ -102,10 +112,16 @@ The agent has access to function tools for saving memory during conversations:
 ### Required Backend API Endpoints
 
 - `GET /memory/context?userId={userId}` - Load user memory context
-- `POST /memory/conversation` - Save conversation message
+- `POST /memory/call-record` - Save a completed call transcript and summary
+- `POST /memory/long-term` - Save extracted long-term memories
 - `POST /memory/user-info` - Save user information
-- `POST /memory/important-fact` - Save important facts
+- `GET /memory/user-info/{userId}` - Read saved user information
 - `GET /memory/search` - RAG search (optional)
+- `POST /calendar/event` - Create an event requested during a call
+- `POST /alarm/retry` - Schedule a retry after an unanswered call
+- `POST /alarm/call-outcome` - Report the final wake-call outcome
+
+These worker-only routes require the shared-secret header described above.
 
 For backend implementation details, see your NestJS project documentation.
 

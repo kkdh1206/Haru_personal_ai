@@ -14,6 +14,7 @@ import { AlarmService } from './alarm.service';
 import { AlarmDto } from './dto/alarm.dto';
 import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from 'src/auth/auth.guard';
+import { AgentSecretGuard } from 'src/auth/agent-secret.guard';
 import { TestCallDto } from './dto/test-call.dto';
 import { RetryAlarmDto } from './dto/retry-alarm.dto';
 import { ReportCallOutcomeDto } from './dto/report-call-outcome.dto';
@@ -137,6 +138,7 @@ export class AlarmController {
   }
 
   @Post('retry')
+  @UseGuards(AgentSecretGuard)
   @ApiOperation({
     summary: '알람 재통화 예약',
     description:
@@ -147,6 +149,7 @@ export class AlarmController {
   }
 
   @Post('call-outcome')
+  @UseGuards(AgentSecretGuard)
   @ApiOperation({
     summary: '알람 통화 결과 보고',
     description:

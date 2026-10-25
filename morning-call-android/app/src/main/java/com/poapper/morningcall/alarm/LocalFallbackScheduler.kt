@@ -18,6 +18,19 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
 
+internal data class FallbackAlarmSyncPlan(
+    val alarmIdsToCancel: Set<String>,
+    val alarmsToSchedule: List<Alarm>,
+)
+
+internal fun fallbackAlarmSyncPlan(
+    previouslyCached: List<Alarm>,
+    incoming: List<Alarm>,
+): FallbackAlarmSyncPlan = FallbackAlarmSyncPlan(
+    alarmIdsToCancel = previouslyCached.mapTo(linkedSetOf()) { it.id },
+    alarmsToSchedule = incoming.filter { it.isOn },
+)
+
 object LocalFallbackScheduler {
     private const val PREFS = "haru_call_fallback"
     private const val FIRE_DATES = "scheduled_fire_dates"
@@ -38,9 +51,10 @@ object LocalFallbackScheduler {
     }
 
     fun sync(context: Context, alarms: List<Alarm>) {
-        saveCachedAlarms(context, alarms.filter { it.isOn })
-        cancelAll(context)
-        alarms.filter { it.isOn }.forEach { schedule(context, it) }
+        val plan = fallbackAlarmSyncPlan(cachedAlarms(context), alarms)
+        cancelAll(context, plan.alarmIdsToCancel)
+        saveCachedAlarms(context, plan.alarmsToSchedule)
+        plan.alarmsToSchedule.forEach { schedule(context, it) }
     }
 
     fun reschedule(context: Context, alarm: Alarm) {
@@ -103,8 +117,8 @@ object LocalFallbackScheduler {
         }
     }
 
-    private fun cancelAll(context: Context) {
-        cachedAlarms(context).forEach { cancel(context, it.id) }
+    private fun cancelAll(context: Context, alarmIds: Set<String>) {
+        alarmIds.forEach { cancel(context, it) }
         prefs(context).edit().remove(FIRE_DATES).apply()
     }
 

@@ -57,6 +57,7 @@ class SubscriptionManager(
     private var productDetails: ProductDetails? = null
     private var selectedOffer: ProductDetails.SubscriptionOfferDetails? = null
     private var connecting = false
+    private var backendGeneration = 0L
 
     fun configure() {
         if (auth.currentUserId() == null) return
@@ -67,6 +68,13 @@ class SubscriptionManager(
     fun refresh() {
         refreshBackend()
         connectAndRefresh()
+    }
+
+    fun resetForBackendChange() {
+        backendGeneration += 1
+        _state.value = SubscriptionUiState(
+            localizedMonthlyPrice = _state.value.localizedMonthlyPrice,
+        )
     }
 
     fun purchaseMonthly(activity: Activity) {
@@ -206,23 +214,31 @@ class SubscriptionManager(
             _state.value = _state.value.copy(isLoading = false)
             return
         }
+        val generation = backendGeneration
         scope.launch {
             runCatching { api.syncGoogleBilling(purchase.purchaseToken, productId) }
                 .onSuccess { entitlement ->
+                    if (generation != backendGeneration) return@onSuccess
                     _state.value = _state.value.copy(
                         entitlement = entitlement,
                         isLoading = false,
                         error = null,
                     )
                 }
-                .onFailure { setError(it.message ?: "구독 상태 동기화에 실패했어요.") }
+                .onFailure {
+                    if (generation == backendGeneration) {
+                        setError(it.message ?: "구독 상태 동기화에 실패했어요.")
+                    }
+                }
         }
     }
 
     private fun refreshBackend() {
+        val generation = backendGeneration
         scope.launch {
             runCatching { api.billingEntitlement() }
                 .onSuccess { entitlement ->
+                    if (generation != backendGeneration) return@onSuccess
                     _state.value = _state.value.copy(entitlement = entitlement)
                 }
         }

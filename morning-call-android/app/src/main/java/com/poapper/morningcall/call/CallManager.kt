@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.telecom.DisconnectCause
 import androidx.core.content.ContextCompat
 import androidx.core.telecom.CallAttributesCompat
@@ -110,6 +111,7 @@ object CallManager {
     }
 
     private fun addTelecomCall(context: Context, caller: String, incoming: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         scope.launch {
             runCatching {
                 val callsManager = CallsManager(context)

@@ -24,38 +24,98 @@
 
 ## Description
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+NestJS backend for Haru's alarm, calendar, memory, billing, and personal
+assistant features.
+
+## Personal assistant API
+
+The authenticated `/assistant` API exposes a structured daily briefing, task
+CRUD, non-streaming chat, and provider status. The Android and iOS clients send
+their Firebase ID token as `Authorization: Bearer <token>`; Claude is called by
+this server, never by a mobile client.
+
+Configure the server environment:
+
+```bash
+LLM_PROVIDER=claude
+ANTHROPIC_API_KEY=your-server-side-key
+ANTHROPIC_MODEL=claude-sonnet-5-5
+ANTHROPIC_TIMEOUT_MS=20000
+ASSISTANT_PREFLIGHT_TIMEOUT_MS=5000
+ASSISTANT_RATE_LIMIT_WINDOW_MS=3600000
+ASSISTANT_BRIEFING_LIMIT=12
+ASSISTANT_CHAT_LIMIT=60
+```
+
+If Claude is not configured or is temporarily unavailable, briefing and chat
+return deterministic fallbacks with the same JSON contract. Do not put
+`ANTHROPIC_API_KEY` in Android resources, `BuildConfig`, app settings, logs, or
+API responses.
+
+Calendar, memory, and billing entitlement reads run in parallel and each use a
+5-second preflight timeout. The server caps that setting at 7 seconds and caps
+Claude requests at 20 seconds, keeping the default and maximum server path at
+about 25 and 27 seconds respectively so a fallback can arrive before the
+Android client's 30-second read timeout. Timed-out data sources are marked
+`unavailable`; an entitlement timeout skips Claude and returns the deterministic
+fallback. A direct `GET /assistant/tasks` timeout returns HTTP `503` instead of
+an empty successful list, allowing clients to preserve their last task cache.
+
+When `BILLING_ENFORCEMENT_ENABLED=true`, users without an active trial or
+subscription still receive calendar, tasks, and deterministic assistant
+fallbacks, but the server does not call Claude. Paid briefing and chat calls
+also use separate per-user fixed windows (12 briefings and 60 chats per hour by
+default). Set either operation limit to `0` to disable Claude for that operation.
+The limiter is intentionally in memory for one N100 backend instance and resets
+when that process restarts; use a shared Redis limiter before running multiple
+API replicas.
+
+## LiveKit worker authentication
+
+Set a high-entropy shared secret on the API and use the same value in the
+Python worker:
+
+```bash
+AGENT_SHARED_SECRET=replace-with-a-random-server-secret
+```
+
+The worker sends it as `X-Haru-Agent-Secret` on its backend requests. Internal
+memory and prompt routes, plus the worker-only calendar event and alarm
+retry/outcome routes, return `403` when the secret is absent or does not match.
+The API still boots if the setting is absent, but those internal HTTP routes
+remain fail-closed. Firebase-authenticated mobile calendar and alarm routes are
+unchanged. Never put this secret in a mobile app or log it.
 
 ## Installation
 
 ```bash
-$ npm install
+$ pnpm install
 ```
 
 ## Running the app
 
 ```bash
 # development
-$ npm run start
+$ pnpm start
 
 # watch mode
-$ npm run start:dev
+$ pnpm start:dev
 
 # production mode
-$ npm run start:prod
+$ pnpm start:prod
 ```
 
 ## Test
 
 ```bash
 # unit tests
-$ npm run test
+$ pnpm test
 
 # e2e tests
-$ npm run test:e2e
+$ pnpm test:e2e
 
 # test coverage
-$ npm run test:cov
+$ pnpm test:cov
 ```
 
 ## Support

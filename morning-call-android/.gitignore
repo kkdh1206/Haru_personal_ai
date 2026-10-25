@@ -9,6 +9,7 @@ google-services.json
 
 # Gradle
 .gradle/
+.kotlin/
 build/
 */build/
 

@@ -12,4 +12,8 @@ export class SaveReminderDto {
   @IsEnum(['high', 'normal'])
   @IsOptional()
   priority?: 'high' | 'normal' = 'normal';
+
+  @IsString()
+  @IsOptional()
+  dueAt?: string | null;
 }

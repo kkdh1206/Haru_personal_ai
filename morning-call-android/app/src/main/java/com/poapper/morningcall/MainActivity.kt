@@ -67,7 +67,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.poapper.morningcall.alarm.LocalFallbackScheduler
 import com.poapper.morningcall.model.Alarm
 import com.poapper.morningcall.model.CharacterPreference
 import com.poapper.morningcall.model.DayPeriod
@@ -92,7 +91,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun HaruApp(viewModel: MainViewModel) {
     val state by viewModel.state.collectAsState()
-    val context = LocalContext.current
     val signIn = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         viewModel.handleGoogleResult(it.data)
     }
@@ -105,7 +103,6 @@ private fun HaruApp(viewModel: MainViewModel) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        LocalFallbackScheduler.exactAlarmSettingsIntent(context)?.let { context.startActivity(it) }
     }
 
     Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4ED)) {
@@ -122,9 +119,15 @@ private fun HaruApp(viewModel: MainViewModel) {
             )
             OnboardingStep.EnterName -> EnterNameScreen(viewModel::saveName)
             OnboardingStep.RequestLocation -> LocationScreen(viewModel::saveLocation)
-            OnboardingStep.Completed -> HomeScreen(viewModel, onConnectCalendar = {
-                calendarSignIn.launch(viewModel.calendarIntent())
-            })
+            OnboardingStep.Completed -> CommandCenterScreen(
+                viewModel = viewModel,
+                onConnectCalendar = { calendarSignIn.launch(viewModel.calendarIntent()) },
+                onRequestNotificationPermission = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                },
+            )
         }
     }
 }
@@ -294,7 +297,7 @@ private fun HomeScreen(viewModel: MainViewModel, onConnectCalendar: () -> Unit) 
 }
 
 @Composable
-private fun WeeklySection(alarms: List<Alarm>, onClick: (Int, Alarm?) -> Unit) {
+internal fun WeeklySection(alarms: List<Alarm>, onClick: (Int, Alarm?) -> Unit) {
     val order = listOf(1, 2, 3, 4, 5, 6, 0)
     val labels = mapOf(0 to "일", 1 to "월", 2 to "화", 3 to "수", 4 to "목", 5 to "금", 6 to "토")
     Card(colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.9f)), shape = RoundedCornerShape(22.dp)) {
@@ -315,7 +318,7 @@ private fun WeeklySection(alarms: List<Alarm>, onClick: (Int, Alarm?) -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AlarmEditorDialog(
+internal fun AlarmEditorDialog(
     day: Int,
     alarm: Alarm?,
     onDismiss: () -> Unit,
@@ -467,7 +470,7 @@ private fun SettingsDialog(
 }
 
 @Composable
-private fun SubscriptionPaywallDialog(
+internal fun SubscriptionPaywallDialog(
     price: String,
     isLoading: Boolean,
     error: String?,
@@ -537,7 +540,7 @@ private fun backgroundFor(period: DayPeriod): Int = when (period) {
     DayPeriod.Night -> R.drawable.background_night
 }
 
-private fun characterFor(character: CharacterPreference, period: DayPeriod): Int = when (character to period) {
+internal fun characterFor(character: CharacterPreference, period: DayPeriod): Int = when (character to period) {
     CharacterPreference.Hari to DayPeriod.Morning -> R.drawable.hari_morning
     CharacterPreference.Hari to DayPeriod.Afternoon -> R.drawable.hari_afternoon
     CharacterPreference.Hari to DayPeriod.Night -> R.drawable.hari_night

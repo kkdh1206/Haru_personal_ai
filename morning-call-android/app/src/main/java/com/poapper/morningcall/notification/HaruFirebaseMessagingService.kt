@@ -5,6 +5,7 @@ import com.google.firebase.messaging.RemoteMessage
 import com.poapper.morningcall.alarm.LocalFallbackScheduler
 import com.poapper.morningcall.call.CallManager
 import com.poapper.morningcall.data.APIClient
+import com.poapper.morningcall.data.AssistantPreferences
 import com.poapper.morningcall.data.AuthRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,14 +20,30 @@ class HaruFirebaseMessagingService : FirebaseMessagingService() {
         scope.launch {
             runCatching {
                 val auth = AuthRepository(applicationContext)
-                if (auth.isLoggedIn) APIClient(auth).registerDeviceToken(token)
+                val preferences = AssistantPreferences(applicationContext)
+                if (auth.isLoggedIn) {
+                    APIClient(auth) { preferences.backendUrl }.registerDeviceToken(token)
+                }
             }
         }
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
         val data = message.data
-        if (data["type"] == "wake_followup") {
+        val type = data["type"]
+        if (type in ASSISTANT_NOTIFICATION_TYPES) {
+            val preferences = AssistantPreferences(applicationContext)
+            if (preferences.assistantNotificationsEnabled) {
+                HaruNotifications.showAssistant(
+                    context = this,
+                    title = data["title"] ?: message.notification?.title ?: "Haru Assistant",
+                    body = data["body"] ?: message.notification?.body ?: "새로운 개인 브리핑이 도착했어요.",
+                    notificationKey = data["notificationId"] ?: data["id"],
+                )
+            }
+            return
+        }
+        if (type == "wake_followup") {
             HaruNotifications.showFollowup(
                 this,
                 data["title"] ?: "Haru",
@@ -45,5 +62,16 @@ class HaruFirebaseMessagingService : FirebaseMessagingService() {
         val caller = data["caller"] ?: "Haru"
         CallManager.prepareIncoming(applicationContext, url, token, alarmId, caller)
         HaruNotifications.showIncomingCall(this, caller)
+    }
+
+    companion object {
+        private val ASSISTANT_NOTIFICATION_TYPES = setOf(
+            "assistant",
+            "assistant_notification",
+            "briefing",
+            "task_reminder",
+            "deadline",
+            "opportunity",
+        )
     }
 }

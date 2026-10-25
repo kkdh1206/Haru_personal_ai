@@ -4,6 +4,7 @@ NestJS 백엔드 API 클라이언트
 """
 
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -14,9 +15,15 @@ logger = logging.getLogger("api_client")
 class BackendApiClient:
     """NestJS 백엔드 API와 통신하는 클라이언트"""
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, agent_secret: str | None = None):
         self.base_url = base_url.rstrip("/")
-        self.client = httpx.AsyncClient(timeout=30.0)
+        resolved_secret = (
+            agent_secret
+            if agent_secret is not None
+            else os.getenv("AGENT_SHARED_SECRET", "")
+        ).strip()
+        headers = {"X-Haru-Agent-Secret": resolved_secret} if resolved_secret else None
+        self.client = httpx.AsyncClient(timeout=30.0, headers=headers)
         logger.info(f"🌐 API Client initialized: {self.base_url}")
 
     async def close(self):
@@ -159,12 +166,18 @@ class BackendApiClient:
             )
             response.raise_for_status()
             logger.info(f"💾 User info saved: {key} = {value}")
-            return {"status": "success", "message": f"사용자 정보 '{key}'를 저장했습니다."}
+            return {
+                "status": "success",
+                "message": f"사용자 정보 '{key}'를 저장했습니다.",
+            }
         except httpx.HTTPStatusError as e:
             logger.error(
                 f"❌ HTTP error saving user info: {e.response.status_code} - {e.response.text}"
             )
-            return {"status": "error", "message": f"저장 실패: {e.response.status_code}"}
+            return {
+                "status": "error",
+                "message": f"저장 실패: {e.response.status_code}",
+            }
         except Exception as e:
             logger.error(f"❌ Error saving user info: {e}")
             return {"status": "error", "message": f"저장 실패: {e!s}"}
@@ -355,7 +368,10 @@ class BackendApiClient:
             logger.error(
                 f"❌ HTTP error deleting memory: {e.response.status_code} - {e.response.text}"
             )
-            return {"status": "error", "message": f"삭제 실패: {e.response.status_code}"}
+            return {
+                "status": "error",
+                "message": f"삭제 실패: {e.response.status_code}",
+            }
         except Exception as e:
             logger.error(f"❌ Error deleting memory: {e}")
             return {"status": "error", "message": f"삭제 실패: {e!s}"}

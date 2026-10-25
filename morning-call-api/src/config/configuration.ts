@@ -12,6 +12,25 @@ export default () => ({
   // Agent
   agent: {
     url: process.env.AGENT_URL || 'http://localhost:8080',
+    sharedSecret: process.env.AGENT_SHARED_SECRET || '',
+  },
+  // Text assistant. Keep provider credentials on the server only.
+  llm: {
+    provider: (process.env.LLM_PROVIDER || 'claude').toLowerCase(),
+    anthropic: {
+      apiKey: process.env.ANTHROPIC_API_KEY || '',
+      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5',
+      baseUrl: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
+      timeoutMs: process.env.ANTHROPIC_TIMEOUT_MS || '20000',
+    },
+  },
+  assistant: {
+    preflightTimeoutMs: process.env.ASSISTANT_PREFLIGHT_TIMEOUT_MS || '5000',
+    rateLimit: {
+      windowMs: process.env.ASSISTANT_RATE_LIMIT_WINDOW_MS || '3600000',
+      briefingLimit: process.env.ASSISTANT_BRIEFING_LIMIT || '12',
+      chatLimit: process.env.ASSISTANT_CHAT_LIMIT || '60',
+    },
   },
   // APNs
   apns: {
@@ -57,8 +76,7 @@ export default () => ({
     appleRootCaBase64: process.env.APPLE_ROOT_CA_BASE64 || '',
     appleOnlineChecks: process.env.APPLE_ENABLE_ONLINE_CHECKS !== 'false',
     appleProductId:
-      process.env.APPLE_SUBSCRIPTION_PRODUCT_ID ||
-      'haru.plus.monthly',
+      process.env.APPLE_SUBSCRIPTION_PRODUCT_ID || 'haru.plus.monthly',
     googlePackageName:
       process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.poapper.morningcall',
     googleProductId:

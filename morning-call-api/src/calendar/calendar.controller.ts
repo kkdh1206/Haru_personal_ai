@@ -11,6 +11,7 @@ import {
 import { CalendarService } from './calendar.service';
 import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from 'src/auth/auth.guard';
+import { AgentSecretGuard } from 'src/auth/agent-secret.guard';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { MorningCallAppleCalendarDto } from './dto/sync-apple-calendar.dto';
 
@@ -30,6 +31,7 @@ export class CalendarController {
   }
 
   @Post('event')
+  @UseGuards(AgentSecretGuard)
   @ApiOperation({
     summary: '캘린더 일정 생성',
     description:

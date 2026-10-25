@@ -12,16 +12,29 @@ android {
 
     defaultConfig {
         applicationId = "com.poapper.morningcall"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        manifestPlaceholders["usesCleartextTraffic"] = "false"
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    buildTypes {
+        debug {
+            // Personal LAN servers can be tested from debug builds. Release
+            // builds keep bearer tokens on TLS-only connections.
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+        }
+        release {
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
+        }
     }
 
     compileOptions {

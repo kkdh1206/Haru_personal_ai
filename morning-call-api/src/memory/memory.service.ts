@@ -20,6 +20,13 @@ type BehaviorProfilePatch = {
   toneNotes?: string[];
 };
 
+export type ReminderPatch = {
+  content?: string;
+  priority?: 'high' | 'normal';
+  dueAt?: string | null;
+  completed?: boolean;
+};
+
 @Injectable()
 export class MemoryService {
   private readonly logger = new Logger(MemoryService.name);
@@ -71,16 +78,26 @@ export class MemoryService {
     query: string,
     limit = 5,
   ): Promise<MemoryDocument[]> {
-    query = query.trim();
+    query = query.replace(/\s+/g, ' ').trim();
     if (!query) {
       return [];
     }
 
-    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const tokens = query
-      .split(/\s+/)
-      .map((token) => token.trim())
-      .filter((token) => token.length > 1);
+    const tokens: string[] = [];
+    const seenTokens = new Set<string>();
+    for (const rawToken of query.split(' ')) {
+      if (rawToken.length <= 1) continue;
+      const token = rawToken.slice(0, 64);
+      const normalized = token.toLowerCase();
+      if (seenTokens.has(normalized)) continue;
+      seenTokens.add(normalized);
+      tokens.push(token);
+      if (tokens.length >= 16) break;
+    }
+
+    const escapedQuery = query
+      .slice(0, 64)
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     const conditions = tokens.length
       ? tokens.map((token) => ({
@@ -452,6 +469,7 @@ export class MemoryService {
       metadata: {
         type: 'reminder',
         priority: dto.priority || 'normal',
+        dueAt: dto.dueAt || null,
         isCompleted: false,
         createdAt: new Date().toISOString(),
         completedAt: null,
@@ -464,15 +482,92 @@ export class MemoryService {
     return reminder;
   }
 
-  async getReminders(userId: string): Promise<MemoryDocument[]> {
+  async getReminders(
+    userId: string,
+    options: { includeCompleted?: boolean } = {},
+  ): Promise<MemoryDocument[]> {
+    const filter: Record<string, any> = {
+      userId: this.getUserObjectId(userId),
+      $or: [{ memoryType: 'reminder' }, { 'metadata.type': 'reminder' }],
+    };
+    if (!options.includeCompleted) {
+      filter['metadata.isCompleted'] = false;
+    }
+
     return this.memoryModel
-      .find({
+      .find(filter)
+      .sort({
+        'metadata.isCompleted': 1,
+        'metadata.priority': -1,
+        'metadata.dueAt': 1,
+        timestamp: -1,
+      })
+      .exec();
+  }
+
+  async updateReminderForUser(
+    userId: string,
+    reminderId: string,
+    patch: ReminderPatch,
+  ): Promise<MemoryDocument | null> {
+    if (!Types.ObjectId.isValid(reminderId)) {
+      return null;
+    }
+
+    const $set: Record<string, any> = {};
+    if (patch.content !== undefined) {
+      $set.content = patch.content;
+      $set.summary = `리마인더: ${patch.content}`;
+    }
+    if (patch.priority !== undefined) {
+      $set['metadata.priority'] = patch.priority;
+    }
+    if (patch.dueAt !== undefined) {
+      $set['metadata.dueAt'] = patch.dueAt;
+    }
+    if (patch.completed !== undefined) {
+      $set['metadata.isCompleted'] = patch.completed;
+      $set['metadata.completedAt'] = patch.completed
+        ? new Date().toISOString()
+        : null;
+    }
+
+    if (!Object.keys($set).length) {
+      return this.memoryModel
+        .findOne({
+          _id: new Types.ObjectId(reminderId),
+          userId: this.getUserObjectId(userId),
+          $or: [{ memoryType: 'reminder' }, { 'metadata.type': 'reminder' }],
+        })
+        .exec();
+    }
+
+    return this.memoryModel.findOneAndUpdate(
+      {
+        _id: new Types.ObjectId(reminderId),
         userId: this.getUserObjectId(userId),
         $or: [{ memoryType: 'reminder' }, { 'metadata.type': 'reminder' }],
-        'metadata.isCompleted': false,
-      })
-      .sort({ 'metadata.priority': -1, timestamp: -1 })
-      .exec();
+      },
+      { $set },
+      { new: true },
+    );
+  }
+
+  async deleteReminderForUser(
+    userId: string,
+    reminderId: string,
+  ): Promise<{ success: boolean }> {
+    if (!Types.ObjectId.isValid(reminderId)) {
+      return { success: false };
+    }
+
+    const result = await this.memoryModel.deleteOne({
+      _id: new Types.ObjectId(reminderId),
+      userId: this.getUserObjectId(userId),
+      $or: [{ memoryType: 'reminder' }, { 'metadata.type': 'reminder' }],
+    });
+
+    return { success: result.deletedCount > 0 };
   }
 
   async completeReminder(reminderId: string): Promise<{ success: boolean }> {

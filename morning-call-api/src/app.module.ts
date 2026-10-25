@@ -16,6 +16,8 @@ import { PromptModule } from './prompt/prompt.module';
 import { LivekitController } from './livekit/livekit.controller';
 import { MemoryModule } from './memory/memory.module';
 import { BillingModule } from './billing/billing.module';
+import { AssistantModule } from './assistant/assistant.module';
+import { InternalAuthModule } from './auth/internal-auth.module';
 
 @Module({
   imports: [
@@ -23,6 +25,7 @@ import { BillingModule } from './billing/billing.module';
       load: [configuration],
       isGlobal: true,
     }),
+    InternalAuthModule,
     ScheduleModule.forRoot(),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
@@ -41,6 +44,7 @@ import { BillingModule } from './billing/billing.module';
     PromptModule,
     MemoryModule,
     BillingModule,
+    AssistantModule,
   ],
   controllers: [AppController, LivekitController],
   providers: [AppService, LivekitService],

@@ -1,6 +1,14 @@
 package com.poapper.morningcall.data
 
 import com.poapper.morningcall.model.Alarm
+import com.poapper.morningcall.model.AssistantBriefing
+import com.poapper.morningcall.model.AssistantChatHistoryItem
+import com.poapper.morningcall.model.AssistantChatResponse
+import com.poapper.morningcall.model.AssistantDeleteResponse
+import com.poapper.morningcall.model.AssistantStatus
+import com.poapper.morningcall.model.AssistantTask
+import com.poapper.morningcall.model.AssistantTaskResponse
+import com.poapper.morningcall.model.AssistantTasksResponse
 import com.poapper.morningcall.model.CalendarConnectionStatus
 import com.poapper.morningcall.model.Event
 import com.poapper.morningcall.model.LiveKitInfo
@@ -23,7 +31,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class APIClient(private val authRepository: AuthRepository) {
+class APIClient(
+    private val authRepository: AuthRepository,
+    private val baseUrlProvider: () -> String = { BASE_URL },
+) {
     private val json = Json {
         ignoreUnknownKeys = true
     }
@@ -131,6 +142,88 @@ class APIClient(private val authRepository: AuthRepository) {
         return request("/billing/google/sync", "POST", BillingEntitlement.serializer(), body)
     }
 
+    suspend fun assistantStatus(): AssistantStatus =
+        request("/assistant/status", "GET", AssistantStatus.serializer())
+
+    suspend fun assistantBriefing(): AssistantBriefing =
+        request("/assistant/briefing", "GET", AssistantBriefing.serializer())
+
+    suspend fun assistantTasks(includeCompleted: Boolean = false): List<AssistantTask> =
+        request(
+            "/assistant/tasks?includeCompleted=$includeCompleted",
+            "GET",
+            AssistantTasksResponse.serializer(),
+        ).tasks
+
+    suspend fun createAssistantTask(
+        title: String,
+        priority: String = "normal",
+        dueAt: String? = null,
+    ): AssistantTask {
+        val body = buildJsonObject {
+            put("title", JsonPrimitive(title))
+            put("priority", JsonPrimitive(priority))
+            dueAt?.let { put("dueAt", JsonPrimitive(it)) }
+        }
+        return request(
+            "/assistant/tasks",
+            "POST",
+            AssistantTaskResponse.serializer(),
+            body,
+        ).task
+    }
+
+    suspend fun updateAssistantTask(
+        taskId: String,
+        title: String? = null,
+        priority: String? = null,
+        dueAt: String? = null,
+        completed: Boolean? = null,
+    ): AssistantTask {
+        val body = buildJsonObject {
+            title?.let { put("title", JsonPrimitive(it)) }
+            priority?.let { put("priority", JsonPrimitive(it)) }
+            dueAt?.let { put("dueAt", JsonPrimitive(it)) }
+            completed?.let { put("completed", JsonPrimitive(it)) }
+        }
+        return request(
+            "/assistant/tasks/$taskId",
+            "PATCH",
+            AssistantTaskResponse.serializer(),
+            body,
+        ).task
+    }
+
+    suspend fun deleteAssistantTask(taskId: String): Boolean =
+        request(
+            "/assistant/tasks/$taskId",
+            "DELETE",
+            AssistantDeleteResponse.serializer(),
+        ).success
+
+    suspend fun assistantChat(
+        message: String,
+        history: List<AssistantChatHistoryItem>,
+    ): AssistantChatResponse {
+        val body = buildJsonObject {
+            put("message", JsonPrimitive(message))
+            put("history", buildJsonArray {
+                history.forEach { item ->
+                    add(buildJsonObject {
+                        put("role", JsonPrimitive(item.role))
+                        put("content", JsonPrimitive(item.content))
+                    })
+                }
+            })
+        }
+        return request(
+            "/assistant/chat",
+            "POST",
+            AssistantChatResponse.serializer(),
+            body,
+        )
+    }
+
     private fun alarmBody(
         time: String,
         repeatDays: List<Int>,
@@ -168,27 +261,37 @@ class APIClient(private val authRepository: AuthRepository) {
         execute(path, method, body)
     }
 
-    private suspend fun execute(path: String, method: String, body: JsonObject? = null): String? = withContext(Dispatchers.IO) {
-        val requestBuilder = Request.Builder()
-            .url(BASE_URL + path)
-            .header("Authorization", "Bearer ${authRepository.idToken()}")
-            .header("Content-Type", "application/json")
+    private suspend fun execute(path: String, method: String, body: JsonObject? = null): String? {
+        val baseUrl = baseUrlProvider().trim().trimEnd('/').ifBlank { BASE_URL }
+        return withContext(Dispatchers.IO) {
+            val requestBuilder = Request.Builder()
+                .url(baseUrl + path)
+                .header("Authorization", "Bearer ${authRepository.idToken()}")
+                .header("Content-Type", "application/json")
 
-        val requestBody = body?.let { json.encodeToString(JsonObject.serializer(), it).toRequestBody(mediaType) }
-        when (method) {
-            "GET" -> requestBuilder.get()
-            "DELETE" -> if (requestBody != null) requestBuilder.delete(requestBody) else requestBuilder.delete()
-            "POST" -> requestBuilder.post(requestBody ?: ByteArray(0).toRequestBody(mediaType))
-            "PUT" -> requestBuilder.put(requestBody ?: ByteArray(0).toRequestBody(mediaType))
-            "PATCH" -> requestBuilder.patch(requestBody ?: ByteArray(0).toRequestBody(mediaType))
-            else -> error("Unsupported method $method")
-        }
-
-        client.newCall(requestBuilder.build()).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("HTTP ${response.code} for $method $path")
+            val requestBody = body?.let { json.encodeToString(JsonObject.serializer(), it).toRequestBody(mediaType) }
+            when (method) {
+                "GET" -> requestBuilder.get()
+                "DELETE" -> if (requestBody != null) requestBuilder.delete(requestBody) else requestBuilder.delete()
+                "POST" -> requestBuilder.post(requestBody ?: ByteArray(0).toRequestBody(mediaType))
+                "PUT" -> requestBuilder.put(requestBody ?: ByteArray(0).toRequestBody(mediaType))
+                "PATCH" -> requestBuilder.patch(requestBody ?: ByteArray(0).toRequestBody(mediaType))
+                else -> error("Unsupported method $method")
             }
-            response.body?.string()
+
+            client.newCall(requestBuilder.build()).execute().use { response ->
+                val responseText = response.body?.string()
+                if (!response.isSuccessful) {
+                    val detail = responseText
+                        ?.replace(Regex("\\s+"), " ")
+                        ?.take(240)
+                        ?.takeIf { it.isNotBlank() }
+                    throw IOException(
+                        "HTTP ${response.code} for $method $path${detail?.let { ": $it" }.orEmpty()}",
+                    )
+                }
+                responseText
+            }
         }
     }
 
