@@ -21,6 +21,7 @@
 4. 신규 구독자용 introductory offer를 `Free Trial / 3 Days`로 만든다.
 5. App Store Server Notifications V2의 Production URL을 `https://<API_HOST>/billing/apple/notifications`로 지정한다. Sandbox URL은 `APPLE_ENVIRONMENT=Sandbox`인 staging 서버로 분리한다.
 6. 심사 메모에 결제 화면 진입 경로, Sandbox 테스트 계정, 구매 복원과 구독 관리 경로를 적는다.
+7. 각 언어 App Description에 Apple 표준 EULA 링크 `https://www.apple.com/legal/internet-services/itunes/dev/stdeula/`를 넣고 Privacy Policy URL에 `https://morningcall.poapper.com/privacy`를 지정한다. 등록 문구, 재심사 답변, 화면 녹화 절차는 [APP_STORE_RESUBMISSION.md](APP_STORE_RESUBMISSION.md)를 따른다.
 
 앱에는 Apple API 키나 공유 비밀을 넣지 않는다. 구매 시 Firebase UID에서 만든 고정 `appAccountToken`을 StoreKit에 전달하고, 서버가 Apple 서명과 이 토큰을 함께 검증한다.
 

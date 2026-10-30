@@ -168,6 +168,7 @@ final actor CallManager: NSObject, ObservableObject {
         // 일반 대화는 수화부로 시작하고, 무응답 깨우기 WAV를 재생할 때만
         // 잠시 스피커로 전환합니다.
         AudioManager.shared.isSpeakerOutputPreferred = false
+        AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = false
 
         // WebRTC 오디오 세션 수동 관리 설정
         let rtc = LKRTCAudioSession.sharedInstance()
@@ -707,14 +708,10 @@ final actor CallManager: NSObject, ObservableObject {
         }
     }
     
-    private func configureAudioAndConnect() {
-        guard !isConnectingOrConnected else {
-            print("⚠️ Already connecting/connected; skip configureAudioAndConnect")
-            return
-        }
-
+    private func prepareAudioSession() {
         let audioSession = AVAudioSession.sharedInstance()
-        AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = !userDidChooseAudioRoute
+        // CallKit owns activation. The LiveKit SDK must not compete with it.
+        AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = false
         do {
             if !userDidChooseAudioRoute {
                 try audioSession.setCategory(
@@ -725,22 +722,24 @@ final actor CallManager: NSObject, ObservableObject {
             }
             try audioSession.setPreferredSampleRate(48_000)
             try audioSession.setPreferredIOBufferDuration(0.005)
-            try audioSession.setActive(true)
             if !userDidChooseAudioRoute {
-                try audioSession.overrideOutputAudioPort(.none)
                 AudioManager.shared.isSpeakerOutputPreferred = false
             }
-            print("📱 AVAudioSession activated; user-selected route preserved=\(userDidChooseAudioRoute)")
+            print("📱 AVAudioSession prepared; awaiting CallKit activation")
         } catch {
-            print("AVAudioSession config/activate error: \(error)")
+            print("AVAudioSession configuration error: \(error)")
         }
+    }
 
+    private func activateCallAudio(_ audioSession: AVAudioSession) {
+        guard currentCallUUID != nil, wasAnswered, !callIsEnding else { return }
         let rtc = LKRTCAudioSession.sharedInstance()
         rtc.useManualAudio = true
         rtc.audioSessionDidActivate(audioSession)
         rtc.isAudioEnabled = true
 
-        // LiveKit 방 연결
+        // Also restore the audio engine after an interruption, even if the room
+        // is already connected. Room connection itself remains idempotent.
         connectRoomAfterActivation()
     }
 
@@ -938,7 +937,7 @@ extension CallManager: CXProviderDelegate {
                 action.fail()
                 return
             }
-            await self.configureAudioAndConnect()
+            await self.prepareAudioSession()
             action.fulfill()
         }
     }
@@ -947,9 +946,9 @@ extension CallManager: CXProviderDelegate {
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
         print("📤 Started outgoing call")
         Task {
-            await self.configureAudioAndConnect()
+            await self.prepareAudioSession()
+            action.fulfill()
         }
-        action.fulfill()
     }
 
     // CallKit이 통화 종료를 요청했을 때 호출 (사용자가 종료 버튼을 누르거나 시스템이 종료할 때)
@@ -965,32 +964,7 @@ extension CallManager: CXProviderDelegate {
     // CallKit이 통화를 위해 AVAudioSession을 활성화했을 때 호출
     // 여기서 WebRTC 및 LiveKit 연결 준비를 시작
     nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-//        print("🔊 Audio session activated → configure")
-//
-//        // 1) AVAudioSession 설정: 통화에 최적화된 설정 적용
-//        // CallKit이 활성화한 세션을 음성 채팅 모드로 설정하여 송수신 및 스피커/블루투스 사용을 허용
-//        do {
-//            try audioSession.setCategory(.playAndRecord,
-//                                         mode: .voiceChat,
-//                                         options: [AVAudioSession.CategoryOptions.allowBluetoothHFP])
-//            try audioSession.setPreferredSampleRate(48_000)
-//            try audioSession.setPreferredIOBufferDuration(0.005)
-//        } catch {
-//            print("AVAudioSession config error: \(error)")
-//        }
-//
-//        // 2) WebRTC 라이브러리(LiveKitWebRTC)에 활성화 통지
-//        // WebRTC의 오디오 엔진이 오디오 세션을 사용하여 데이터를 처리하도록 준비
-//        let rtc = LKRTCAudioSession.sharedInstance()
-//        rtc.useManualAudio = true
-//        rtc.audioSessionDidActivate(audioSession)
-//        rtc.isAudioEnabled = true // WebRTC 오디오 송수신 엔진 활성화
-//
-//        // 3) 오디오 세션이 활성화되었으므로, 이제 LiveKit 연결을 시작
-//        Task {
-//            await self.connectRoomAfterActivation()
-//        }
-        print("📣 CallKit didActivate called (we already activated manually).")
+        Task { await self.activateCallAudio(audioSession) }
     }
 
     // CallKit이 오디오 세션을 비활성화했을 때 호출
@@ -1002,10 +976,8 @@ extension CallManager: CXProviderDelegate {
         rtc.isAudioEnabled = false
         rtc.audioSessionDidDeactivate(audioSession)
 
-        // LiveKit 연결 해제
-        Task {
-            await self.disconnectRoom()
-        }
+        // Audio interruptions can deactivate the session temporarily. Actual
+        // call termination is handled by CXEndCallAction / remote end / reset.
     }
 }
 

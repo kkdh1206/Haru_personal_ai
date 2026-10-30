@@ -37,6 +37,8 @@ async def call_runtime(monkeypatch):
     session.generate_reply = lambda **kwargs: None
     backend = SimpleNamespace(
         get_memory_context=AsyncMock(return_value={}),
+        save_call_record=AsyncMock(),
+        close=AsyncMock(),
         report_call_outcome=AsyncMock(
             side_effect=lambda **kwargs: {
                 "success": True,
@@ -48,6 +50,7 @@ async def call_runtime(monkeypatch):
     closed = asyncio.Event()
     outcomes_at_close = []
     close_options = []
+    shutdown_callbacks = []
 
     async def hangup(*args, **kwargs):
         outcomes_at_close.extend(backend.report_call_outcome.call_args_list)
@@ -73,7 +76,7 @@ async def call_runtime(monkeypatch):
     ctx = SimpleNamespace(
         room=room,
         connect=AsyncMock(),
-        add_shutdown_callback=lambda fn: None,
+        add_shutdown_callback=shutdown_callbacks.append,
         job=SimpleNamespace(
             metadata=json.dumps({"user_id": "user-id", "alarm_id": "alarm-id"})
         ),
@@ -100,11 +103,173 @@ async def call_runtime(monkeypatch):
         close_options=close_options,
         message=message,
         state=state,
+        shutdown_callbacks=shutdown_callbacks,
     )
     tasks = set(asyncio.all_tasks()) - existing_tasks - {asyncio.current_task()}
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_awake_is_not_lost_when_briefing_exceeds_transcript_window(call_runtime):
+    rt = call_runtime
+    await agent.entrypoint(rt.ctx)
+    rt.message("user", "일어났어")
+    for _ in range(5):
+        rt.message("assistant", "오늘 비가 올 예정이야.")
+        rt.message("user", "고마워")
+    await rt.shutdown_callbacks[0]()
+    assert rt.backend.report_call_outcome.call_args.kwargs["wake_status"] == "awake"
+
+
+async def test_assistant_question_cannot_revoke_confirmed_awake(call_runtime):
+    rt = call_runtime
+    await agent.entrypoint(rt.ctx)
+    rt.message("user", "일어났어")
+    rt.message("assistant", "일어난 거 맞아?")
+    await rt.shutdown_callbacks[0]()
+    assert rt.backend.report_call_outcome.call_args.kwargs["wake_status"] == "awake"
+
+
+async def test_awake_is_persisted_before_the_call_ends(call_runtime):
+    rt = call_runtime
+    await agent.entrypoint(rt.ctx)
+    rt.message("user", "이제 일어났어")
+    await asyncio.sleep(0.02)
+    assert not rt.closed.is_set()
+    rt.backend.report_call_outcome.assert_awaited_once()
+    assert rt.backend.report_call_outcome.call_args.kwargs["wake_status"] == "awake"
+
+
+async def test_awake_persistence_failure_is_retried_while_call_is_active(call_runtime):
+    rt = call_runtime
+    rt.backend.report_call_outcome.side_effect = [
+        {"success": False}, {"success": True, "wakeStatus": "awake"},
+    ]
+    await agent.entrypoint(rt.ctx)
+    rt.message("user", "일어났어")
+    await asyncio.sleep(0.6)
+    assert rt.backend.report_call_outcome.await_count == 2
+    assert not rt.closed.is_set()
+
+
+async def test_persisted_awake_still_allows_briefing_followup(call_runtime, monkeypatch):
+    rt = call_runtime
+    sent = attach_realtime_transport(rt)
+    monkeypatch.setattr(agent, "DEFAULT_INITIAL_GREETING_READY_GRACE_SECONDS", 10)
+    await agent.entrypoint(rt.ctx)
+    rt.message("user", "일어났어")
+    await asyncio.sleep(1.6)
+    assert rt.backend.report_call_outcome.await_count == 1
+    assert sent, "Saving awake must not disable the ongoing conversation"
+
+
+async def test_persisted_awake_finishes_without_silence_nudges_or_retry(call_runtime):
+    rt = call_runtime
+    await agent.entrypoint(rt.ctx)
+    rt.message("user", "일어났어")
+    await asyncio.sleep(0.02)
+    rt.state("speaking", "listening")
+    await asyncio.wait_for(rt.closed.wait(), timeout=1)
+    assert all(call.kwargs["wake_status"] == "awake" for call in rt.outcomes_at_close)
+    commands = [json.loads(call.args[0]) for call in rt.room.local_participant.publish_data.call_args_list]
+    assert not any(command["type"] == "local_audio.play" for command in commands)
+
+
+async def test_optional_memory_timeout_does_not_disable_wake_reporting(call_runtime, monkeypatch):
+    rt = call_runtime
+    monkeypatch.setattr(agent, "DEFAULT_MEMORY_BOOTSTRAP_TIMEOUT_SECONDS", 0.01)
+
+    async def stalled_memory(_):
+        await asyncio.Event().wait()
+
+    rt.backend.get_memory_context.side_effect = stalled_memory
+    await asyncio.wait_for(agent.entrypoint(rt.ctx), timeout=0.5)
+    rt.message("user", "일어났어")
+    await asyncio.sleep(0.02)
+    rt.backend.report_call_outcome.assert_awaited_once()
+
+
+async def test_prewarm_does_not_use_up_the_users_answer_window(call_runtime, monkeypatch):
+    rt = call_runtime
+    rt.room.remote_participants = {}
+    rt.ctx.job.metadata = json.dumps({
+        "user_id": "user-id", "alarm_id": "alarm-id",
+        "participant_wait_grace_seconds": 0.25,
+    })
+    monkeypatch.setattr(agent, "get_no_answer_timeout_seconds", lambda: 0.05)
+    started = asyncio.create_task(agent.entrypoint(rt.ctx))
+    await asyncio.sleep(0.1)  # More than the normal answer window, still prewarming.
+    assert not started.done()
+    rt.backend.report_call_outcome.assert_not_awaited()
+    rt.session.start.assert_not_awaited()  # No paid realtime session before answer.
+    participant = SimpleNamespace(identity="user-id")
+    rt.room.remote_participants["user-id"] = participant
+    rt.room.emit("participant_connected", participant)
+    await asyncio.wait_for(started, timeout=0.5)
+    rt.session.start.assert_awaited_once()
+
+
+def attach_realtime_transport(rt):
+    sent = []
+    rt.session._activity = SimpleNamespace(
+        _rt_session=SimpleNamespace(
+            _active_session=object(), _current_generation=None,
+            _send_client_event=sent.append,
+        )
+    )
+    return sent
+
+
+async def test_failed_greeting_rearms_recovery_instead_of_waiting_silently(
+    call_runtime, monkeypatch,
+):
+    rt = call_runtime
+    attach_realtime_transport(rt)
+    monkeypatch.setattr(agent, "DEFAULT_INITIAL_GREETING_READY_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(agent, "DEFAULT_INITIAL_GREETING_START_TIMEOUT_SECONDS", 0.01)
+    await agent.entrypoint(rt.ctx)
+    await asyncio.sleep(0.8)
+    commands = [json.loads(call.args[0]) for call in rt.room.local_participant.publish_data.call_args_list]
+    assert any(command["type"] == "local_audio.play" for command in commands)
+
+
+async def test_untranscribed_sound_does_not_disable_failed_greeting_recovery(
+    call_runtime, monkeypatch,
+):
+    rt = call_runtime
+    attach_realtime_transport(rt)
+    monkeypatch.setattr(agent, "DEFAULT_INITIAL_GREETING_READY_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(agent, "DEFAULT_INITIAL_GREETING_START_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(agent, "get_user_silence_nudge_seconds", lambda: 0.1)
+    recovery_started = asyncio.Event()
+
+    async def publish(data, **kwargs):
+        if json.loads(data)["type"] == "local_audio.play":
+            recovery_started.set()
+
+    rt.room.local_participant.publish_data.side_effect = publish
+    await agent.entrypoint(rt.ctx)
+    await asyncio.sleep(0.35)  # Both greeting attempts have produced no audio.
+    assert not recovery_started.is_set()
+    rt.session.emit("user_state_changed", SimpleNamespace(
+        old_state="listening", new_state="speaking",
+    ))
+    rt.session.emit("user_state_changed", SimpleNamespace(
+        old_state="speaking", new_state="listening",
+    ))  # A breath / rustle produces no recognized text or model response.
+    await asyncio.wait_for(recovery_started.wait(), timeout=1)
+
+
+async def test_text_without_audio_does_not_suppress_user_followup(call_runtime, monkeypatch):
+    rt = call_runtime
+    sent = attach_realtime_transport(rt)
+    monkeypatch.setattr(agent, "DEFAULT_INITIAL_GREETING_READY_GRACE_SECONDS", 10)
+    await agent.entrypoint(rt.ctx)
+    rt.message("user", "응")
+    rt.message("assistant", "앉아서 물 한 잔 마셔.")  # No speaking event / no audio.
+    await asyncio.sleep(1.6)
+    assert sent, "A text-only reply must not count as audible speech"
 
 
 async def test_farewell_without_briefing_flag_closes_without_any_nudge(call_runtime):

@@ -31,5 +31,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swiftc \
 /tmp/haru-onboarding-tests
 ```
 
-Checks the language-first sequence, progress numbers, profile prerequisites,
-completed-user handling, and migration from the previous onboarding order.
+Checks the language-first sequence, optional name entry, the shorter Apple
+onboarding sequence, resuming Apple accounts without a name, continuation after
+the location step, completed-user handling, and legacy progress migration.
+
+System location prompt/denial and actual Apple sign-in still require a device;
+follow the recording and regression checklist in
+[`APP_STORE_RESUBMISSION.md`](../../APP_STORE_RESUBMISSION.md).

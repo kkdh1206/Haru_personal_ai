@@ -54,7 +54,7 @@ final class SubscriptionManager: ObservableObject {
 
     var isActive: Bool { entitlement?.isActive == true }
     var isTrial: Bool { entitlement?.status == "trial" }
-    var localizedMonthlyPrice: String { monthlyProduct?.displayPrice ?? "₩9,900" }
+    var localizedMonthlyPrice: String { monthlyProduct?.displayPrice ?? "—" }
 
     deinit {
         transactionListener?.cancel()
@@ -153,7 +153,11 @@ final class SubscriptionManager: ObservableObject {
                 errorMessage = "월간 구독 상품을 불러오지 못했어요."
                 return
             }
-            if let subscription = monthlyProduct.subscription {
+            if let subscription = monthlyProduct.subscription,
+               let offer = subscription.introductoryOffer,
+               offer.paymentMode == .freeTrial,
+               offer.period.unit == .day,
+               offer.period.value * offer.periodCount == 3 {
                 isEligibleForTrial = await subscription.isEligibleForIntroOffer
             } else {
                 isEligibleForTrial = false

@@ -16,6 +16,10 @@ enum OnboardingStep: String {
 
     var number: Int { (Self.steps.firstIndex(of: self) ?? 0) + 1 }
 
+    static func steps(skippingName: Bool) -> [Self] {
+        steps.filter { !skippingName || $0 != .enterName }
+    }
+
     var next: Self {
         guard let index = Self.steps.firstIndex(of: self), index + 1 < Self.steps.count else {
             return .completed
@@ -23,10 +27,15 @@ enum OnboardingStep: String {
         return Self.steps[index + 1]
     }
 
-    static func resume(saved: Self?, hasName: Bool, completed: Bool) -> Self {
-        guard hasName else { return saved == .enterName ? .enterName : .featureIntro }
+    func next(skippingName: Bool) -> Self {
+        let candidate = next
+        return skippingName && candidate == .enterName ? candidate.next : candidate
+    }
+
+    static func resume(saved: Self?, hasName: Bool, completed: Bool, isAppleSignIn: Bool = false) -> Self {
         if completed { return .completed }
         guard let saved, steps.contains(saved) else { return .featureIntro }
+        if saved == .enterName && (hasName || isAppleSignIn) { return .alarmSetup }
         return saved
     }
 

@@ -66,9 +66,12 @@ struct SubscriptionPaywallView: View {
             HStack(spacing: 8) {
                 Image(systemName: "sunrise.fill")
                     .foregroundStyle(Color(red: 0.95, green: 0.57, blue: 0.22))
-                Text("월간 구독")
+                Text(subscriptionManager.monthlyProduct?.displayName ?? localized("하루 플러스 월간"))
                     .font(.subheadline.weight(.semibold))
             }
+
+            Text("구독 기간: 1개월 (자동 갱신)")
+                .font(.subheadline)
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(subscriptionManager.localizedMonthlyPrice)
@@ -89,6 +92,11 @@ struct SubscriptionPaywallView: View {
             Text(LocalizedStringKey(subscriptionManager.isEligibleForTrial
                 ? "무료 체험 종료 후 위 가격으로 매월 자동 갱신돼요. 언제든 취소할 수 있어요."
                 : "매월 자동 갱신되며, 언제든 취소할 수 있어요."))
+                .font(.footnote)
+                .foregroundStyle(HaruStyle.ink.opacity(0.65))
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("결제는 Apple 계정으로 청구됩니다. 갱신을 원하지 않으면 현재 기간 종료 24시간 전까지 App Store의 구독 관리에서 취소해 주세요.")
                 .font(.footnote)
                 .foregroundStyle(HaruStyle.ink.opacity(0.65))
                 .fixedSize(horizontal: false, vertical: true)
@@ -150,8 +158,8 @@ struct SubscriptionPaywallView: View {
     }
 
     @ViewBuilder private var legalLinks: some View {
-        Link(localized("이용약관"), destination: URL(string: "https://morningcall.poapper.com/terms")!)
-        Link(localized("개인정보 처리방침"), destination: URL(string: "https://morningcall.poapper.com/privacy")!)
+        Link(localized("이용약관 (EULA)"), destination: LegalLinks.termsOfUse)
+        Link(localized("개인정보 처리방침"), destination: LegalLinks.privacyPolicy)
     }
 
     private func localized(_ key: String) -> String {

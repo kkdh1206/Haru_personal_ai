@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   AccessToken,
   AgentDispatchClient,
+  ParticipantInfo,
   RoomServiceClient,
 } from 'livekit-server-sdk';
 
@@ -10,6 +11,9 @@ import {
 export class LivekitService {
   private static readonly AGENT_WAIT_TIMEOUT_MS = 30000;
   private static readonly AGENT_WAIT_INTERVAL_MS = 300;
+  // ParticipantInfo_Kind.AGENT; this SDK version does not re-export that enum.
+  private static readonly AGENT_PARTICIPANT_KIND = 4;
+  private readonly pendingPrewarms = new Map<string, Promise<void>>();
 
   private readonly apiKey = this.configService.get<string>('livekit.apiKey');
   private readonly secret = this.configService.get<string>('livekit.secretKey');
@@ -39,14 +43,71 @@ export class LivekitService {
     callType: 'initial' | 'retry' | 'test' = 'initial',
     retryCount = 0,
     language = '한국어',
+    participantWaitGraceSeconds = 0,
+  ) {
+    const pending = this.pendingPrewarms.get(roomName);
+    if (pending) return pending;
+    const preparation = this.dispatchAgentIfMissing(
+      roomName,
+      prompt,
+      voice,
+      userId,
+      timeZone,
+      alarmId,
+      callType,
+      retryCount,
+      language,
+      participantWaitGraceSeconds,
+    );
+    this.pendingPrewarms.set(roomName, preparation);
+    try {
+      await preparation;
+    } finally {
+      if (this.pendingPrewarms.get(roomName) === preparation) {
+        this.pendingPrewarms.delete(roomName);
+      }
+    }
+  }
+
+  private isAgent(participant: ParticipantInfo): boolean {
+    return (
+      participant.kind === LivekitService.AGENT_PARTICIPANT_KIND ||
+      participant.permission?.agent === true
+    );
+  }
+
+  private async dispatchAgentIfMissing(
+    roomName: string,
+    prompt: string,
+    voice: string,
+    userId: string,
+    timeZone: string,
+    alarmId: string | undefined,
+    callType: 'initial' | 'retry' | 'test',
+    retryCount: number,
+    language: string,
+    participantWaitGraceSeconds: number,
   ) {
     await this.ensureRoom(roomName);
 
     const participant = await this.listParticipantsIfRoomExists(roomName);
-    if (participant.length > 0) {
+    if (participant.some((entry) => this.isAgent(entry))) {
       console.log('[Livekit] Haru already exists in room', roomName);
       return;
     }
+
+    // A dispatched worker may still be starting. Do not create a second agent
+    // simply because its participant has not connected yet.
+    const dispatches = await this.agentDispatch.listDispatch(roomName);
+    if (
+      dispatches.some((dispatch) => {
+        if (dispatch.agentName !== 'Haru' || dispatch.state?.deletedAt)
+          return false;
+        const jobs = dispatch.state?.jobs ?? [];
+        return jobs.length === 0 || jobs.some((job) => !job.state?.endedAt);
+      })
+    )
+      return;
 
     await this.agentDispatch.createDispatch(roomName, 'Haru', {
       metadata: JSON.stringify({
@@ -58,6 +119,7 @@ export class LivekitService {
         call_type: callType,
         retry_count: retryCount,
         language,
+        participant_wait_grace_seconds: participantWaitGraceSeconds,
       }),
     });
   }
@@ -72,6 +134,7 @@ export class LivekitService {
     callType: 'initial' | 'retry' | 'test' = 'initial',
     retryCount = 0,
     language = '한국어',
+    callDelaySeconds = 0,
   ) {
     await this.prewarmAgent(
       roomName,
@@ -83,6 +146,9 @@ export class LivekitService {
       callType,
       retryCount,
       language,
+      // The test push is scheduled only after readiness, so reserve both that
+      // wait and its countdown before the normal unanswered-call timeout.
+      callDelaySeconds + LivekitService.AGENT_WAIT_TIMEOUT_MS / 1000,
     );
     await this.waitForAgentParticipant(roomName);
   }
@@ -95,7 +161,7 @@ export class LivekitService {
 
     while (Date.now() < deadline) {
       const participants = await this.listParticipantsIfRoomExists(roomName);
-      if (participants.length > 0) {
+      if (participants.some((entry) => this.isAgent(entry))) {
         return;
       }
 

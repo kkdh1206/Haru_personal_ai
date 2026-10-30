@@ -351,26 +351,56 @@ describe('AlarmService scheduling', () => {
     jest.useFakeTimers({ now: fixedNow });
     try {
       const alarm = makeAlarm();
-      const retryJob = { id: 'alarm-id-retry-123-1-call', getState: jest.fn().mockResolvedValue('delayed'), remove: jest.fn() };
-      const { service, queue } = makeService({ alarmModel: { findById: jest.fn().mockResolvedValue(alarm) } });
+      const retryJob = {
+        id: 'alarm-id-retry-123-1-call',
+        getState: jest.fn().mockResolvedValue('delayed'),
+        remove: jest.fn(),
+      };
+      const { service, queue } = makeService({
+        alarmModel: { findById: jest.fn().mockResolvedValue(alarm) },
+      });
       queue.getJobs.mockResolvedValue([retryJob]);
-      queue.getJob.mockImplementation(async (id) => id === retryJob.id ? retryJob : null);
-      await service.handleCallOutcome({ alarmId: 'alarm-id', callType: 'initial', wakeStatus: 'awake' });
+      queue.getJob.mockImplementation(async (id) =>
+        id === retryJob.id ? retryJob : null,
+      );
+      await service.handleCallOutcome({
+        alarmId: 'alarm-id',
+        callType: 'initial',
+        wakeStatus: 'awake',
+      });
       expect(retryJob.remove).toHaveBeenCalled();
       expect(alarm.lastAwakeAt).toEqual(new Date(fixedNow));
 
-      await expect(service.handleCallOutcome({ alarmId: 'alarm-id', callType: 'initial', wakeStatus: 'no_response' }))
-        .resolves.toMatchObject({ action: 'none', wakeStatus: 'awake' });
-      await expect(service.scheduleRetryCall('alarm-id')).resolves.toMatchObject({ alreadyAwake: true });
+      await expect(
+        service.handleCallOutcome({
+          alarmId: 'alarm-id',
+          callType: 'initial',
+          wakeStatus: 'no_response',
+        }),
+      ).resolves.toMatchObject({ action: 'none', wakeStatus: 'awake' });
+      await expect(
+        service.scheduleRetryCall('alarm-id'),
+      ).resolves.toMatchObject({ alreadyAwake: true });
       expect(queue.add).not.toHaveBeenCalled();
-    } finally { jest.useRealTimers(); }
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('does not dispatch an active retry worker once awake is confirmed', async () => {
-    const alarm = makeAlarm({ lastAwakeAt: new Date(fixedNow), lastWakeStatus: 'no_response' });
-    const { service, livekit, fcmService, userService } = makeService({ alarmModel: { findById: jest.fn().mockResolvedValue(alarm) } });
-    await expect(service.prewarmCall(alarm, { callType: 'retry' })).resolves.toMatchObject({ reason: 'already_awake' });
-    await expect(service.call(alarm, { callType: 'retry' })).resolves.toMatchObject({ reason: 'already_awake' });
+    const alarm = makeAlarm({
+      lastAwakeAt: new Date(fixedNow),
+      lastWakeStatus: 'no_response',
+    });
+    const { service, livekit, fcmService, userService } = makeService({
+      alarmModel: { findById: jest.fn().mockResolvedValue(alarm) },
+    });
+    await expect(
+      service.prewarmCall(alarm, { callType: 'retry' }),
+    ).resolves.toMatchObject({ reason: 'already_awake' });
+    await expect(
+      service.call(alarm, { callType: 'retry' }),
+    ).resolves.toMatchObject({ reason: 'already_awake' });
     expect(livekit.prewarmAgent).not.toHaveBeenCalled();
     expect(fcmService.sendCallPush).not.toHaveBeenCalled();
     expect(userService.reserveDailyCallSlot).not.toHaveBeenCalled();
@@ -379,19 +409,28 @@ describe('AlarmService scheduling', () => {
   it('rechecks awake after retry connection preparation and releases the unused call slot', async () => {
     const alarm = makeAlarm();
     const model = { findById: jest.fn().mockResolvedValue(alarm) };
-    const { service, livekit, fcmService, userService } = makeService({ alarmModel: model });
+    const { service, livekit, fcmService, userService } = makeService({
+      alarmModel: model,
+    });
     livekit.generateLivkitToken.mockImplementation(async () => {
       alarm.lastAwakeAt = new Date(fixedNow);
       return 'lk-token';
     });
-    await expect(service.call(alarm, { callType: 'retry' })).resolves.toMatchObject({ reason: 'already_awake' });
+    await expect(
+      service.call(alarm, { callType: 'retry' }),
+    ).resolves.toMatchObject({ reason: 'already_awake' });
     expect(fcmService.sendCallPush).not.toHaveBeenCalled();
-    expect(userService.releaseDailyCallSlot).toHaveBeenCalledWith('user-id', '2026-06-28');
+    expect(userService.releaseDailyCallSlot).toHaveBeenCalledWith(
+      'user-id',
+      '2026-06-28',
+    );
   });
 
   it('removes a retry scheduled concurrently with an awake report', async () => {
     const alarm = makeAlarm();
-    const { service, queue } = makeService({ alarmModel: { findById: jest.fn().mockResolvedValue(alarm) } });
+    const { service, queue } = makeService({
+      alarmModel: { findById: jest.fn().mockResolvedValue(alarm) },
+    });
     const jobs = new Map<string, any>();
     queue.getJobs.mockImplementation(async () => Array.from(jobs.values()));
     queue.getJob.mockImplementation(async (id) => jobs.get(id) || null);
@@ -400,27 +439,39 @@ describe('AlarmService scheduling', () => {
       const job = {
         id: options.jobId,
         getState: jest.fn().mockResolvedValue('delayed'),
-        remove: jest.fn(async () => { jobs.delete(options.jobId); }),
+        remove: jest.fn(async () => {
+          jobs.delete(options.jobId);
+        }),
       };
       jobs.set(options.jobId, job);
       return job;
     });
-    await expect(service.scheduleRetryCall('alarm-id')).resolves.toMatchObject({ alreadyAwake: true });
+    await expect(service.scheduleRetryCall('alarm-id')).resolves.toMatchObject({
+      alreadyAwake: true,
+    });
     expect(jobs.size).toBe(0);
   });
 
   it('allows retries again on the next local day, including Canada', async () => {
     // Same UTC date, but the previous local date in Toronto.
-    const alarm = makeAlarm({ timeZone: 'America/Toronto', retryTrackingDate: '2026-06-26', lastAwakeAt: new Date('2026-06-27T01:00:00Z') });
+    const alarm = makeAlarm({
+      timeZone: 'America/Toronto',
+      retryTrackingDate: '2026-06-26',
+      lastAwakeAt: new Date('2026-06-27T01:00:00Z'),
+    });
     const { service } = makeService({
       alarmModel: { findById: jest.fn().mockResolvedValue(alarm) },
-      userService: { findOne: jest.fn().mockResolvedValue({ timeZone: 'America/Toronto' }) },
+      userService: {
+        findOne: jest.fn().mockResolvedValue({ timeZone: 'America/Toronto' }),
+      },
     });
-    await expect(service.scheduleRetryCall('alarm-id')).resolves.toMatchObject({ success: true });
+    await expect(service.scheduleRetryCall('alarm-id')).resolves.toMatchObject({
+      success: true,
+    });
     expect(alarm.retryTrackingDate).toBe('2026-06-27');
   });
 
-  it('does not build prompt or dispatch agent on the on-time call path', async () => {
+  it('recovers a missing agent without blocking the on-time push', async () => {
     const { service, livekit, promptService, fcmService } = makeService();
     livekit.waitForAgentParticipant.mockRejectedValueOnce(
       new Error('agent not visible yet'),
@@ -428,8 +479,9 @@ describe('AlarmService scheduling', () => {
 
     await service.call(makeAlarm());
 
-    expect(promptService.getPrompt).not.toHaveBeenCalled();
-    expect(livekit.prewarmAgent).not.toHaveBeenCalled();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(promptService.getPrompt).toHaveBeenCalled();
+    expect(livekit.prewarmAgent).toHaveBeenCalled();
     expect(livekit.waitForAgentParticipant).toHaveBeenCalledWith(
       'alarm-id',
       1000,
@@ -440,6 +492,25 @@ describe('AlarmService scheduling', () => {
       lkToken: 'lk-token',
       alarmId: 'alarm-id',
     });
+  });
+
+  it('keeps sending the call push while agent recovery is still pending', async () => {
+    const { service, livekit, promptService, fcmService } = makeService();
+    livekit.waitForAgentParticipant.mockRejectedValueOnce(
+      new Error('missing agent'),
+    );
+    promptService.getPrompt.mockReturnValueOnce(new Promise(() => {}));
+    await expect(service.call(makeAlarm())).resolves.toMatchObject({
+      sent: true,
+    });
+    expect(fcmService.sendCallPush).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not redispatch an agent that is already ready', async () => {
+    const { service, livekit, promptService } = makeService();
+    await service.call(makeAlarm());
+    expect(promptService.getPrompt).not.toHaveBeenCalled();
+    expect(livekit.prewarmAgent).not.toHaveBeenCalled();
   });
 
   it('blocks the fourth regular or retry call for a user on the same day', async () => {
@@ -567,6 +638,7 @@ describe('AlarmService scheduling', () => {
       'test',
       0,
       '日本語',
+      10,
     );
     expect(queue.add).toHaveBeenCalledWith(
       'onboarding-test-call',

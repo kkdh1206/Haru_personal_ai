@@ -187,10 +187,11 @@ enum FeatureIntroStore {
     }
 }
 
-// Language is selected locally before any profile data is required.
-// EnterNameView persists both the name and chosen call language together.
+// Persist language here because provider-backed profiles skip name entry.
 struct FeatureIntroView: View {
     @EnvironmentObject private var env: AppEnvironment
+    @State private var isSaving = false
+    @State private var showSaveError = false
 
     var body: some View {
         OnboardingLayout(step: .featureIntro) {
@@ -225,11 +226,50 @@ struct FeatureIntroView: View {
                     .accessibilityAddTraits(env.appLanguage == language ? .isSelected : [])
                 }
             }
-        } actions: {
-            Button("다음") {
-                env.advanceOnboarding(from: .featureIntro)
+            if showSaveError {
+                Text("프로필 저장에 실패했어요. 다시 시도해 주세요.")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
             }
+        } actions: {
+            Button(LocalizedStringKey(isSaving ? "저장 중..." : "다음")) {
+                saveLanguageAndContinue()
+            }
+            .disabled(isSaving)
             .buttonStyle(PrimaryButtonStyle())
+        }
+        .disabled(isSaving)
+    }
+
+    private func saveLanguageAndContinue() {
+        guard !isSaving else { return }
+        isSaving = true
+        showSaveError = false
+        let language = env.appLanguage.callLanguageValue
+        let speechStyle = SpeechStyle.value(
+            forCallLanguage: language,
+            preserving: env.user?.speechStyle,
+            currentLanguage: env.user?.language
+        )
+        // Empty names are accepted for older Apple accounts that did not share a
+        // name. The API keeps any existing name and never requires a replacement.
+        APIClient.request(path: "/user", method: .PUT, body: [
+            "name": env.user?.name ?? "",
+            "language": language,
+            "speechStyle": speechStyle
+        ]) { (result: Result<UserInfo, Error>) in
+            DispatchQueue.main.async {
+                isSaving = false
+                switch result {
+                case .success(let user):
+                    env.user?.name = user.name ?? env.user?.name
+                    env.user?.language = user.language ?? language
+                    env.user?.speechStyle = user.speechStyle ?? speechStyle
+                    env.advanceOnboarding(from: .featureIntro)
+                case .failure:
+                    showSaveError = true
+                }
+            }
         }
     }
 }

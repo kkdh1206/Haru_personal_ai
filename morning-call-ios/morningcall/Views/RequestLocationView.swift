@@ -30,6 +30,7 @@ class CurrentLocationManager: NSObject, ObservableObject, CLLocationManagerDeleg
         authStatus = manager.authorizationStatus
         switch authStatus {
         case .notDetermined:
+            cityAndProvince = nil
             isLoading = true
             manager.requestWhenInUseAuthorization()
         case .authorizedWhenInUse, .authorizedAlways:
@@ -38,8 +39,11 @@ class CurrentLocationManager: NSObject, ObservableObject, CLLocationManagerDeleg
             manager.requestLocation()
         case .denied, .restricted:
             permissionDenied = true
+            cityAndProvince = nil
+            isLoading = false
         @unknown default:
             permissionDenied = true
+            isLoading = false
         }
     }
 
@@ -54,17 +58,13 @@ class CurrentLocationManager: NSObject, ObservableObject, CLLocationManagerDeleg
         manager.requestLocation()
     }
 
-    func openAppSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString),
-              UIApplication.shared.canOpenURL(url) else { return }
-        UIApplication.shared.open(url)
-    }
-
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authStatus = manager.authorizationStatus
         switch authStatus {
         case .denied, .restricted:
             permissionDenied = true
+            cityAndProvince = nil
+            shouldSaveToAPI = false
             isLoading = false
         case .authorizedWhenInUse, .authorizedAlways:
             permissionDenied = false
@@ -86,16 +86,20 @@ class CurrentLocationManager: NSObject, ObservableObject, CLLocationManagerDeleg
         CLGeocoder().reverseGeocodeLocation(location, preferredLocale: Locale(identifier: "en_US")) { placemarks, _ in
             DispatchQueue.main.async {
                 self.isLoading = false
+                defer { self.shouldSaveToAPI = false }
+                guard self.manager.authorizationStatus == .authorizedWhenInUse ||
+                      self.manager.authorizationStatus == .authorizedAlways else {
+                    return
+                }
                 guard let placemark = placemarks?.first else { return }
 
                 let locationName = Self.formatLocation(placemark: placemark)
-                self.cityAndProvince = locationName
+                self.cityAndProvince = locationName.isEmpty ? nil : locationName
 
                 if self.shouldSaveToAPI, !locationName.isEmpty {
                     self.saveEnvironment?.user?.location = locationName
                     self.saveLocation(locationName, env: self.saveEnvironment)
                 }
-                self.shouldSaveToAPI = false
             }
         }
     }
@@ -140,7 +144,7 @@ class CurrentLocationManager: NSObject, ObservableObject, CLLocationManagerDeleg
 struct RequestLocationView: View {
     @EnvironmentObject var env: AppEnvironment
     @ObservedObject private var locationManager = CurrentLocationManager.shared
-    @State private var showSettingsAlert = false
+    @State private var hasRequestedLocation = false
     @State private var isSaving = false
     @State private var showSaveError = false
 
@@ -148,19 +152,7 @@ struct RequestLocationView: View {
         if locationManager.isLoading || isSaving {
             return "위치 확인 중..."
         }
-        if locationManager.cityAndProvince != nil {
-            return "다음"
-        }
-        switch locationManager.authStatus {
-        case .notDetermined:
-            return "권한 허용하기"
-        case .authorizedWhenInUse, .authorizedAlways:
-            return "위치 가져오기"
-        case .denied, .restricted:
-            return "설정에서 권한 켜기"
-        @unknown default:
-            return "권한 설정"
-        }
+        return "다음"
     }
 
     var body: some View {
@@ -172,7 +164,9 @@ struct RequestLocationView: View {
                 )
 
                 locationStatusCard
-                Text("위치 없이도 모닝콜을 받을 수 있어요. 나중에 설정에서 연결해 주세요.")
+                Text(LocalizedStringKey(locationManager.authStatus == .notDetermined
+                    ? "다음을 누르면 위치 접근 여부를 선택할 수 있어요. 허용하지 않아도 모닝콜을 이용할 수 있어요."
+                    : "위치는 날씨 브리핑에 사용해요. 위치 없이도 모닝콜을 이용할 수 있어요."))
                     .font(.footnote)
                     .foregroundStyle(HaruStyle.ink.opacity(0.65))
                 if showSaveError {
@@ -184,39 +178,44 @@ struct RequestLocationView: View {
             .frame(maxWidth: .infinity)
         } actions: {
             Button(LocalizedStringKey(primaryButtonTitle)) {
-                if locationManager.cityAndProvince != nil {
-                    completeOnboarding()
-                } else {
-                    switch locationManager.authStatus {
-                    case .notDetermined, .authorizedWhenInUse, .authorizedAlways:
+                switch locationManager.authStatus {
+                case .notDetermined:
+                    // The only pre-permission action always opens the iOS prompt.
+                    hasRequestedLocation = true
+                    locationManager.requestLocationFlow()
+                case .authorizedWhenInUse, .authorizedAlways:
+                    if locationManager.cityAndProvince != nil {
+                        completeOnboarding()
+                    } else if hasRequestedLocation {
+                        // GPS/geocoding failure must not block onboarding.
+                        env.advanceOnboarding(from: .requestLocation)
+                    } else {
+                        hasRequestedLocation = true
                         locationManager.requestLocationFlow()
-                    case .denied, .restricted:
-                        showSettingsAlert = true
-                    @unknown default:
-                        showSettingsAlert = true
                     }
+                case .denied, .restricted:
+                    env.advanceOnboarding(from: .requestLocation)
+                @unknown default:
+                    env.advanceOnboarding(from: .requestLocation)
                 }
             }
             .disabled(locationManager.isLoading || isSaving)
             .buttonStyle(PrimaryButtonStyle())
-            Button("나중에 설정하기") {
+        }
+        .onChange(of: locationManager.authStatus) { _, status in
+            if status == .denied || status == .restricted {
                 env.advanceOnboarding(from: .requestLocation)
             }
-            .disabled(isSaving || locationManager.isLoading)
-            .buttonStyle(QuietButtonStyle())
         }
-        .alert("권한이 필요합니다",
-               isPresented: $showSettingsAlert,
-               actions: {
-                   Button("설정 열기") { locationManager.openAppSettings() }
-                   Button("취소", role: .cancel) { }
-               },
-               message: {
-                   Text("설정 > 개인정보 보호 및 보안 > 위치 서비스에서 이 앱의 위치 접근을 허용해주세요.")
-               })
         .onAppear {
-            if locationManager.authStatus == .authorizedWhenInUse || locationManager.authStatus == .authorizedAlways {
+            switch locationManager.authStatus {
+            case .denied, .restricted:
+                env.advanceOnboarding(from: .requestLocation)
+            case .authorizedWhenInUse, .authorizedAlways:
+                hasRequestedLocation = true
                 locationManager.requestLocationFlow()
+            default:
+                break
             }
         }
         .preferredColorScheme(.light)
@@ -240,35 +239,19 @@ struct RequestLocationView: View {
 
     private func completeOnboarding() {
         guard let location = locationManager.cityAndProvince, !location.isEmpty else { return }
-        let name = env.user?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !name.isEmpty else {
-            env.onboardingStep = .enterName
-            return
-        }
 
         isSaving = true
         showSaveError = false
 
-        let language = env.user?.language ?? "한국어"
-        let speechStyle = SpeechStyle.value(
-            forCallLanguage: language,
-            preserving: env.user?.speechStyle,
-            currentLanguage: env.user?.language
-        )
-        APIClient.request(path: "/user", method: .PUT, body: [
-            "name": name,
+        APIClient.request(path: "/user/location", method: .PATCH, body: [
             "location": location,
-            "language": language,
-            "speechStyle": speechStyle
+            "timeZone": TimeZone.autoupdatingCurrent.identifier
         ]) { (result: Result<UserInfo, Error>) in
             DispatchQueue.main.async {
                 isSaving = false
                 switch result {
                 case .success(let user):
-                    env.user?.name = user.name ?? env.user?.name
                     env.user?.location = user.location ?? location
-                    env.user?.language = user.language ?? env.user?.language
-                    env.user?.speechStyle = user.speechStyle ?? env.user?.speechStyle
                     env.advanceOnboarding(from: .requestLocation)
                 case .failure(let error):
                     showSaveError = true

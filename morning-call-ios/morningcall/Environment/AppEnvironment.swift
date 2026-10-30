@@ -11,6 +11,7 @@ class AppEnvironment: ObservableObject {
     @Published var user: User?
     @Published var onboardingStep: OnboardingStep = .loading
     @Published var appLanguage: AppLanguage = AppLanguageStore.current
+    @Published var skipsNameOnboarding = false
 
     func updateAppLanguage(_ language: AppLanguage) {
         guard appLanguage != language else { return }
@@ -19,7 +20,8 @@ class AppEnvironment: ObservableObject {
     }
 
     func advanceOnboarding(from step: OnboardingStep) {
-        FeatureIntroStore.advance(to: step.next)
-        onboardingStep = step.next
+        let next = step.next(skippingName: skipsNameOnboarding)
+        FeatureIntroStore.advance(to: next)
+        onboardingStep = next
     }
 }

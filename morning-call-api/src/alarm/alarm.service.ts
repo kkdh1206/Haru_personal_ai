@@ -171,13 +171,16 @@ export class AlarmService implements OnModuleInit {
   }
 
   private async isAwakeToday(alarm: AlarmDocument) {
-    const confirmedAt = alarm.lastAwakeAt ||
+    const confirmedAt =
+      alarm.lastAwakeAt ||
       (alarm.lastWakeStatus === 'awake' ? alarm.lastTriggeredAt : null);
     if (!confirmedAt) return false;
     const user = await this.userService.findOne(alarm.userId as Types.ObjectId);
     const zone = user?.timeZone || alarm.timeZone || 'Asia/Seoul';
-    return DateTime.fromJSDate(new Date(confirmedAt)).setZone(zone).toISODate() ===
-      this.getLocalDateKey(zone);
+    return (
+      DateTime.fromJSDate(new Date(confirmedAt)).setZone(zone).toISODate() ===
+      this.getLocalDateKey(zone)
+    );
   }
 
   private async retryStoppedByWakeConfirmation(alarmId: string) {
@@ -749,7 +752,10 @@ export class AlarmService implements OnModuleInit {
     const retryCount = options.retryCount ?? 0;
     const alarmId = normalizedAlarm._id.toString();
     const userId = normalizedAlarm.userId.toString();
-    if (callType === 'retry' && await this.retryStoppedByWakeConfirmation(alarmId)) {
+    if (
+      callType === 'retry' &&
+      (await this.retryStoppedByWakeConfirmation(alarmId))
+    ) {
       return { prepared: false, reason: 'already_awake' };
     }
     if (!(await this.billingService.canUseMorningCall(userId))) {
@@ -774,6 +780,7 @@ export class AlarmService implements OnModuleInit {
       callType,
       retryCount,
       user?.language || '한국어',
+      this.prewarmLeadMs / 1000,
     );
   }
 
@@ -790,7 +797,10 @@ export class AlarmService implements OnModuleInit {
     // 0. 유저 ID 가져오기
     const alarmId = normalizedAlarm._id.toString();
     const userId = normalizedAlarm.userId.toString();
-    if (options.callType === 'retry' && await this.retryStoppedByWakeConfirmation(alarmId)) {
+    if (
+      options.callType === 'retry' &&
+      (await this.retryStoppedByWakeConfirmation(alarmId))
+    ) {
       return { sent: false, reason: 'already_awake' };
     }
     if (!(await this.billingService.canUseMorningCall(userId))) {
@@ -839,6 +849,14 @@ export class AlarmService implements OnModuleInit {
           `[Alarm] LiveKit agent not visible before push → ${alarmId}`,
           error,
         );
+        // A failed/missed prewarm must not leave an answered call in an empty
+        // room. Recover in the background without delaying the scheduled push.
+        void this.prewarmCall(alarm, options).catch((recoveryError) => {
+          console.error(
+            `[Alarm] agent recovery failed → ${alarmId}`,
+            recoveryError,
+          );
+        });
       }
 
       // 4. 유저 용 Livekit 토큰 생성
@@ -847,7 +865,10 @@ export class AlarmService implements OnModuleInit {
 
       // A retry worker may already be active when the awake outcome removes
       // queued jobs. Recheck after the awaited room/token work, before APNs/FCM.
-      if (options.callType === 'retry' && await this.retryStoppedByWakeConfirmation(alarmId)) {
+      if (
+        options.callType === 'retry' &&
+        (await this.retryStoppedByWakeConfirmation(alarmId))
+      ) {
         await this.userService.releaseDailyCallSlot(userId, dateKey);
         return { sent: false, reason: 'already_awake' };
       }
@@ -980,6 +1001,7 @@ export class AlarmService implements OnModuleInit {
         'test',
         0,
         user.language || '한국어',
+        delaySeconds,
       );
 
       const scheduledAt = new Date(Date.now() + delaySeconds * 1000);
@@ -1236,10 +1258,12 @@ export class AlarmService implements OnModuleInit {
 
     await this.resetDailyRetryStateIfNeeded(alarm);
 
-    if (dto.wakeStatus !== 'awake' && await this.isAwakeToday(alarm)) {
+    if (dto.wakeStatus !== 'awake' && (await this.isAwakeToday(alarm))) {
       await this.clearRetryJobs(dto.alarmId);
       return {
-        success: true, action: 'none', wakeStatus: 'awake',
+        success: true,
+        action: 'none',
+        wakeStatus: 'awake',
         message: 'User is already awake. Late retry outcome ignored.',
       };
     }
@@ -1270,7 +1294,12 @@ export class AlarmService implements OnModuleInit {
     );
 
     if ('alreadyAwake' in retryResult && retryResult.alreadyAwake) {
-      return { success: true, action: 'none', wakeStatus: 'awake', message: retryResult.message };
+      return {
+        success: true,
+        action: 'none',
+        wakeStatus: 'awake',
+        message: retryResult.message,
+      };
     }
 
     if (retryResult.success) {

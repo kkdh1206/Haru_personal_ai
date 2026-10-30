@@ -69,6 +69,7 @@ struct RootView: View {
                 configurePurchasesIfPossible()
             } else {
                 env.user = nil
+                env.skipsNameOnboarding = false
                 env.onboardingStep = .loading
             }
         }
@@ -97,21 +98,29 @@ struct RootView: View {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let user):
+                    let firebaseUser = Auth.auth().currentUser
+                    let isAppleSignIn = firebaseUser?.providerData.contains { $0.providerID == "apple.com" } == true
+                    let storedName = user.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let providerName = firebaseUser?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let name = storedName.isEmpty ? providerName : storedName
                     env.user = User(
-                        id: "id",
-                        name: user.name,
+                        id: firebaseUser?.uid ?? "",
+                        name: name.isEmpty ? nil : name,
                         location: user.location,
                         interest: user.interest,
                         language: user.language,
                         speechStyle: user.speechStyle
                     )
                     DeviceTokenManager.shared.registerTokensToAPI()
-                    let trimmedName = user.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    // Apple may omit the name on subsequent authorizations. Never ask
+                    // Apple users to enter it again, even when no saved name exists.
+                    env.skipsNameOnboarding = isAppleSignIn || !name.isEmpty
 
                     env.onboardingStep = OnboardingStep.resume(
                         saved: FeatureIntroStore.currentStep(),
-                        hasName: !trimmedName.isEmpty,
-                        completed: !FeatureIntroStore.shouldShow(for: user)
+                        hasName: !name.isEmpty,
+                        completed: !FeatureIntroStore.shouldShow(for: user),
+                        isAppleSignIn: isAppleSignIn
                     )
                     if env.onboardingStep == .completed {
                         showRequiredPaywallIfNeeded()
@@ -225,48 +234,26 @@ struct LoginView: View {
 
 struct AppleSignInButton: View {
     @EnvironmentObject var authVM: AuthViewModel
-    @StateObject private var coordinator = AppleSignInCoordinator()
     @State private var currentNonce: String?
 
     var body: some View {
-        Button {
-            startAppleSignIn()
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "applelogo")
-                    .font(.system(size: 18, weight: .semibold))
-                Text("Apple로 계속하기")
-                    .font(.system(.body).weight(.semibold))
+        SignInWithAppleButton(.continue) { request in
+            let nonce = randomNonceString()
+            currentNonce = nonce
+            request.requestedScopes = [.fullName, .email]
+            request.nonce = sha256(nonce)
+        } onCompletion: { result in
+            switch result {
+            case .success(let authorization):
+                handleAuthorization(authorization)
+            case .failure(let error):
+                print("❌ Apple login error: \(error.localizedDescription)")
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .foregroundStyle(.white)
-            .background(Color.black.opacity(0.92))
         }
-        .buttonStyle(.plain)
+        .signInWithAppleButtonStyle(.black)
+        .frame(maxWidth: .infinity)
         .frame(height: 52)
         .clipShape(RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous))
-    }
-
-    private func startAppleSignIn() {
-        let nonce = randomNonceString()
-        currentNonce = nonce
-
-        coordinator.onAuthorization = { authorization in
-            handleAuthorization(authorization)
-        }
-        coordinator.onError = { error in
-            print("❌ Apple login error: \(error.localizedDescription)")
-        }
-
-        let provider = ASAuthorizationAppleIDProvider()
-        let request = provider.createRequest()
-        request.requestedScopes = [.fullName, .email]
-        request.nonce = sha256(nonce)
-
-        let controller = ASAuthorizationController(authorizationRequests: [request])
-        controller.delegate = coordinator
-        controller.presentationContextProvider = coordinator
-        controller.performRequests()
     }
 
     private func handleAuthorization(_ authorization: ASAuthorization) {
@@ -329,27 +316,6 @@ struct AppleSignInButton: View {
         }
 
         return result
-    }
-}
-
-final class AppleSignInCoordinator: NSObject, ObservableObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
-    var onAuthorization: ((ASAuthorization) -> Void)?
-    var onError: ((Error) -> Void)?
-
-    func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
-        onAuthorization?(authorization)
-    }
-
-    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        onError?(error)
-    }
-
-    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        return scenes
-            .flatMap(\.windows)
-            .first { $0.isKeyWindow }
-            ?? ASPresentationAnchor()
     }
 }
 

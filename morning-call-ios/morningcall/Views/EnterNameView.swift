@@ -10,7 +10,6 @@ import SwiftUI
 struct EnterNameView: View {
     @EnvironmentObject var env: AppEnvironment
     @State private var name = ""
-    @State private var showNameError = false
     @State private var showSaveError = false
     @State private var isSaving = false
 
@@ -19,7 +18,7 @@ struct EnterNameView: View {
             VStack(alignment: .leading, spacing: 24) {
                 OnboardingHeading(
                     title: "뭐라고 불러드릴까요?",
-                    subtitle: "첫 대화부터 자연스럽게 이름을 불러드릴게요."
+                    subtitle: "이름은 선택 사항이에요. 나중에 설정에서 바꿀 수 있어요."
                 )
 
                 TextField(text: $name) {
@@ -35,12 +34,6 @@ struct EnterNameView: View {
                     .onSubmit {
                         goNext()
                     }
-
-                if showNameError {
-                    Text("이름을 입력해야 다음으로 넘어갈 수 있어요.")
-                        .font(.system(.footnote).weight(.semibold))
-                        .foregroundStyle(Color.red.opacity(0.82))
-                }
 
                 if showSaveError {
                     Text("프로필 저장에 실패했어요. 다시 시도해 주세요.")
@@ -67,12 +60,6 @@ struct EnterNameView: View {
     private func goNext() {
         guard !isSaving else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            showNameError = true
-            return
-        }
-
-        showNameError = false
         showSaveError = false
         isSaving = true
 

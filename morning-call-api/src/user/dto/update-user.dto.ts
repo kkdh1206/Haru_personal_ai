@@ -3,9 +3,10 @@ import { IsIn, IsOptional, IsString } from 'class-validator';
 import { SPEECH_STYLE_CODES } from 'src/prompt/speech-style';
 
 export class UpdateUserDto {
-  @ApiProperty()
+  @ApiProperty({ required: false })
   @IsString()
-  name: string;
+  @IsOptional()
+  name?: string;
 
   @ApiProperty({ default: 'korea-top' })
   @IsString()

@@ -8,22 +8,26 @@ enum HaruStyle {
 
 /// Every step shares the same safe-area-aware header, content and action area.
 struct OnboardingLayout<Content: View, Actions: View>: View {
+    @EnvironmentObject private var env: AppEnvironment
     let step: OnboardingStep
     @ViewBuilder let content: () -> Content
     @ViewBuilder let actions: () -> Actions
+
+    private var steps: [OnboardingStep] { OnboardingStep.steps(skippingName: env.skipsNameOnboarding) }
+    private var stepNumber: Int { (steps.firstIndex(of: step) ?? 0) + 1 }
 
     var body: some View {
         GeometryReader { proxy in
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(verbatim: "\(step.number) / \(OnboardingStep.steps.count)")
+                    Text(verbatim: "\(stepNumber) / \(steps.count)")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(HaruStyle.ink)
                         .monospacedDigit()
                     HStack(spacing: 6) {
-                        ForEach(1...OnboardingStep.steps.count, id: \.self) { index in
+                        ForEach(1...steps.count, id: \.self) { index in
                             Capsule()
-                                .fill(HaruStyle.ink.opacity(index <= step.number ? 1 : 0.12))
+                                .fill(HaruStyle.ink.opacity(index <= stepNumber ? 1 : 0.12))
                                 .frame(height: 3)
                         }
                     }

@@ -32,6 +32,7 @@ export class AuthGuard implements CanActivate {
       request.user = await this.userService.oauthSync(
         decodedToken.uid,
         decodedToken.email,
+        decodedToken.name,
       );
 
       return true;

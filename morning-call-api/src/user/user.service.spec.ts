@@ -187,15 +187,22 @@ describe('UserService', () => {
   });
 
   it('does not change the selected calendar during a background Google token refresh', async () => {
-    await createService().updateCalendarToken('user-1', 'new-access', 'refresh', {
-      selectProvider: false,
-    });
+    await createService().updateCalendarToken(
+      'user-1',
+      'new-access',
+      'refresh',
+      {
+        selectProvider: false,
+      },
+    );
     expect(findByIdAndUpdate).toHaveBeenCalledWith(
       { _id: 'user-1' },
-      { $set: {
-        calendarAccessToken: 'encrypted:new-access',
-        calendarRefreshToken: 'encrypted:refresh',
-      } },
+      {
+        $set: {
+          calendarAccessToken: 'encrypted:new-access',
+          calendarRefreshToken: 'encrypted:refresh',
+        },
+      },
       { new: true },
     );
   });
@@ -204,12 +211,16 @@ describe('UserService', () => {
     findById.mockReturnValue({
       select: jest.fn().mockReturnValue({
         lean: jest.fn().mockResolvedValue({
-          calendarProvider: 'google', appleCalendarConnected: true,
+          calendarProvider: 'google',
+          appleCalendarConnected: true,
         }),
       }),
     });
-    await expect(createService().getCalendarStatus('user-1')).resolves.toMatchObject({
-      connected: true, provider: 'apple',
+    await expect(
+      createService().getCalendarStatus('user-1'),
+    ).resolves.toMatchObject({
+      connected: true,
+      provider: 'apple',
     });
   });
 
@@ -313,4 +324,121 @@ describe('UserService', () => {
 
     expect(create).not.toHaveBeenCalled();
   });
+
+  it('creates an Apple profile with the saved Firebase name and private relay email', async () => {
+    findOne.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(null) });
+    getFirebaseUser.mockResolvedValueOnce({
+      uid: 'firebase-1',
+      displayName: '  Apple User  ',
+      email: 'private@privaterelay.appleid.com',
+    });
+    await createService().oauthSync('firebase-1');
+    expect(create).toHaveBeenCalledWith({
+      firebaseUid: 'firebase-1',
+      email: 'private@privaterelay.appleid.com',
+      name: 'Apple User',
+    });
+  });
+
+  it('backfills a legacy empty profile from verified token claims', async () => {
+    const profile = { _id: 'user-1', name: 'Apple User' };
+    findOneAndUpdate.mockReturnValueOnce({
+      lean: jest.fn().mockResolvedValue(profile),
+    });
+    await expect(
+      createService().oauthSync(
+        'firebase-1',
+        'private@privaterelay.appleid.com',
+        ' Apple User ',
+      ),
+    ).resolves.toEqual(profile);
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        firebaseUid: 'firebase-1',
+        $or: expect.any(Array),
+      }),
+      { $set: { name: 'Apple User' } },
+      { new: true },
+    );
+  });
+
+  it('keeps a custom profile name on repeated Apple sign-in', async () => {
+    const profile = { _id: 'user-1', name: 'My nickname' };
+    findOne.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(profile) });
+    await expect(
+      createService().oauthSync(
+        'firebase-1',
+        'private@privaterelay.appleid.com',
+        'Apple User',
+      ),
+    ).resolves.toEqual(profile);
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
+    expect(getFirebaseUser).not.toHaveBeenCalled();
+  });
+
+  it('returns a concurrent profile edit instead of overwriting it during backfill', async () => {
+    findOneAndUpdate.mockReturnValueOnce({
+      lean: jest.fn().mockResolvedValue(null),
+    });
+    findOne
+      .mockReturnValueOnce({
+        lean: jest.fn().mockResolvedValue({ _id: 'user-1' }),
+      })
+      .mockReturnValueOnce({
+        lean: jest
+          .fn()
+          .mockResolvedValue({ _id: 'user-1', name: 'My nickname' }),
+      });
+    await expect(
+      createService().oauthSync('firebase-1', undefined, 'Apple User'),
+    ).resolves.toEqual({ _id: 'user-1', name: 'My nickname' });
+  });
+
+  it('allows sign-in when Apple no longer supplies a name', async () => {
+    const profile = { _id: 'user-1' };
+    findOne.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(profile) });
+    await expect(createService().oauthSync('firebase-1')).resolves.toEqual(
+      profile,
+    );
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects an account deleted during profile backfill', async () => {
+    findOneAndUpdate.mockReturnValueOnce({
+      lean: jest.fn().mockResolvedValue(null),
+    });
+    findOne
+      .mockReturnValueOnce({
+        lean: jest.fn().mockResolvedValue({ _id: 'user-1' }),
+      })
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(null) });
+    await expect(
+      createService().oauthSync('firebase-1', undefined, 'Apple User'),
+    ).rejects.toThrow('User not found');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('creates an account without requiring an unavailable provider name', async () => {
+    findOne.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(null) });
+    await createService().oauthSync(
+      'firebase-1',
+      'private@privaterelay.appleid.com',
+    );
+    expect(create).toHaveBeenCalledWith({
+      firebaseUid: 'firebase-1',
+      email: 'private@privaterelay.appleid.com',
+    });
+  });
+
+  it.each([undefined, '', '   ', null])(
+    'saves language without requiring a name (%p)',
+    async (name) => {
+      await createService().update('user-1', { name, language: 'English' });
+      expect(findByIdAndUpdate).toHaveBeenCalledWith(
+        { _id: 'user-1' },
+        { $set: { language: 'English' } },
+        { new: true },
+      );
+    },
+  );
 });

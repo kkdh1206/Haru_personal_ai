@@ -63,6 +63,7 @@ This is a short onboarding call-delivery test.
 
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-live-preview"
 DEFAULT_NO_ANSWER_TIMEOUT_SECONDS = 30
+DEFAULT_MEMORY_BOOTSTRAP_TIMEOUT_SECONDS = 2.0
 DEFAULT_INITIAL_GREETING_READY_GRACE_SECONDS = 2.0
 DEFAULT_INITIAL_GREETING_START_TIMEOUT_SECONDS = 6.0
 DEFAULT_INITIAL_GREETING_VAD_SETTLE_SECONDS = 1.5
@@ -178,6 +179,17 @@ def get_no_answer_timeout_seconds() -> int:
         return max(int(configured.strip()), 5)
     except ValueError:
         return DEFAULT_NO_ANSWER_TIMEOUT_SECONDS
+
+
+def get_participant_wait_seconds(metadata: dict) -> float:
+    # Prewarm runs before the phone rings; it must not consume answer time.
+    try:
+        grace = float(metadata.get("participant_wait_grace_seconds", 0))
+    except (TypeError, ValueError):
+        grace = 0
+    if not 0 <= grace <= 300:
+        grace = 0
+    return get_no_answer_timeout_seconds() + grace
 
 
 def get_call_wrap_up_seconds() -> int:
@@ -1509,7 +1521,10 @@ async def entrypoint(ctx: JobContext):
     if backend_url and call_type != "test":
         try:
             api_client = BackendApiClient(backend_url)
-            memory_data = await api_client.get_memory_context(user_id)
+            memory_data = await asyncio.wait_for(
+                api_client.get_memory_context(user_id),
+                timeout=DEFAULT_MEMORY_BOOTSTRAP_TIMEOUT_SECONDS,
+            )
             memory_context = truncate_text(
                 memory_data.get("contextText", ""),
                 get_max_memory_context_chars(),
@@ -1520,8 +1535,8 @@ async def entrypoint(ctx: JobContext):
             else:
                 logger.info("🧠 No bootstrap memory found for this user")
         except Exception as e:
-            logger.error(f"❌ Failed to initialize API client: {e}")
-            api_client = None
+            # Memory is optional; retain the client for wake-outcome reporting.
+            logger.warning(f"⚠️ Bootstrap memory unavailable: {type(e).__name__}")
     elif call_type == "test":
         logger.info("🧪 Test call: skipping memory bootstrap and backend tools")
     else:
@@ -1542,6 +1557,7 @@ async def entrypoint(ctx: JobContext):
     participant_joined_monotonic: float | None = None
     participant_connected_at: str | None = None
     wake_confirmed = False
+    wake_report_task: asyncio.Task | None = None
     briefing_offered = False
     briefing_answered = False
     user_turn_sequence = 0
@@ -1581,9 +1597,29 @@ async def entrypoint(ctx: JobContext):
         task.add_done_callback(background_tasks.discard)
         return task
 
+    def retry_outcome_reported() -> bool:
+        # Persisting wake confirmation cancels retries, not the ongoing briefing.
+        return call_outcome_reported and reported_wake_status != "awake"
+
+    def confirm_awake():
+        nonlocal wake_confirmed, wake_report_task
+        wake_confirmed = True
+        stop_active_local_nudge("awake_confirmed")
+        if reported_wake_status == "awake" or (wake_report_task and not wake_report_task.done()):
+            return
+
+        async def persist():
+            for attempt in range(3):
+                await report_call_outcome_once("awake", had_user_response=True)
+                if reported_wake_status == "awake":
+                    return
+                await asyncio.sleep(0.5 * (attempt + 1))
+
+        wake_report_task = start_background_task(persist(), name="persist_wake_confirmation")
+
     def mark_waiting_for_user_response(*, reset_silence_nudges: bool = False):
         nonlocal waiting_for_user_response_since, silence_nudge_count
-        if hangup_requested or farewell_pending or call_outcome_reported:
+        if hangup_requested or farewell_pending or retry_outcome_reported():
             waiting_for_user_response_since = None
             return
         waiting_for_user_response_since = asyncio.get_running_loop().time()
@@ -1673,7 +1709,7 @@ async def entrypoint(ctx: JobContext):
         """Play a bundled iOS nudge, falling back when the client cannot handle it."""
         nonlocal active_local_nudge_request_id
 
-        if hangup_requested or farewell_pending or call_outcome_reported:
+        if hangup_requested or farewell_pending or retry_outcome_reported():
             return False
         if get_realtime_language_code(conversation_language) != "ko-KR":
             return False
@@ -1722,7 +1758,7 @@ async def entrypoint(ctx: JobContext):
                 if (
                     reason == "completed"
                     and not hangup_requested
-                    and not call_outcome_reported
+                    and not retry_outcome_reported()
                     and not user_is_speaking
                     and not agent_is_speaking
                 ):
@@ -1734,7 +1770,7 @@ async def entrypoint(ctx: JobContext):
                 stop_active_local_nudge("server_timeout")
                 if (
                     not hangup_requested
-                    and not call_outcome_reported
+                    and not retry_outcome_reported()
                     and not user_is_speaking
                     and not agent_is_speaking
                 ):
@@ -1949,6 +1985,11 @@ async def entrypoint(ctx: JobContext):
         if not api_client or not alarm_id or call_type == "test":
             return None
         async with outcome_report_lock:
+            # Recheck after waiting for another report: a wake confirmation can
+            # arrive while an earlier no-response report is in flight.
+            if wake_confirmed:
+                wake_status = "awake"
+                had_user_response = True
             # A later wake confirmation cancels an earlier retry reservation.
             if call_outcome_reported and (
                 wake_status != "awake" or reported_wake_status == "awake"
@@ -2232,9 +2273,10 @@ async def entrypoint(ctx: JobContext):
         if (
             hangup_requested
             or farewell_pending
-            or call_outcome_reported
+            or retry_outcome_reported()
             or agent_is_speaking
             or user_is_speaking
+            or user_turn_id != user_turn_sequence
         ):
             return
 
@@ -2248,8 +2290,8 @@ async def entrypoint(ctx: JobContext):
             return
 
         wake_status, _ = infer_wake_status(conversation_messages)
-        if wake_status == "awake":
-            wake_confirmed = True
+        if wake_confirmed or wake_status == "awake":
+            confirm_awake()
             briefing_instructions = (
                 f"사용자가 깬 것으로 확인됐다. 통화를 바로 끊지 말고 {conversation_language}로 한 문장만 말해. "
                 "저장된 이름을 부를 때는 이름 그대로만 쓰고 '님'이나 '씨'를 붙이지 마. "
@@ -2386,6 +2428,8 @@ async def entrypoint(ctx: JobContext):
                 return user_turn_sequence > 0
 
             for attempt in range(1, 3):
+                if hangup_requested or farewell_pending:
+                    return
                 if user_turn_sequence > 0:
                     greeted_user = True
                     logger.info(
@@ -2422,16 +2466,6 @@ async def entrypoint(ctx: JobContext):
                             "⚠️ Initial greeting requested but speech did not start "
                             f"(attempt {attempt})"
                         )
-
-                if any(
-                    message.get("role") == "assistant"
-                    for message in conversation_messages
-                ):
-                    greeted_user = True
-                    logger.info(
-                        "🗣️ Initial greeting transcript arrived after the start timeout"
-                    )
-                    return
 
                 if user_turn_sequence > 0:
                     greeted_user = True
@@ -2480,6 +2514,9 @@ async def entrypoint(ctx: JobContext):
             logger.warning(
                 "⚠️ Initial greeting did not produce speech after both attempts"
             )
+            # No speaking event means no audible greeting. Start the existing
+            # local-audio recovery path instead of waiting silently for minutes.
+            mark_waiting_for_user_response()
 
     shutdown_saved = False
 
@@ -2593,10 +2630,7 @@ async def entrypoint(ctx: JobContext):
         append_conversation_message(conversation_messages, role, text)
 
         if role == "assistant":
-            assistant_response_user_turn = max(
-                assistant_response_user_turn,
-                user_turn_sequence,
-            )
+            # A transcript alone does not prove that audio playback started.
             assistant_said_goodbye = is_assistant_goodbye(text)
             if call_type != "test" and assistant_said_goodbye:
                 farewell_pending = True
@@ -2604,8 +2638,7 @@ async def entrypoint(ctx: JobContext):
                 stop_active_local_nudge("farewell")
             if is_briefing_offer(text):
                 briefing_offered = True
-            if is_wake_confirmation_question(text):
-                wake_confirmed = False
+            if is_wake_confirmation_question(text) and not wake_confirmed:
                 logger.info(
                     "😴 Wake confirmation remains pending after assistant check"
                 )
@@ -2633,7 +2666,8 @@ async def entrypoint(ctx: JobContext):
                 test_user_replied_at = asyncio.get_running_loop().time()
             else:
                 wake_status, _ = infer_wake_status(conversation_messages)
-                wake_confirmed = wake_status == "awake" or is_briefing_request(text)
+                if wake_confirmed or wake_status == "awake" or is_briefing_request(text):
+                    confirm_awake()
             logger.info(f"👤 User said: {text}")
             if not hangup_requested and not farewell_pending and is_explicit_hangup_request(text):
                 _trigger_hangup(
@@ -2815,10 +2849,7 @@ async def entrypoint(ctx: JobContext):
             agent_speech_started_event.set()
 
         if old_state == "speaking" and new_state != "speaking":
-            assistant_response_user_turn = max(
-                assistant_response_user_turn,
-                user_turn_sequence,
-            )
+            # Finishing interrupted speech does not answer the newer user turn.
             agent_speech_finished_event.set()
             if (
                 call_type != "test"
@@ -2831,7 +2862,7 @@ async def entrypoint(ctx: JobContext):
                     delay_seconds=DEFAULT_FAREWELL_HANGUP_GRACE_SECONDS,
                 )
                 return
-            if hangup_requested or farewell_pending or call_outcome_reported:
+            if hangup_requested or farewell_pending or retry_outcome_reported():
                 clear_waiting_for_user_response()
                 return
             mark_waiting_for_user_response()
@@ -2844,6 +2875,7 @@ async def entrypoint(ctx: JobContext):
         nonlocal user_is_speaking, test_waiting_for_final_speech
         nonlocal test_final_speech_handle
 
+        was_speaking = user_is_speaking
         new_state = getattr(ev, "new_state", None)
         user_is_speaking = new_state == "speaking"
         if user_is_speaking:
@@ -2853,6 +2885,11 @@ async def entrypoint(ctx: JobContext):
                 test_waiting_for_final_speech = True
                 test_final_speech_handle = None
                 test_final_speech_handle_ready.clear()
+        elif was_speaking and not agent_is_speaking:
+            # A short sound can trigger VAD without producing a transcript or a
+            # model reply. Restore recovery after that sound instead of leaving
+            # the silence timer cleared until somebody speaks again.
+            mark_waiting_for_user_response()
 
     @ctx.room.on("participant_connected")
     def _on_participant_connected(p):
@@ -2877,7 +2914,7 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"👋 Participant left: {identity}")
 
         async def handle_disconnect():
-            if hangup_requested or call_outcome_reported:
+            if hangup_requested or retry_outcome_reported():
                 return
 
             had_user_response = any(
@@ -2911,7 +2948,7 @@ async def entrypoint(ctx: JobContext):
         try:
             await asyncio.wait_for(
                 participant_connected_event.wait(),
-                timeout=get_no_answer_timeout_seconds(),
+                timeout=get_participant_wait_seconds(job_meta),
             )
         except TimeoutError:
             result = await report_call_outcome_once(
@@ -3008,7 +3045,7 @@ async def entrypoint(ctx: JobContext):
             logger.warning("⚠️ User silence watchdog skipped: session did not start")
             return
 
-        while not hangup_requested and not call_outcome_reported and not farewell_pending:
+        while not hangup_requested and not retry_outcome_reported() and not farewell_pending:
             if (
                 not participant_joined
                 or waiting_for_user_response_since is None
@@ -3106,7 +3143,7 @@ async def entrypoint(ctx: JobContext):
             )
 
             played_local_nudge = await play_local_silence_nudge(silence_nudge_count)
-            if hangup_requested or farewell_pending or call_outcome_reported:
+            if hangup_requested or farewell_pending or retry_outcome_reported():
                 return
             if played_local_nudge:
                 logger.info(
@@ -3114,7 +3151,9 @@ async def entrypoint(ctx: JobContext):
                     f"({silence_nudge_count}/{max_nudges}) after "
                     f"{nudge_seconds:.1f}s of inactivity"
                 )
-            elif request_agent_reply(nudge_instructions, nudge_trigger_text):
+            elif await request_agent_reply_with_speech_ack(
+                nudge_instructions, nudge_trigger_text, label="silence recovery"
+            ):
                 logger.info(
                     "⏰ User silence nudge requested "
                     f"({silence_nudge_count}/{max_nudges}) after "
@@ -3129,7 +3168,7 @@ async def entrypoint(ctx: JobContext):
     async def no_answer_watchdog():
         await asyncio.sleep(get_no_answer_timeout_seconds())
 
-        if participant_joined or hangup_requested or call_outcome_reported:
+        if participant_joined or hangup_requested or retry_outcome_reported():
             return
 
         result = await report_call_outcome_once(
@@ -3149,7 +3188,7 @@ async def entrypoint(ctx: JobContext):
         if elapsed < wrap_up_after:
             await asyncio.sleep(wrap_up_after - elapsed)
 
-        if hangup_requested or call_outcome_reported:
+        if hangup_requested or retry_outcome_reported():
             return
 
         request_agent_reply(

@@ -10,7 +10,7 @@ import FirebaseAuth
 import UIKit
 
 struct UserSettings: Codable {
-    var name: String
+    var name: String?
     var language: String
 }
 
@@ -73,6 +73,7 @@ struct SettingView: View {
                     callSection
                     dailyCallSection
                     calendarSection
+                    legalSection
                     logoutSection
                 }
                 .frame(width: max(0, proxy.size.width - 40), alignment: .leading)
@@ -152,6 +153,17 @@ struct SettingView: View {
                     RoundedRectangle(cornerRadius: HaruStyle.cardRadius, style: .continuous)
                         .fill(Color.white.opacity(0.78))
                 )
+        }
+    }
+
+    private var legalSection: some View {
+        settingsCard(title: "약관 및 개인정보") {
+            VStack(alignment: .leading, spacing: 16) {
+                Link(localized("이용약관 (EULA)"), destination: LegalLinks.termsOfUse)
+                Link(localized("서비스 이용약관"), destination: LegalLinks.serviceTerms)
+                Link(localized("개인정보 처리방침"), destination: LegalLinks.privacyPolicy)
+            }
+            .font(.subheadline)
         }
     }
 
@@ -479,10 +491,6 @@ struct SettingView: View {
 
     private func saveProfile() {
         let trimmedName = userName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else {
-            userName = env.user?.name ?? ""
-            return
-        }
 
         let language = selectedLanguage.isEmpty ? "한국어" : selectedLanguage
         let speechStyle = SpeechStyle.value(
@@ -501,9 +509,9 @@ struct SettingView: View {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let updated):
-                    userName = trimmedName
+                    userName = updated.name ?? ""
                     selectedLanguage = language
-                    env.user?.name = trimmedName
+                    env.user?.name = updated.name
                     env.user?.language = language
                     env.user?.speechStyle = speechStyle
                     print("✅ 사용자 설정 저장 완료: \(updated)")

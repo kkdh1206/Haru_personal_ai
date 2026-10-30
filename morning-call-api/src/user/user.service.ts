@@ -34,18 +34,47 @@ export class UserService {
     private readonly connection?: Connection,
   ) {}
 
-  async oauthSync(firebaseUid: string, email: string) {
+  async oauthSync(firebaseUid: string, email?: string, displayName?: unknown) {
+    const providerName =
+      typeof displayName === 'string' ? displayName.trim() : '';
     let user = await this.userModel.findOne({ firebaseUid }).lean();
     if (user) {
+      // Only fill an empty profile from the verified Firebase token. Keep names
+      // users have chosen themselves, including during concurrent profile edits.
+      if (!user.name?.trim() && providerName) {
+        const updated = await this.userModel
+          .findOneAndUpdate(
+            {
+              firebaseUid,
+              $or: [
+                { name: { $exists: false } },
+                { name: null },
+                { name: { $regex: '^\\s*$' } },
+              ],
+            },
+            { $set: { name: providerName } },
+            { new: true },
+          )
+          .lean();
+        const currentUser =
+          updated ?? (await this.userModel.findOne({ firebaseUid }).lean());
+        if (!currentUser) throw new NotFoundException('User not found');
+        return currentUser;
+      }
       return user;
     }
 
     // A locally cached ID token can outlive a deleted Firebase account.
     // Verify the remote user before creating a new database record.
-    await firebase.auth().getUser(firebaseUid);
+    const firebaseUser = await firebase.auth().getUser(firebaseUid);
+    const name = providerName || firebaseUser.displayName?.trim();
 
     try {
-      user = await this.userModel.create({ firebaseUid, email });
+      user = await this.userModel.create({
+        firebaseUid,
+        email: email ?? firebaseUser.email,
+        ...(name ? { name } : {}),
+      });
       return user;
     } catch (err) {
       if (err.code === 11000) {
@@ -64,7 +93,7 @@ export class UserService {
   async update(userId: string, updateUserDto: UpdateUserDto) {
     const $set: Partial<User> = {};
 
-    if (updateUserDto.name !== undefined) {
+    if (typeof updateUserDto.name === 'string') {
       const name = updateUserDto.name.trim();
       if (name) $set.name = name;
     }
@@ -93,11 +122,7 @@ export class UserService {
 
   updateTimeZone(userId: string, timeZone: string) {
     return this.userModel
-      .findByIdAndUpdate(
-        { _id: userId },
-        { $set: { timeZone } },
-        { new: true },
-      )
+      .findByIdAndUpdate({ _id: userId }, { $set: { timeZone } }, { new: true })
       .lean();
   }
 
@@ -245,7 +270,9 @@ export class UserService {
             calendarRefreshToken: this.crypto.encrypt(calendarRefreshToken),
             // OAuth refresh is not a new user selection. An in-flight Google
             // request must not switch a user who has since connected Apple.
-            ...(options.selectProvider === false ? {} : { calendarProvider: 'google' }),
+            ...(options.selectProvider === false
+              ? {}
+              : { calendarProvider: 'google' }),
           },
         },
         { new: true },
